@@ -52,13 +52,18 @@ def recent_activities(days: int = 28) -> list[dict]:
     return results
 
 
-def weekly_load_by_sport(weeks: int = 12) -> list[dict]:
-    """Weekly training load broken out by sport group."""
-    since = (date.today() - timedelta(days=weeks * 7)).isoformat()
+def weekly_load_by_sport(weeks: int | None = 12) -> list[dict]:
+    """Weekly training load broken out by sport group. weeks=None pulls full history."""
     conn = get_connection()
-    rows = conn.execute("""
-        SELECT date, type, raw_json FROM activities WHERE date >= ? ORDER BY date ASC
-    """, (since,)).fetchall()
+    if weeks is None:
+        rows = conn.execute("""
+            SELECT date, type, raw_json FROM activities ORDER BY date ASC
+        """).fetchall()
+    else:
+        since = (date.today() - timedelta(days=weeks * 7)).isoformat()
+        rows = conn.execute("""
+            SELECT date, type, raw_json FROM activities WHERE date >= ? ORDER BY date ASC
+        """, (since,)).fetchall()
     conn.close()
 
     weekly: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))

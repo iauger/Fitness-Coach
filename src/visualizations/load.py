@@ -11,7 +11,7 @@ from src.visualizations.theme import COLORS, LAYOUT, AXIS, SPORT_COLOR
 SPORT_ORDER = ["cycling", "running", "strength", "swimming", "yoga", "walk", "hike", "other"]
 
 
-def build(weeks: int = 12) -> go.Figure:
+def build(weeks: int | None = None) -> go.Figure:
     data = weekly_load_by_sport(weeks=weeks)
     if not data:
         return go.Figure()

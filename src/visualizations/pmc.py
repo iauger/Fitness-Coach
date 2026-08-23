@@ -39,20 +39,32 @@ def _zone(tsb: float) -> str:
     return "risk"
 
 
-def _load_data(weeks: int):
-    since = (date.today() - timedelta(weeks=weeks)).isoformat()
+def _load_data(weeks: int | None):
+    """weeks=None pulls full history — used to bake in enough data for the dashboard's
+    client-side date-range filter to zoom within, rather than re-fetching per range."""
     conn = get_connection()
-    rows = conn.execute("""
-        SELECT date, ctl, atl, round(ctl - atl, 1) as tsb, raw_json
-        FROM wellness
-        WHERE date >= ? AND ctl IS NOT NULL
-        ORDER BY date
-    """, (since,)).fetchall()
-    events = conn.execute("""
-        SELECT date, name, category FROM events
-        WHERE date >= ? AND category IN ('A', 'B', 'C')
-        ORDER BY date
-    """, (since,)).fetchall()
+    if weeks is None:
+        rows = conn.execute("""
+            SELECT date, ctl, atl, round(ctl - atl, 1) as tsb, raw_json
+            FROM wellness WHERE ctl IS NOT NULL ORDER BY date
+        """).fetchall()
+        events = conn.execute("""
+            SELECT date, name, category FROM events
+            WHERE category IN ('A', 'B', 'C') ORDER BY date
+        """).fetchall()
+    else:
+        since = (date.today() - timedelta(weeks=weeks)).isoformat()
+        rows = conn.execute("""
+            SELECT date, ctl, atl, round(ctl - atl, 1) as tsb, raw_json
+            FROM wellness
+            WHERE date >= ? AND ctl IS NOT NULL
+            ORDER BY date
+        """, (since,)).fetchall()
+        events = conn.execute("""
+            SELECT date, name, category FROM events
+            WHERE date >= ? AND category IN ('A', 'B', 'C')
+            ORDER BY date
+        """, (since,)).fetchall()
     conn.close()
     return [dict(r) for r in rows], [dict(e) for e in events]
 
@@ -101,7 +113,7 @@ def _zone_segments(dates: list[str], tsb: list[float]):
     return segments
 
 
-def build(weeks: int = 52) -> go.Figure:
+def build(weeks: int | None = None) -> go.Figure:
     rows, events = _load_data(weeks)
     if not rows:
         return go.Figure()

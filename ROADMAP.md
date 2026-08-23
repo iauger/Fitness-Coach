@@ -46,6 +46,11 @@ back to this sentence.
   data (Garmin ride, Zwift ride, both scored correctly) and confirmed structurally sound again
   under Session 13's Playwright review. Standalone page, linked from the dashboard header — the
   "standalone vs. embedded" open question is resolved (see below).
+- **Global date-range filter (Session 13)** — one control bar (YTD/1mo/3mo/6mo/1yr/All presets +
+  lookback slider) drives PMC, Load, and Recovery in sync via client-side `Plotly.relayout()`.
+  See item 7 in the feature roadmap below for the full design + implementation record.
+- **First real git commit made, Session 13** — `src/`, `scripts/`, `requirements.txt`, config
+  files. 13 sessions overdue; local commit only, not yet pushed.
 
 **Ad hoc / debt — not blocking, but real:**
 - Schema evolution is one `migrate_db()` function accreting ALTERs forever. Fine at current
@@ -55,13 +60,12 @@ back to this sentence.
   process, so "chat right there" (the north star) literally can't happen without one.
 - Sync is manual (`scripts/sync.py` / `sync_calendar.py` run by hand). Not compatible with
   "check once a day."
-- Nothing is committed to git yet — still true as of Session 13. Same underlying symptom as the
-  above: building fast, not formalizing. Now the single most overdue item (13 sessions).
-- **New, Session 13:** visual/browser-based verification wasn't possible for 12 sessions (no
-  working MCP browser tool), so every chart shipped since Session 9 was verified only by reading
-  its generating code, not by looking at it. Playwright MCP is now connected and working — worth
-  a quick visual pass on `recovery.py` too (not reviewed this session, only `pmc.py`/`load.py`
-  were touched) before trusting it fully.
+- Visual/browser-based verification wasn't possible for 12 sessions (no working MCP browser
+  tool), so every chart shipped since Session 9 was verified only by reading its generating code,
+  not by looking at it. Playwright MCP is now connected and working, and a standing rule requiring
+  it for any visual change is codified in `CLAUDE.md` (Session 13) — the date-range filter was
+  built and fully verified under that rule the same session it was designed, closing the gap that
+  let the PMC bugs above ship undetected for two sessions.
 
 ---
 
@@ -122,24 +126,36 @@ from the feature roadmap; kept here only as a record of why it was considered an
    instead of the current CLI-only `scripts/ask.py`.
 6. Automated sync — scheduled task (cron / Windows Task Scheduler) running `incremental_sync()`
    daily instead of manual script runs.
-7. **Date-range filtering on dashboard charts** — a slider plus preset buttons (YTD, preceding
-   month, 3-month, 6-month). Raised 2026-08-23 (Session 13), not implemented yet — scoped here so
-   the approach doesn't have to be re-derived later.
+7. ~~**Global date-range filter across PMC + Load + Recovery**~~ — **done, Session 13.**
+   Design finalized then implemented and Playwright-verified same session. Decisions locked in
+   with the user before coding:
+   - **One shared control, not per-chart zoom.** A single control bar (presets + slider) drives
+     all three charts in sync via `Plotly.relayout()` — closer to intervals.icu's page-level date
+     picker than Plotly's native per-chart `rangeslider`/`rangeselector` (which would give three
+     independent zoom states, not what was asked for).
+   - **Presets:** YTD, 1mo, 3mo, 6mo, 1yr, All. Slider is a single lookback-duration control
+     (today minus N days), not a custom dual-handle range component — every preset is a
+     relative-to-today window, so a two-sided slider would be unused complexity. Clicking a
+     preset moves the slider to match; dragging the slider off an exact preset value clears the
+     active-button highlight.
+   - **Recovery chart is in scope** — changes from a hardcoded 30-day window to filter-controlled,
+     same as PMC/Load, for one consistent dashboard-wide filter.
+   - **Default view on load: 3 months.** Full history is one click away via "All".
+   - Calendar view is explicitly out of scope — it's a navigable week-grid, not a dense
+     time-series, filtering doesn't apply the same way.
 
-   Recommended approach: Plotly's native `xaxis.rangeselector` (preset buttons) +
-   `xaxis.rangeslider` (drag handle), applied to the bottom-most shared x-axis in `pmc.py`'s
-   4-row subplot and to `load.py`'s single-axis figure. Both charts already use continuous date
-   x-axes, so this is a layout-only change — no new JS, no backend, no re-fetching data, fits the
-   current static-HTML architecture as-is. `recovery.py` (HRV/sleep, currently 30-day fixed
-   window) would need its `days` param exposed as a rangeselector too rather than baked in at
-   build time.
-   - Caveat: `pmc.build(weeks=52)` and friends currently bake a fixed lookback window in at
-     Python build time — the rangeslider/selector only let the user zoom *within* whatever range
-     was already fetched, so a "6 month" preset only works if the underlying data already covers
-     ≥6 months (currently true for PMC's default 52-week pull, worth checking for the other
-     charts before wiring this up).
-   - Calendar view doesn't need this treatment — it's already a navigable week-grid, not a
-     single dense time-series.
+   **Shipped as:** `pmc.py`/`load.py`/`recovery.py`'s `weeks`/`days` params now accept `None` =
+   full history; `dashboard.py` builds all three unbounded and injects a control bar (preset
+   buttons + a lookback-days slider) above the PMC chart. One `applyRange(startIso)` JS function
+   calls `Plotly.relayout()` on all three chart divs, setting every subplot row's x-axis range
+   explicitly (`CHART_AXES` map in `dashboard.py`) rather than assuming `shared_xaxes` propagates
+   a scripted relayout — confirmed via direct DOM inspection that it does not propagate reliably
+   enough to rely on. All Session-13-identified risks verified via Playwright + `browser_evaluate`
+   before calling this done: expand-modal correctly inherits the active filter range (checked
+   `plotDiv.layout.xaxis.range` post-clone, not just eyeballed); "YTD"/"All" clamp correctly
+   (`2017-01-01` earliest-data floor, computed from `MIN(date)` across `wellness`+`activities`);
+   free slider-drag correctly clears the active-preset highlight when it doesn't land on an exact
+   preset value. Zero console errors/warnings across every preset, the slider, and the modal.
 
 ### Later — currently just aspirational goals text, not built
 

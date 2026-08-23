@@ -17,18 +17,24 @@ def _rolling_avg(values: list, window: int = 7) -> list:
     return result
 
 
-def _load_data(days: int = 30):
-    since = (date.today() - timedelta(days=days)).isoformat()
+def _load_data(days: int | None):
+    """days=None pulls full history — see pmc.py's _load_data for why."""
     conn = get_connection()
-    rows = conn.execute("""
-        SELECT date, hrv, sleep_hrs, sleep_score
-        FROM wellness WHERE date >= ? ORDER BY date
-    """, (since,)).fetchall()
+    if days is None:
+        rows = conn.execute("""
+            SELECT date, hrv, sleep_hrs, sleep_score FROM wellness ORDER BY date
+        """).fetchall()
+    else:
+        since = (date.today() - timedelta(days=days)).isoformat()
+        rows = conn.execute("""
+            SELECT date, hrv, sleep_hrs, sleep_score
+            FROM wellness WHERE date >= ? ORDER BY date
+        """, (since,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
-def build(days: int = 30) -> go.Figure:
+def build(days: int | None = None) -> go.Figure:
     rows = _load_data(days)
     if not rows:
         return go.Figure()

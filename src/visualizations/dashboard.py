@@ -3,11 +3,39 @@ Single-page dashboard — all charts embedded, expand-to-modal, chat placeholder
 Generates a standalone HTML file with Plotly loaded once from CDN.
 """
 
+import json
 from datetime import date
 from pathlib import Path
 from src.visualizations import pmc, load, recovery
+from src.db.schema import get_connection
 
 CHARTS_DIR = Path(__file__).parent.parent.parent / "data" / "charts"
+
+# Date-range filter presets. "days" is used to seed the slider position; YTD/All are computed
+# relative to today at render time in JS since "days ago" isn't fixed for either of them.
+RANGE_PRESETS = [
+    ("ytd", "YTD",  None),
+    ("1mo", "1mo",  30),
+    ("3mo", "3mo",  90),
+    ("6mo", "6mo",  180),
+    ("1yr", "1yr",  365),
+    ("all", "All",  None),
+]
+DEFAULT_PRESET = "3mo"
+
+
+def _earliest_data_date() -> str:
+    """Earliest date across wellness/activities — bounds the filter's "All" / slider max."""
+    conn = get_connection()
+    row = conn.execute("""
+        SELECT MIN(d) FROM (
+            SELECT MIN(date) as d FROM wellness
+            UNION ALL
+            SELECT MIN(date) as d FROM activities
+        )
+    """).fetchone()
+    conn.close()
+    return row[0] or date.today().isoformat()
 
 
 def _embed(fig, div_id: str) -> str:
@@ -26,12 +54,24 @@ def _embed(fig, div_id: str) -> str:
 
 def build_dashboard() -> str:
     today = date.today().strftime("%B %d, %Y")
+    today_iso = date.today().isoformat()
+    earliest_iso = _earliest_data_date()
 
+    # Full history baked in for all three — the date-range filter is client-side (Plotly
+    # relayout, zooming the visible x-axis range), so it can only reveal data already present.
     charts = {
-        "pmc":      _embed(pmc.build(weeks=52),     "chart_pmc"),
-        "load":     _embed(load.build(weeks=12),    "chart_load"),
-        "recovery": _embed(recovery.build(days=30), "chart_recovery"),
+        "pmc":      _embed(pmc.build(weeks=None),     "chart_pmc"),
+        "load":     _embed(load.build(weeks=None),    "chart_load"),
+        "recovery": _embed(recovery.build(days=None), "chart_recovery"),
     }
+
+    preset_buttons = "\n".join(
+        f'<button class="preset-btn" data-preset="{key}" onclick="selectPreset(\'{key}\')">{label}</button>'
+        for key, label, _ in RANGE_PRESETS
+    )
+    presets_json = json.dumps({key: days for key, _, days in RANGE_PRESETS})
+    max_days = max((date.today() - date.fromisoformat(earliest_iso)).days, 7)
+    default_days = dict((key, days) for key, _, days in RANGE_PRESETS)[DEFAULT_PRESET]
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -125,12 +165,64 @@ def build_dashboard() -> str:
       border-radius: var(--radius);
       overflow: hidden;
       position: relative;
+      flex-shrink: 0;
     }}
 
     .chart-row {{
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 1rem;
+      flex-shrink: 0;
+    }}
+
+    /* ── Date-range filter bar ── */
+    .range-bar {{
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.6rem 1rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      flex-shrink: 0;
+    }}
+    .range-presets {{
+      display: flex;
+      gap: 0.35rem;
+      flex-shrink: 0;
+    }}
+    .preset-btn {{
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--subtext);
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }}
+    .preset-btn:hover {{ background: rgba(255,255,255,0.06); color: var(--text); }}
+    .preset-btn.active {{
+      background: rgba(96,165,250,0.15);
+      border-color: var(--accent);
+      color: var(--accent);
+    }}
+    .range-slider-row {{
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      min-width: 0;
+    }}
+    .range-slider-row input[type="range"] {{
+      flex: 1;
+      accent-color: var(--accent);
+    }}
+    .range-label {{
+      font-size: 0.75rem;
+      color: var(--subtext);
+      white-space: nowrap;
+      min-width: 82px;
     }}
 
     .chart-inner {{
@@ -320,6 +412,17 @@ def build_dashboard() -> str:
   <!-- Charts panel -->
   <div class="charts-panel">
 
+    <!-- Date-range filter — drives PMC, Load, and Recovery in sync -->
+    <div class="range-bar">
+      <div class="range-presets" id="preset-buttons">
+        {preset_buttons}
+      </div>
+      <div class="range-slider-row">
+        <input type="range" id="range-slider" min="7" max="{max_days}" step="1" value="{default_days}">
+        <span class="range-label" id="range-label"></span>
+      </div>
+    </div>
+
     <!-- PMC full width -->
     <div class="chart-card tall">
       <button class="expand-btn" onclick="expandChart('chart_pmc')">&#x26F6; Expand</button>
@@ -387,6 +490,87 @@ def build_dashboard() -> str:
   // Belt-and-suspenders: run again shortly after load in case fonts/layout shift after
   // the load event fires (webfonts loading late can still change container heights).
   window.addEventListener('load', () => setTimeout(resizeAllCharts, 250));
+
+  // ── Date-range filter — one control drives PMC, Load, and Recovery in sync ──
+  const PRESET_DAYS = {presets_json};   // {{key: days_back}}, null = computed specially (YTD/All)
+  const EARLIEST_ISO = '{earliest_iso}';
+  const TODAY_ISO = '{today_iso}';
+  const DEFAULT_PRESET = '{DEFAULT_PRESET}';
+
+  // Per-chart x-axis keys to set on relayout — PMC is a 4-row shared_xaxes subplot, Load is
+  // single-axis, Recovery is a 2-row shared_xaxes subplot. Setting every row's axis explicitly
+  // rather than relying on shared_xaxes to propagate a scripted relayout across rows.
+  const CHART_AXES = {{
+    chart_pmc:      ['xaxis', 'xaxis2', 'xaxis3', 'xaxis4'],
+    chart_load:     ['xaxis'],
+    chart_recovery: ['xaxis', 'xaxis2'],
+  }};
+
+  function daysAgoIso(days) {{
+    const d = new Date(TODAY_ISO);
+    d.setDate(d.getDate() - days);
+    return d.toISOString().slice(0, 10);
+  }}
+
+  function startDateForPreset(key) {{
+    if (key === 'ytd') {{
+      return TODAY_ISO.slice(0, 4) + '-01-01';
+    }}
+    if (key === 'all') {{
+      return EARLIEST_ISO;
+    }}
+    return daysAgoIso(PRESET_DAYS[key]);
+  }}
+
+  function applyRange(startIso) {{
+    for (const [divId, axes] of Object.entries(CHART_AXES)) {{
+      const el = document.getElementById(divId);
+      if (!el || !el.data) continue; // chart may be empty (no data) — nothing to relayout
+      const relayoutUpdate = {{}};
+      axes.forEach(ax => {{ relayoutUpdate[ax + '.range'] = [startIso, TODAY_ISO]; }});
+      Plotly.relayout(el, relayoutUpdate);
+    }}
+  }}
+
+  function updateRangeLabel(startIso) {{
+    document.getElementById('range-label').textContent = startIso + ' → ' + TODAY_ISO;
+  }}
+
+  function daysBetween(startIso) {{
+    const start = new Date(startIso);
+    const today = new Date(TODAY_ISO);
+    return Math.round((today - start) / 86400000);
+  }}
+
+  function setActivePreset(key) {{
+    document.querySelectorAll('.preset-btn').forEach(btn => {{
+      btn.classList.toggle('active', btn.dataset.preset === key);
+    }});
+  }}
+
+  function selectPreset(key) {{
+    const startIso = startDateForPreset(key);
+    applyRange(startIso);
+    updateRangeLabel(startIso);
+    setActivePreset(key);
+    const slider = document.getElementById('range-slider');
+    slider.value = Math.min(Math.max(daysBetween(startIso), slider.min), slider.max);
+  }}
+
+  function onSliderInput() {{
+    const slider = document.getElementById('range-slider');
+    const startIso = daysAgoIso(Number(slider.value));
+    applyRange(startIso);
+    updateRangeLabel(startIso);
+    // Only highlight a preset button if the slider landed exactly on its value —
+    // otherwise this is a free drag and no preset should look selected.
+    const days = Number(slider.value);
+    const matched = Object.entries(PRESET_DAYS).find(([key, d]) => d === days);
+    setActivePreset(matched ? matched[0] : null);
+  }}
+
+  document.getElementById('range-slider').addEventListener('input', onSliderInput);
+  window.addEventListener('load', () => selectPreset(DEFAULT_PRESET));
 
   function expandChart(divId) {{
     const source = document.getElementById(divId);
