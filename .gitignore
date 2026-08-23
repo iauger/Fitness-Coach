@@ -1,0 +1,16 @@
+.env
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.db
+*.sqlite
+*.sqlite3
+.DS_Store
+
+# All local/generated/personal data — DB, transcripts, charts, Garmin export,
+# Google OAuth client secret + token. Nothing here should ever be committed.
+data/
