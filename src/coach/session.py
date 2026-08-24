@@ -21,7 +21,9 @@ load_dotenv()
 
 DEFAULT_MODEL = os.environ.get("COACH_MODEL", "claude-haiku-4-5")
 TRANSCRIPT_DIR = Path(__file__).parent.parent.parent / "data" / "transcripts"
-MAX_TOKENS = 1024
+# Headroom for the 500-700 word check-in target set in prompt.py. The old 1024 ceiling
+# (~750 words) left almost no margin — a longer reasoned answer would have been cut mid-sentence.
+MAX_TOKENS = 2048
 
 
 def _client() -> Anthropic:
@@ -78,7 +80,7 @@ def checkin(feel_context: str = "", verbose: bool = False) -> str:
     """
     ctx = build_coaching_context()
     snapshot = coaching_context_text(ctx)
-    system = build_system_prompt(snapshot)
+    system = build_system_prompt(snapshot, mode="checkin")
     model = DEFAULT_MODEL
 
     incremental_sync(silent=not verbose)
@@ -127,7 +129,7 @@ class CoachSession:
 
         ctx = build_coaching_context()
         snapshot = coaching_context_text(ctx)
-        self.system = build_system_prompt(snapshot)
+        self.system = build_system_prompt(snapshot, mode="conversation")
 
         if verbose:
             print(f"[coach] session {self.session_id}  model={self.model}")

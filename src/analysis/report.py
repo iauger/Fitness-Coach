@@ -97,7 +97,9 @@ def build_coaching_context(
     hrv = hrv_summary(days=30)
     sleep = sleep_summary(days=30)
     rhr = rhr_trend(days=30)
-    flags = recovery_flags(days=7)
+    # 30-day window: the flag strings name a 30-day baseline, and their 7-day sub-averages are
+    # computed from the tail of it. Passing 7 here made those strings inaccurate (Session 14).
+    flags = recovery_flags(days=30)
 
     plan_adherence = compliance_summary(weeks=8)
     recent_planned = recent_planned_workouts(days=14)
@@ -203,7 +205,10 @@ def coaching_context_text(ctx: dict | None = None) -> str:
         f"  CTL (fitness):  {cur.get('ctl')}",
         f"  ATL (fatigue):  {cur.get('atl')}",
         f"  TSB (form):     {cur.get('tsb')}",
-        f"  Ramp rate:      {cur.get('ramp_rate')} CTL/day",
+        # intervals.icu's rampRate is CTL change per WEEK — verified against the raw data
+        # (7-day CTL delta matches it exactly). It was labelled CTL/day until Session 14, which
+        # put it at odds with METHODOLOGY's ramp-rate thresholds, all of which are weekly.
+        f"  Ramp rate:      {cur.get('ramp_rate')} CTL/week",
         f"  Est. FTP:       {round(cur['eftp'], 0) if cur.get('eftp') else 'N/A'}W",
         f"  Peak CTL ever:  {peak.get('ctl')} (on {peak.get('date')})",
         f"  Current vs peak: {pct}% of peak fitness",
@@ -260,7 +265,8 @@ def coaching_context_text(ctx: dict | None = None) -> str:
             dist = f"  {a['distance_km']}km" if a["distance_km"] else ""
             hr = f"  HR {int(a['avg_hr'])}bpm" if a["avg_hr"] else ""
             load = f"  load {a['load']}" if a["load"] else ""
-            lines.append(f"  {a['date']}  {(a['type'] or 'Unknown'):<16} {dur}{dist}{hr}{load}  {a['name']}")
+            rpe = f"  RPE {int(a['rpe'])}/10" if a.get("rpe") else ""
+            lines.append(f"  {a['date']}  {(a['type'] or 'Unknown'):<16} {dur}{dist}{hr}{load}{rpe}  {a['name']}")
 
     memory = ctx.get("memory", {})
 

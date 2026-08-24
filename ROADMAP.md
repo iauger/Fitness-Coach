@@ -185,8 +185,8 @@ layer itself — the actual product differentiator per the north star — is the
 coding, decisions confirmed with the user before writing anything. What's already known about the
 current setup, to ground that discovery rather than starting from a blank page:
 
-6. **Base check-in prompt refinement — `src/coach/prompt.py`'s `METHODOLOGY` block.**
-   Decisions locked, not yet implemented:
+6. ~~**Base check-in prompt refinement**~~ — **done, Session 14.** See "What shipped" at the end
+   of this item for the outcome; the decisions that drove it are kept below for the record.
    - **Direction confirmed: richer prose in the same conversational voice**, not a structured
      per-dimension breakdown. Loosen the ~300-word cap and "four short paragraphs" guidance; keep
      the no-headers/no-bullets/no-bold rule as-is.
@@ -210,6 +210,35 @@ current setup, to ground that discovery rather than starting from a blank page:
      strings read "vs 30d avg" when the window is 14 days, and "in last 30 days" when it's 7.
      These strings are injected verbatim into the system prompt via `report.py:217-220`. Cheap
      fix, squarely on-topic for coaching output quality.
+
+   **What shipped (Session 14).** `prompt.py` restructured into composable blocks —
+   `METHODOLOGY` (domain knowledge), `VOICE` (global style), and per-mode `CHECKIN_FORMAT` /
+   `CONVERSATION_FORMAT`, assembled by `build_system_prompt(snapshot, mode)`.
+   - **Root cause of the format violations was structural, not model capability.** The prompt
+     applied one format rule — "four short paragraphs, under 300 words," written for a weekly
+     check-in — to *every* conversational turn in `ask.py`. Splitting by mode fixed the mismatch.
+   - **Ordering mattered more than wording.** With voice/format stated up front, ~90 lines of
+     athlete data sat between the rule and the response, and Haiku reliably reverted to markdown
+     headers and bold (reproduced twice). Moving the output constraints to *after* the data
+     snapshot, plus a terse `HARD_FORMAT_REMINDER` in final position, fixed it — verified live:
+     zero bold/headers/bullets/numbered lists in both modes. **This is why the Sonnet question
+     stays deferred:** the failure was prompt structure, not the model.
+   - Check-in now targets 500-700 words (measured 508 on a live run); conversation answers at
+     whatever length the question warrants (measured 739 on an expansive question, 322 on an
+     earlier narrower one). `MAX_TOKENS` 1024 → 2048.
+   - Added blocks: specificity guidance (anchor claims to a named session/date/signal rather
+     than listing more data), tool-use guidance (`query_history` for comparative history,
+     `calculate_ramp_target` for feasibility, the logging tools as things happen — the prompt
+     never mentioned tools existed), and RPE interpretation (see item 7).
+   - **Two further context bugs found while verifying, both fixed:** `METHODOLOGY` hardcoded
+     "historical peak is ~66" when the data says **94.8** — and derived a target range from it,
+     so the coach was being handed a figure that contradicted its own snapshot; now it reads
+     peak from the snapshot instead of carrying a number. And `report.py` labelled intervals.icu's
+     `rampRate` as "CTL/day" when it is **CTL/week** (verified: the 7-day CTL delta matches it
+     exactly), putting it at odds with every ramp threshold in `METHODOLOGY`.
+   - Also filtered null-`moving_time` stub rows out of `recent_activities()` — the dead Strava
+     stub was rendering as `Unknown  0min  None` in the snapshot, feeding the coach noise.
+     `calendar_view.py` already filtered these (Session 10); the coaching path didn't.
 
 7. **Per-workout logging loop.** Full design converged 2026-08-23 (Session 13) — see "Coaching
    interaction model" below for the three-loop framing this and items 8–10 all sit inside.
@@ -261,6 +290,16 @@ current setup, to ground that discovery rather than starting from a blank page:
        point: log a *note* there and confirm whether activity-level `description` is
        athlete-editable post-ride text (it's a different field from the TR workout-description
        text already used in `planned_workouts`). RPE itself no longer needs verifying.
+   - **RPE now reaches the coach (Session 14).** `recent_activities()` didn't select `feel`, so
+     RPE was invisible to `build_coaching_context()` regardless of how well-populated the column
+     was — adding prompt guidance without this would have been inert. Now surfaced as `rpe` and
+     rendered in the snapshot's RECENT ACTIVITIES lines. `prompt.py` carries the full
+     TrainerRoad scale semantics (1-2 Easy … 9-10 All Out, anchored behaviourally on "could you
+     do one more interval?") so the coach reads a 6 as "Hard — real effort" rather than a generic
+     mid-scale number, plus guidance to read RPE against prescribed IF/TSS for bike work, treat
+     it as standalone for strength, and not remark on its absence as a matter of course.
+     Confirmed working on a live run: the coach cited "the Redondo +1 at RPE 5" and "Spickard +3
+     at RPE 6" and reasoned about the missing RPE on strength sessions unprompted.
    - **A CLI tool for manual entry/testing gets built regardless** (`scripts/log_workout.py`-style,
      writes directly to our DB) — useful for dev/testing independent of whether intervals.icu ends
      up being the primary real-world entry point.

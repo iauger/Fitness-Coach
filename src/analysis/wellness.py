@@ -73,12 +73,21 @@ def rhr_trend(days: int = 30) -> dict:
     }
 
 
-def recovery_flags(days: int = 7) -> list[str]:
-    """Plain-language flags for concerning recovery patterns."""
+def recovery_flags(days: int = 30) -> list[str]:
+    """
+    Plain-language flags for concerning recovery patterns. These strings are injected verbatim
+    into the coach's system prompt, so their stated windows have to be true.
+
+    All three summaries are pulled over the same `days` window because their output keys are
+    named `avg_30d` regardless of the window requested — calling them with 14 or 7 (as this did
+    until Session 14) meant the flag text claimed "30d avg" for a 14-day mean and "last 30 days"
+    for a 7-day count. The 7-day sub-averages are unaffected: they're computed from the tail of
+    whatever window is fetched, so a 30-day pull still yields a correct avg_7d.
+    """
     flags = []
-    hrv = hrv_summary(days=14)
+    hrv = hrv_summary(days=days)
     sleep = sleep_summary(days=days)
-    rhr = rhr_trend(days=14)
+    rhr = rhr_trend(days=days)
 
     if hrv.get("trend") == "declining":
         flags.append(f"HRV trending down (7d avg {hrv.get('avg_7d')} vs 30d avg {hrv.get('avg_30d')})")
