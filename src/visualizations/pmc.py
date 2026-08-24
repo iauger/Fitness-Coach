@@ -15,6 +15,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from src.db.schema import get_connection
 from src.athlete.profile import metric_history
+from src.analysis.forecast import project_fitness
 from src.visualizations.theme import COLORS, LAYOUT, AXIS
 
 FRESH_MIN = 5      # TSB >= 5: Fresh
@@ -125,6 +126,7 @@ def build(weeks: int | None = None) -> go.Figure:
     eftp = _eftp_series(rows)
     ramp_dates, ramp_values = _weekly_ramp(rows)
     ftp_history = metric_history("ftp")
+    projected = project_fitness()
 
     fig = make_subplots(
         rows=4, cols=1,
@@ -160,6 +162,38 @@ def build(weeks: int | None = None) -> go.Figure:
             font=dict(size=8, color=color),
             xanchor="left", yanchor="top", textangle=-60, row=1, col=1,
         )
+
+    # ── Projected CTL/ATL/TSB — deterministic EWMA rollout using planned_workouts' future
+    # TSS, not a model. Horizon is whatever's actually on the calendar (TrainerRoad only
+    # publishes the near-term block), so this is near-term, not a race-day forecast.
+    if projected:
+        proj_dates = [dates[-1]] + [p["date"] for p in projected]
+        proj_ctl = [ctl[-1]] + [p["ctl"] for p in projected]
+        proj_atl = [atl[-1]] + [p["atl"] for p in projected]
+        proj_tsb = [tsb[-1]] + [p["tsb"] for p in projected]
+
+        fig.add_trace(go.Scatter(
+            x=proj_dates, y=proj_atl, name="ATL (projected)",
+            line=dict(color=COLORS["atl"], width=1.5, dash="dot"), opacity=0.5,
+            hovertemplate="%{y:.1f} (projected)",
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=proj_dates, y=proj_ctl, name="CTL (projected)",
+            line=dict(color=COLORS["ctl"], width=2.5, dash="dash"), opacity=0.6,
+            hovertemplate="%{y:.1f} (projected)",
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=proj_dates, y=proj_tsb, name="Form (projected)",
+            line=dict(color=COLORS["subtext"], width=2, dash="dash"),
+            hovertemplate="%{y:.1f} (projected)",
+        ), row=2, col=1)
+
+        for r in (1, 2):
+            fig.add_shape(
+                type="line", xref="x", yref="y domain",
+                x0=dates[-1], x1=dates[-1], y0=0, y1=1,
+                line=dict(color=COLORS["subtext"], width=1, dash="dot"), row=r, col=1,
+            )
 
     # ── Panel 2: Form, zone-colored line + background bands ─────────────────
     tsb_min = min(tsb + [-30])

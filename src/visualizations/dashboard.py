@@ -38,6 +38,18 @@ def _earliest_data_date() -> str:
     return row[0] or date.today().isoformat()
 
 
+def _latest_data_date() -> str:
+    """Latest date to show — today, or later if the PMC chart's forecast (planned_workouts'
+    future TSS) extends past it. Keeps the projected days visible under every preset by default
+    instead of sitting outside the filtered range."""
+    conn = get_connection()
+    row = conn.execute("SELECT MAX(date) FROM planned_workouts").fetchone()
+    conn.close()
+    latest_planned = row[0] if row and row[0] else None
+    today_iso = date.today().isoformat()
+    return max(latest_planned, today_iso) if latest_planned else today_iso
+
+
 def _embed(fig, div_id: str) -> str:
     """Embed a Plotly figure as a responsive div (no bundled JS)."""
     # Remove fixed height so the div fills its CSS container; keep autosize for resize.
@@ -56,6 +68,7 @@ def build_dashboard() -> str:
     today = date.today().strftime("%B %d, %Y")
     today_iso = date.today().isoformat()
     earliest_iso = _earliest_data_date()
+    chart_end_iso = _latest_data_date()
 
     # Full history baked in for all three — the date-range filter is client-side (Plotly
     # relayout, zooming the visible x-axis range), so it can only reveal data already present.
@@ -495,6 +508,10 @@ def build_dashboard() -> str:
   const PRESET_DAYS = {presets_json};   // {{key: days_back}}, null = computed specially (YTD/All)
   const EARLIEST_ISO = '{earliest_iso}';
   const TODAY_ISO = '{today_iso}';
+  // Range end — normally today, but extends further when PMC's forecast (planned_workouts'
+  // future TSS) reaches past it, so the projected days aren't hidden outside every preset by
+  // default. "days ago" math below still anchors on TODAY_ISO, only the visible range end moves.
+  const CHART_END_ISO = '{chart_end_iso}';
   const DEFAULT_PRESET = '{DEFAULT_PRESET}';
 
   // Per-chart x-axis keys to set on relayout — PMC is a 4-row shared_xaxes subplot, Load is
@@ -527,13 +544,13 @@ def build_dashboard() -> str:
       const el = document.getElementById(divId);
       if (!el || !el.data) continue; // chart may be empty (no data) — nothing to relayout
       const relayoutUpdate = {{}};
-      axes.forEach(ax => {{ relayoutUpdate[ax + '.range'] = [startIso, TODAY_ISO]; }});
+      axes.forEach(ax => {{ relayoutUpdate[ax + '.range'] = [startIso, CHART_END_ISO]; }});
       Plotly.relayout(el, relayoutUpdate);
     }}
   }}
 
   function updateRangeLabel(startIso) {{
-    document.getElementById('range-label').textContent = startIso + ' → ' + TODAY_ISO;
+    document.getElementById('range-label').textContent = startIso + ' → ' + CHART_END_ISO;
   }}
 
   function daysBetween(startIso) {{

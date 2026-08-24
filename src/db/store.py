@@ -42,12 +42,38 @@ def upsert_activities(activities: list[dict], db_path: Path = DB_PATH) -> int:
             # Skip if a same-sport activity with similar duration already exists
             if act_time and _has_near_duplicate(conn, act_date, act_time, act_type, act_id):
                 continue
+            # ON CONFLICT DO UPDATE, not INSERT OR REPLACE: the latter is implemented as
+            # DELETE + INSERT, so any column not named here would silently reset to NULL on
+            # every sync. Since incremental_sync() re-pulls the last ~2 days at the start of
+            # every coach session, athlete-authored columns would be wiped within days.
+            # Only synced columns belong in the SET list below — never add an athlete-authored
+            # one (notes, manual RPE), or it will be overwritten by the next sync.
             conn.execute("""
-                INSERT OR REPLACE INTO activities (
+                INSERT INTO activities (
                     id, date, name, type, sport, moving_time, distance,
                     elevation, avg_hr, max_hr, avg_power, max_power, np,
                     tss, ctl, atl, tsb, feel, calories, raw_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    date=excluded.date,
+                    name=excluded.name,
+                    type=excluded.type,
+                    sport=excluded.sport,
+                    moving_time=excluded.moving_time,
+                    distance=excluded.distance,
+                    elevation=excluded.elevation,
+                    avg_hr=excluded.avg_hr,
+                    max_hr=excluded.max_hr,
+                    avg_power=excluded.avg_power,
+                    max_power=excluded.max_power,
+                    np=excluded.np,
+                    tss=excluded.tss,
+                    ctl=excluded.ctl,
+                    atl=excluded.atl,
+                    tsb=excluded.tsb,
+                    feel=excluded.feel,
+                    calories=excluded.calories,
+                    raw_json=excluded.raw_json
             """, (
                 str(a.get("id", "")),
                 a.get("start_date_local", a.get("date", ""))[:10],
@@ -66,7 +92,12 @@ def upsert_activities(activities: list[dict], db_path: Path = DB_PATH) -> int:
                 a.get("icu_ctl") or a.get("ctl"),
                 a.get("icu_atl") or a.get("atl"),
                 a.get("icu_tsb") or a.get("tsb"),
-                a.get("perceived_exertion") or a.get("feel"),
+                # icu_rpe is the field intervals.icu actually populates (154 activities as of
+                # 2026-08-23); perceived_exertion is null on every record we've ever synced.
+                # Mapping only the latter silently dropped 130 real RPE values — same bug class
+                # as the Session 7 avg_power/np/tss mismatch. 0 means "unset", so `or` chaining
+                # correctly falls through to the next candidate.
+                a.get("icu_rpe") or a.get("perceived_exertion") or a.get("feel"),
                 a.get("kilojoules") or a.get("calories"),
                 json.dumps(a),
             ))

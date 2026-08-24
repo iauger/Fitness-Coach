@@ -1,8 +1,10 @@
 """
 Seed / update the athlete_profile table (height, weight, FTP).
 
-Safe to re-run — only writes a new dated entry when the value actually changed from
-whatever's currently on record, so a plain re-run is a no-op after the first.
+Safe to re-run. A bare run only seeds metrics that have no record at all, so it's a true
+no-op once the baseline exists — it will never write a DEFAULTS value back over a metric
+you've since changed via a flag. Flags always record a new dated entry (skipped only if the
+value matches what's already effective on that date).
 
 Usage:
     python scripts/seed_profile.py                          # establish baseline (once)
@@ -59,8 +61,18 @@ if __name__ == "__main__":
 
     print("Updating athlete profile...")
     for metric, (default_value, default_date, default_note) in DEFAULTS.items():
-        overridden = overrides[metric] is not None
-        value = overrides[metric] if overridden else default_value
-        eff_date = args.effective_date or (None if overridden else default_date)
-        note = None if overridden else default_note
-        update(metric, value, eff_date, note)
+        override = overrides[metric]
+
+        if override is not None:
+            # Explicit flag — always record the new dated value.
+            update(metric, override, args.effective_date, None)
+            continue
+
+        # No flag for this metric. Only seed the baseline if nothing is on record yet —
+        # otherwise a bare re-run would write DEFAULTS back over a value that was
+        # deliberately changed (e.g. `--ftp 250` today, plain re-run tomorrow silently
+        # reverting FTP to 238 and corrupting the dated history compliance scoring reads).
+        if get_metric(metric) is None:
+            update(metric, default_value, args.effective_date or default_date, default_note)
+        else:
+            print(f"  {metric}: already tracked ({get_metric(metric)}) -> left unchanged")

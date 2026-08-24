@@ -26,4 +26,5 @@ An AI-powered personal coaching layer built on top of intervals.icu. Reads your 
 
 ## Status
 
-Early development — see [devlog.md](devlog.md) for session-by-session progress.
+Early development — see [devlog.md](devlog.md) for session-by-session progress and
+[ROADMAP.md](ROADMAP.md) for the north star, current state, and what's being built next.
