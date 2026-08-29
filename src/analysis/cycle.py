@@ -15,6 +15,7 @@ import json
 from datetime import date, datetime
 from src.db.schema import get_connection
 from src.analysis.training_plan import cycles
+from src.analysis.load import sum_effective_tss
 
 
 def _weeks_in_cycle(conn, cycle: dict) -> list[dict]:
@@ -31,15 +32,13 @@ def _load_for_range(conn, start: str, end: str) -> dict:
         SELECT COALESCE(SUM(planned_tss), 0) tss, COUNT(*) n
         FROM planned_workouts WHERE date BETWEEN ? AND ? AND planned_tss IS NOT NULL
     """, (start, end)).fetchone()
-    actual = conn.execute("""
-        SELECT COALESCE(SUM(tss), 0) tss, COUNT(*) n
-        FROM activities WHERE date BETWEEN ? AND ? AND moving_time IS NOT NULL
-    """, (start, end)).fetchone()
+    # Corrected for the rides intervals.icu analysed against the wrong FTP — see load.py.
+    actual_tss, n_act, _ = sum_effective_tss(conn, start, end)
     return {
         "planned_tss": round(planned["tss"], 1),
         "planned_sessions": planned["n"],
-        "actual_tss": round(actual["tss"], 1),
-        "activities": actual["n"],
+        "actual_tss": actual_tss,
+        "activities": n_act,
     }
 
 

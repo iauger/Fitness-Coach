@@ -11,6 +11,7 @@ from .wellness import hrv_summary, sleep_summary, rhr_trend, recovery_flags
 from .compliance import compliance_summary, recent_planned_workouts
 from .training_plan import plan_summary
 from .cycle import latest_review
+from .load import load_correction_text
 from src.athlete.profile import current_profile
 from src.db.schema import get_connection
 
@@ -252,6 +253,12 @@ def coaching_context_text(ctx: dict | None = None) -> str:
     ]
     for yr in annual:
         lines.append(f"  {yr['year']}: {yr['tss']:>6.0f} TSS  (~{yr['hours_est']:>4.0f}h est.)")
+
+    # Sits immediately before plan position so the coach reads the caveat before the CTL-based
+    # sections it applies to. Returns None once no mis-analysed rides remain in the window.
+    correction = load_correction_text()
+    if correction:
+        lines += ["", correction]
 
     pos = ctx["training"].get("plan_position")
     if pos:

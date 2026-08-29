@@ -15,6 +15,7 @@ import json
 from datetime import date, timedelta
 from src.db.schema import get_connection
 from src.athlete.profile import get_metric
+from src.analysis.load import sum_effective_tss
 
 # Seiler's three-zone model in intensity-factor terms. LT1 (the aerobic threshold, above which
 # a session stops being conversational) sits near IF 0.75; LT2 near 0.85, which is also the
@@ -67,10 +68,8 @@ def weekly_load(conn, today: date, weeks: int = 8) -> list[dict]:
             "SELECT COALESCE(SUM(planned_tss),0) t FROM planned_workouts "
             "WHERE date BETWEEN ? AND ? AND planned_tss IS NOT NULL",
             (ws.isoformat(), we.isoformat())).fetchone()["t"]
-        act = conn.execute(
-            "SELECT COALESCE(SUM(tss),0) t, COUNT(*) n FROM activities "
-            "WHERE date BETWEEN ? AND ? AND moving_time IS NOT NULL",
-            (ws.isoformat(), we.isoformat())).fetchone()
+        actual_tss, n_act, n_corrected = sum_effective_tss(
+            conn, ws.isoformat(), we.isoformat())
         ctl = conn.execute(
             "SELECT ctl, atl FROM wellness WHERE date <= ? AND ctl IS NOT NULL "
             "AND atl IS NOT NULL ORDER BY date DESC LIMIT 1", (we.isoformat(),)).fetchone()
@@ -95,10 +94,11 @@ def weekly_load(conn, today: date, weeks: int = 8) -> list[dict]:
             "plan_week": wk["plan_week_number"] if wk else None,
             "planned_tss": round(planned, 0),
             "planned_to_date": round(planned_to_date, 0),
-            "actual_tss": round(act["t"], 0),
-            "pct_of_planned": (round(act["t"] / planned_to_date * 100, 0)
+            "actual_tss": round(actual_tss, 0),
+            "corrected_rides": n_corrected,
+            "pct_of_planned": (round(actual_tss / planned_to_date * 100, 0)
                                if planned_to_date else None),
-            "sessions": act["n"],
+            "sessions": n_act,
             "ctl_end": round(ctl["ctl"], 1) if ctl else None,
             "tsb_end": round(ctl["ctl"] - ctl["atl"], 1) if ctl else None,
         })

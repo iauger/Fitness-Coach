@@ -6,6 +6,7 @@ import json
 from datetime import date, timedelta
 from collections import defaultdict
 from src.db.schema import get_connection
+from src.analysis.load import effective_tss
 
 SPORT_GROUPS = {
     "Ride": "cycling", "VirtualRide": "cycling", "GravelRide": "cycling",
@@ -38,6 +39,9 @@ def recent_activities(days: int = 28) -> list[dict]:
     results = []
     for r in rows:
         raw = json.loads(r["raw_json"])
+        # Corrected where intervals.icu analysed the ride against the wrong FTP (see load.py),
+        # so the per-session figure the coach reads agrees with the weekly totals.
+        load, load_corrected = effective_tss(r, raw)
         results.append({
             "date": r["date"],
             "name": r["name"],
@@ -51,7 +55,8 @@ def recent_activities(days: int = 28) -> list[dict]:
             "rpe": r["feel"],
             # Athlete's own words about the session, synced from the intervals.icu chat thread.
             "note": r["athlete_note"],
-            "load": raw.get("icu_training_load") or raw.get("hr_load"),
+            "load": round(load) if load else None,
+            "load_corrected": load_corrected,
             "trimp": round(raw.get("trimp", 0), 1),
             "intensity": round(raw.get("icu_intensity", 0), 1),
         })

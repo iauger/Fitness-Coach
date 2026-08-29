@@ -11,6 +11,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
 from src.db.schema import get_connection
+from src.analysis.load import effective_tss
 from src.visualizations.theme import COLORS
 
 CHARTS_DIR = Path(__file__).parent.parent.parent / "data" / "charts"
@@ -37,9 +38,6 @@ def _fmt_hms(seconds: float | None) -> str:
     return _fmt_duration(seconds / 60)
 
 
-def _activity_load(raw_json: str) -> float | None:
-    raw = json.loads(raw_json or "{}")
-    return raw.get("icu_training_load") or raw.get("power_load") or raw.get("hr_load")
 
 
 def _week_bounds(weeks: int) -> tuple[date, date]:
@@ -63,13 +61,18 @@ def _load_data(start: date, end: date) -> dict[str, dict]:
 
     activities = defaultdict(list)
     for r in conn.execute("""
-        SELECT date, name, type, moving_time, avg_hr, avg_power, tss, raw_json
+        SELECT date, name, type, moving_time, avg_hr, avg_power, np, tss, raw_json
         FROM activities
         WHERE date BETWEEN ? AND ? AND moving_time IS NOT NULL
         ORDER BY date, moving_time DESC
     """, (start.isoformat(), end.isoformat())).fetchall():
         row = dict(r)
-        row["load"] = row["tss"] or _activity_load(row.pop("raw_json"))
+        # Same correction the coaching context applies (see analysis/load.py), so the calendar
+        # and the coach never quote different loads for the same ride.
+        load, corrected = effective_tss(r)
+        row.pop("raw_json")
+        row["load"] = round(load) if load else None
+        row["load_corrected"] = corrected
         activities[row["date"]].append(row)
 
     planned = defaultdict(list)
