@@ -65,19 +65,21 @@ back to this sentence.
   was evaluated alongside is currently parked (real data check, not a guess).
 
 **Ad hoc / debt — not blocking, but real:**
-- **Google Calendar OAuth token is dead and calendar sync is down (Session 15).**
-  `RefreshError: invalid_grant — Token has been expired or revoked`. Cause is upstream config,
-  not code: the Google Cloud OAuth consent screen is in **Testing** publishing status, which
-  expires refresh tokens after 7 days (credentials issued 2026-08-18, died by 08-28). Fix is
-  athlete-side and deliberately deferred — it needs a browser consent round-trip and, to stop
-  recurring, publishing the app to production (`calendar.readonly` is a *sensitive* scope, so
-  that path carries an unverified-app interstitial). Impact is contained: `incremental_sync()`
-  wraps calendar sync in try/except, so intervals.icu activities, wellness, events, and notes
-  all keep syncing; only `planned_workouts` and compliance matching are stale.
-  **Code fix worth doing regardless:** `google_calendar.py:51-53` only falls through to the
-  interactive flow when there is *no* refresh token — a token that exists but is rejected raises
-  straight out. Wrapping the refresh in `try/except RefreshError` would turn this crash into a
-  browser prompt. **Blocks item 8**, which needs a complete 4 weeks of matched compliance data.
+- ~~**Google Calendar OAuth token is dead and calendar sync is down (Session 15).**~~
+  **RESOLVED by deleting the OAuth path entirely (Session 15).** The dead-token symptom
+  (`RefreshError: invalid_grant`, caused by the consent screen sitting in Testing status, which
+  expires refresh tokens every 7 days) prompted a look at the alternatives on the calendar's
+  settings page. **The public iCal feed is strictly better than the API on every axis:** no
+  auth, no Cloud project, no token, no expiry — and 319 events reaching 2027-08-27 versus the
+  40 rows the API path had. Switched; `google_calendar.py` and `auth_google_calendar.py` deleted
+  and all four google-auth/api packages dropped from requirements. Config is now one env var,
+  `GCAL_ICAL_URL`.
+  - **Caveat:** the feed is readable by anyone holding the URL — a property of the calendar's
+    sharing setting, not of the integration. Google can regenerate the address to rotate it.
+  - **Google is still a middleman** and refreshes the calendar it subscribes to on its own
+    schedule (sometimes 8-24h behind TrainerRoad). That latency existed on the API path too, so
+    it is not a regression. Pointing `GCAL_ICAL_URL` at TrainerRoad's own iCal export would cut
+    Google out and be fresher; `tr_calendar.py` reads standard VEVENTs and would need no change.
 - **`planned_workouts` is a rolling ~30-day-back/14-day-forward window, not a full-history
   table** (`sync_calendar.py`'s defaults) — only 40 rows exist as of Session 13, spanning
   2026-07-20 to 2026-09-05. This isn't a bug (confirmed by checking the actual data, not
@@ -429,15 +431,12 @@ current setup, to ground that discovery rather than starting from a blank page:
    - **Still to build: the review itself.** Everything above is position and structure; nothing
      yet *reviews* a completed cycle. Remaining work: aggregate compliance / load / recovery /
      RPE / notes across the cycle `just_completed_cycle()` returns, and generate the review.
-   - **BLOCKING prerequisite — now two things, not one:**
-     1. *(Session 14)* `incremental_sync()` only syncs/matches planned workouts ~2-3 days back
-        (`sync.py` uses `sync_window()`'s start; `scripts/sync_calendar.py` defaults to 14), and
-        nothing ever re-matches older rows. A 4-week review needs a *complete* 4 weeks of matched
-        compliance data — widen that window.
-     2. *(Session 15)* **The Google Calendar OAuth token is dead**, so `planned_workouts` isn't
-        syncing at all and compliance matching is frozen. See the debt list above. Widening the
-        window is pointless until this is restored. The first cycle closes **2026-09-14** — the
-        token needs fixing before then for that review to have data.
+   - ~~**BLOCKING prerequisites**~~ — **both cleared by the iCal switch (Session 15).** The
+     narrow ~2-day sync/match window and the dead OAuth token are gone together: calendar sync
+     now runs unauthenticated over 60 days back / 120 forward on every run, so a workout whose
+     activity synced late gets re-matched and a full mesocycle of compliance data always exists.
+     `planned_workouts` went 40 → 319 rows. **Item 8's review is unblocked.** First cycle closes
+     **2026-09-14**.
 
 9. **Race/event handling.** Folded into the existing coaching methodology rather than a separate
    mode or separate schema — a race is still just an activity with RPE+notes, same loop as any
