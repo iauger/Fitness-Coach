@@ -15,3 +15,8 @@ venv/
 # Google OAuth client secret + token. Nothing here should ever be committed.
 data/
 .playwright-mcp/
+
+# devlog.md is kept local only. It's the working record of why decisions were made, and it
+# accumulates real personal detail — email, intervals.icu athlete id, HRV/RHR/sleep/weight
+# figures — that doesn't belong in a public repo. ROADMAP.md carries the decisions themselves.
+devlog.md
