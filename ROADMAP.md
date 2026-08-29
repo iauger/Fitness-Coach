@@ -65,6 +65,24 @@ back to this sentence.
   was evaluated alongside is currently parked (real data check, not a guess).
 
 **Ad hoc / debt — not blocking, but real:**
+- **LTHR in intervals.icu is stale at 177, and it silently corrupts every HR-derived figure
+  (Session 16, athlete-side fix).** Across every hard session in the current block the athlete
+  peaks at 159-173 and averages 142-146 while riding at 87-96% of FTP. The zone table puts the
+  top of HR Z2 at 158, so his entire threshold workload lands inside "Z2 = easy" — an HR-based
+  intensity split returned **90% easy** for a block containing nothing but sweet spot and
+  threshold. Caught only because the athlete said the number looked wrong.
+  Scope is wider than the intensity metric: `hr_load`/TRIMP is scored against these zones, and
+  that is the *only* load signal for strength, yoga and every other non-power session — so
+  cross-sport load is miscounted too. Nothing in this repo can fix it; LTHR has to be reset in
+  intervals.icu. A hard session peaking at 173 suggests something nearer 160.
+- **14 commits sit unpushed on `main`** as of 2026-08-29, spanning Sessions 14-16. The remote
+  is 8 commits behind and has none of the data pipeline, dashboard, coaching, plan or cycle
+  work. This also blocks any cloud/remote Claude Code session from being useful, since it would
+  clone a tree that predates all of it.
+- **`log_life_event` still depends on the model choosing to call it.** Accepted rather than
+  fixed: unlike the check-in's feel scores, a life event genuinely only surfaces mid-conversation
+  and has no structured point of capture to write from. Worth revisiting if the `life_events`
+  table stays near-empty (1 row as of Session 16).
 - ~~**Google Calendar OAuth token is dead and calendar sync is down (Session 15).**~~
   **RESOLVED by deleting the OAuth path entirely (Session 15).** The dead-token symptom
   (`RefreshError: invalid_grant`, caused by the consent screen sitting in Testing status, which
@@ -477,16 +495,23 @@ current setup, to ground that discovery rather than starting from a blank page:
     - **Trigger points reuse item 8's structure, no new automation needed:** end of week
       (generated as a byproduct of the weekly check-in call itself) and end of 4-week cycle
       (triggered by hitting a `week_type='rest'` row).
-    - **Storage: new `coaching_log.type` values** (`weekly_summary`, `cycle_summary`) — no new
-      table, reuses existing infra.
-    - **Two blockers in `report.py` to fix FIRST (Session 14 audit)** — both would silently
-      defeat this design if summaries were written before they're addressed:
-      1. `report.py:295` hard-truncates injected coaching memory at 300 chars
-         (`lines.append(f"  {note[:300]}")`) — summaries would be cut off mid-sentence.
-      2. `_recent_coaching_memory()` (`report.py:19-22`) is `ORDER BY created_at DESC LIMIT 3`
-         with **no type filter**. Adding two new types means summaries compete for those 3 slots
-         and can fully evict `checkin`/`session_summary` rows — the opposite of the tiering
-         described below, which assumes they coexist.
+    - ~~**Storage: new `coaching_log.type` values**~~ — **superseded (Session 16).** The cycle
+      summary is now a `cycle_reviews` row, not a `coaching_log` type. Structured storage does
+      something a text blob can't: it makes cycle-over-cycle comparison a SQL query rather than
+      something the model has to recall, which is the main thing a review offers over a
+      check-in. Named columns for the figures compared across cycles, `metrics_json` for the
+      full rollup. A future `weekly_summary` should follow the same shape rather than going
+      back into `coaching_log`.
+    - ~~**Two blockers in `report.py` to fix FIRST (Session 14 audit)**~~ — **both fixed,
+      Session 16.** They were worse than the audit estimated: *every* one of the 9 stored
+      `coaching_log` rows exceeded 300 chars (842-3023), so ~85% of each was being discarded
+      mid-sentence on every injection. Replaced with the most recent entry of each type, in
+      full, under a 6000-char budget that trims oldest-first on a paragraph boundary and marks
+      that it did. Memory went from ~900 chars of fragments to 3222 chars of whole entries.
+    - **The cost mechanic above still holds, but the quantitative half is already done**
+      (Session 16). `src/analysis/derive.py` computes the whole stats rollup deterministically
+      and is *not* persisted — see the "compute vs store" rule in the architecture notes below.
+      What remains for item 10 is only the qualitative-narrative compression.
     - **Context tiering this enables:** current week gets full raw detail; prior weeks in the
       current cycle get their weekly summaries; older cycles get cycle-level summaries; anything
       older than that isn't injected by default but stays fully reachable via `query_history` on
@@ -556,6 +581,56 @@ current setup, to ground that discovery rather than starting from a blank page:
     first, designed to be hostable later").
 
 ---
+
+## Data architecture: what gets computed, what gets stored (Session 16)
+
+Three kinds of information were being stored the same way, and separating them is the rule that
+now governs where anything new goes. Written down because the code shows *what* was done and
+not *why*, and the wrong instinct here is expensive to undo.
+
+**Facts — computed on read, never stored, never remembered.** CTL ramps, weekly planned-vs-actual
+load, intensity distribution, recovery against baseline, RPE against prescribed IF, consistency.
+All derivable from `activities` + `wellness` + `planned_workouts` in microseconds on a few
+thousand SQLite rows. `src/analysis/derive.py` computes them and renders them into the snapshot.
+Persisting any of it would be denormalisation that goes stale the moment a late activity syncs.
+
+**State — structured rows, effective-dated, written deterministically at the point of capture.**
+FTP history, goals, life events, plan weeks, per-session RPE and notes. The rule learned the hard
+way: *if the data arrives structured, write it structurally — never hand it to the model as prose
+and hope it calls a tool.* `checkin.py` collected three 1-10 scores and a closed-enum compliance
+value, formatted them into a sentence, and produced 4 stored rows across 7 check-ins.
+
+**Narrative — stored whole, retrieved deliberately, never truncated.** Coach reasoning, athlete
+notes, cycle reviews.
+
+**When to persist a number:** only when it must stay pinned to a narrative written at that
+moment. `cycle_reviews` qualifies — its figures and its prose have to travel together, and
+recomputing them later against changed data would misrepresent what the coach was looking at.
+A weekly rollup does not qualify; it has no paired narrative, so it is computed.
+
+**When a source is wrong, correct on read rather than storing a correction.** `analysis/load.py`
+recomputes TSS for the rides intervals.icu analysed against a stale FTP, instead of writing a
+corrected column. A stored correction would need explicit exclusion from `upsert_activities`'
+SET list or the next sync destroys it — the same trap that would have eaten the athlete notes —
+and it would create a second source of truth to keep consistent.
+
+**Don't rebuild an upstream model to fix a self-retiring error.** CTL/ATL are computed
+server-side by intervals.icu and inherit the same FTP error. Recomputing them locally would mean
+maintaining a PMC that permanently disagrees with intervals.icu's own charts, to fix a gap that
+decays with a 42-day half-life (2.2 CTL now, 0.28 in twelve weeks). The snapshot reports the gap
+instead, and the block disappears on its own once no affected rides remain in the window.
+
+**Prompt ordering is load-bearing, not cosmetic.** Three separate times a correct instruction was
+ignored because it sat far from what it governed: the format rules before the data snapshot
+(Session 14), and the LOAD CORRECTION block below `ANNUAL VOLUME` while the CTL figures it
+qualified were far above (Session 16 — a live run quoted "11 percent of your fitness ceiling"
+off an understated CTL without mentioning the caveat, and moving the block directly under
+CTL/ATL/TSB fixed it on the re-run). Put a caveat adjacent to the number it qualifies.
+
+**Never give the model a label where a number exists.** `RECOVERY SIGNALS` used to print
+"trend: stable" — which was hiding a 3.3ms HRV drop against baseline with RHR up 1.6. The
+label was doing the interpreting. Give values and deltas; let the coach judge them against the
+thresholds already in the prompt.
 
 ## Coaching interaction model (Session 13 design)
 
