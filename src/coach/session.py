@@ -16,6 +16,10 @@ from src.analysis.cycle import (
     cycle_for_review, cycle_metrics, cycle_context_text, previous_review, save_review,
 )
 from src.analysis.training_plan import current_week
+from src.analysis.weekly import (
+    week_metrics, save_summary, last_completed_week, summarized_weeks, has_qualitative_content,
+)
+from src.coach.summarize import weekly_narrative
 from src.coach.prompt import build_system_prompt
 from src.coach.tools import TOOL_SCHEMAS, execute_tool
 from src.db.schema import get_connection
@@ -102,6 +106,16 @@ def checkin(feel_context: str = "", verbose: bool = False) -> str:
     messages = [{"role": "user", "content": user_content}]
     response = _run_tool_loop(client, model, system, messages)
 
+    # Summarise the week that just ended, as a byproduct of the check-in rather than as its own
+    # scheduled job — the check-in is already the weekly ritual, and this is the moment the
+    # week's notes are complete. Best-effort: a summarisation failure must not lose the
+    # check-in the athlete just paid for.
+    try:
+        _summarise_last_week(verbose=verbose)
+    except Exception as e:
+        if verbose:
+            print(f"[coach] weekly summary skipped: {e}")
+
     # persist to coaching_log
     session_id = str(uuid.uuid4())[:8]
     conn = get_connection()
@@ -114,6 +128,22 @@ def checkin(feel_context: str = "", verbose: bool = False) -> str:
     conn.close()
 
     return response
+
+
+def _summarise_last_week(verbose: bool = False) -> None:
+    """Write the previous week's summary if it isn't already stored."""
+    week = last_completed_week()
+    if week.isoformat() in summarized_weeks():
+        return
+    m = week_metrics(week)
+    if has_qualitative_content(m):
+        narrative, model = weekly_narrative(m)
+    else:
+        narrative, model = None, None
+    save_summary(m, narrative, model)
+    if verbose:
+        print(f"[coach] summarised week of {m['week_start']}"
+              + (" (no notes — stats only)" if narrative is None else ""))
 
 
 def cycle_review(on: date | None = None, verbose: bool = False) -> str | None:

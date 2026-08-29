@@ -103,6 +103,34 @@ def migrate_db(db_path: Path = DB_PATH) -> None:
             UNIQUE(plan_name, cycle_start)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_cycle_reviews_start ON cycle_reviews(cycle_start)",
+        # One row per completed week. Same shape as cycle_reviews and for the same reason: the
+        # numbers have to stay pinned to the narrative written alongside them, and week-over-week
+        # comparison should be a query rather than something the model recalls.
+        # `narrative` is the ONLY part that costs an LLM call, and it is null when the week had
+        # no notes or RPE to compress — a quiet week is free.
+        """CREATE TABLE IF NOT EXISTS weekly_summaries (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            week_start      TEXT NOT NULL UNIQUE,
+            week_end        TEXT NOT NULL,
+            plan_week_number INTEGER,
+            week_type       TEXT,
+            phase           TEXT,
+            planned_tss     REAL,
+            actual_tss      REAL,
+            sessions        INTEGER,
+            adherence_pct   REAL,
+            ctl_end         REAL,
+            tsb_end         REAL,
+            hrv             REAL,
+            rhr             REAL,
+            sleep_hrs       REAL,
+            mean_rpe        REAL,
+            metrics_json    TEXT NOT NULL,
+            narrative       TEXT,
+            model           TEXT,
+            created_at      TEXT NOT NULL
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_weekly_summaries_start ON weekly_summaries(week_start)",
     ]
     with conn:
         for sql in migrations:

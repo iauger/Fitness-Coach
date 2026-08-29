@@ -9,8 +9,9 @@ from .fitness import current_fitness, ctl_trend, peak_ctl, ctl_history
 from .activities import recent_activities, sport_distribution, weekly_load_by_sport, yearly_volume
 from .wellness import hrv_summary, sleep_summary, rhr_trend, recovery_flags
 from .compliance import compliance_summary, recent_planned_workouts
-from .training_plan import plan_summary
+from .training_plan import plan_summary, current_cycle
 from .cycle import latest_review
+from .weekly import summaries_between, summary_lines
 from .load import load_correction_text
 from .derive import derived_text
 from src.athlete.profile import current_profile
@@ -32,6 +33,31 @@ MEMORY_CHAR_BUDGET = 6000
 # Most recent N of each coaching_log.type. One is enough: the job of this block is to stop the
 # coach repeating last week verbatim, and the longer arc now lives in cycle_reviews.
 MEMORY_PER_TYPE = 1
+
+
+# How far back raw per-session detail (including full athlete notes) stays in the snapshot.
+# Two weeks covers the current week plus the last one, which is the span a weekly check-in
+# actually reasons about session by session. Earlier weeks in the cycle arrive as summaries.
+RAW_ACTIVITY_DAYS = 14
+
+
+def _raw_activity_horizon() -> str:
+    return (date.today() - timedelta(days=RAW_ACTIVITY_DAYS)).isoformat()
+
+
+def _earlier_week_summaries() -> list[dict]:
+    """
+    Stored summaries for weeks in the current cycle that fall outside the raw horizon.
+
+    Scoped to the current cycle rather than a rolling window: the cycle is the unit the athlete
+    trains in, and once a cycle closes its own review supersedes the weekly summaries inside it.
+    """
+    cyc = current_cycle()
+    if not cyc:
+        return []
+    horizon = _raw_activity_horizon()
+    return [s for s in summaries_between(cyc["start_date"], cyc["end_date"])
+            if s["week_end"] < horizon]
 
 
 def _recent_coaching_memory(limit: int = MEMORY_PER_TYPE) -> list[str]:
@@ -203,6 +229,7 @@ def build_coaching_context(
             "recent_planned_workouts": recent_planned,
             # None when today falls outside any seeded plan — see seed_training_plan.py.
             "plan_position": plan_summary(),
+            "earlier_week_summaries": _earlier_week_summaries(),
         },
         "memory": {
             # Injected as its own field rather than competing for _recent_coaching_memory()'s
@@ -350,9 +377,16 @@ def coaching_context_text(ctx: dict | None = None) -> str:
                              f"  ({w.get('planned_duration_min') or '?'}min"
                              f", {w.get('planned_tss') or '?'} TSS)")
 
-    recent = ctx["training"]["recent_activities"]
+    # Context tiering (item 10): recent weeks in full, earlier weeks in the current cycle as
+    # their stored summaries. Raw activity detail is what grows without bound as the athlete
+    # logs a note per session, so it is the block that gets a horizon; the summaries keep the
+    # qualitative content reachable at a fraction of the size. Anything older stays out of the
+    # default context entirely and is still reachable through query_history.
+    recent = [a for a in ctx["training"]["recent_activities"]
+              if a["date"] >= _raw_activity_horizon()]
     if recent:
-        lines += ["", f"RECENT ACTIVITIES (last 28 days — {len(recent)} total)"]
+        lines += ["", f"RECENT ACTIVITIES (last {RAW_ACTIVITY_DAYS} days, in full — "
+                      f"{len(recent)} sessions)"]
         for a in recent[:10]:
             dur = f"{int(a['duration_min'])}min"
             dist = f"  {a['distance_km']}km" if a["distance_km"] else ""
@@ -366,6 +400,12 @@ def coaching_context_text(ctx: dict | None = None) -> str:
             if a.get("note"):
                 for para in a["note"].split("\n\n"):
                     lines.append(f"      note: {para}")
+
+    earlier = ctx["training"].get("earlier_week_summaries") or []
+    if earlier:
+        lines += ["", "EARLIER WEEKS THIS CYCLE (summarised — raw sessions available via "
+                      "query_history)"]
+        lines += summary_lines(earlier)
 
     memory = ctx.get("memory", {})
 
