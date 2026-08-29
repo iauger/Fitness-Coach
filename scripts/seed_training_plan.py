@@ -52,7 +52,13 @@ REST_WEEKS: dict[int, set[int]] = {
     2: {4, 8},      # build 8wk      (2026-11-09 .. 2027-01-03)
     3: {4, 8},      # specialty 8wk  (2027-01-04 .. 2027-02-28)
     4: {4, 8},      # build 8wk      (2027-03-01 .. 2027-04-25)
-    5: {4, 8},      # specialty 8wk  (2027-04-26 .. 2027-06-20)
+    # Phase 5 breaks the pattern: week 8 (2027-06-14) is a taper into the "Gravel Thing"
+    # A race on 2027-06-18 (8:00, TSS 387), not a recovery week. Confirmed against prescribed
+    # load in the TR calendar feed: that week totals 467 TSS, roughly double any other week in
+    # the plan, while every genuine rest week sits at 80-129. The real recovery follows the
+    # race, in phase 6. This leaves a 5-week final cycle (weeks 41-45) — exactly the plan
+    # irregularity that deriving cycles from week_type='rest' was chosen to handle.
+    5: {4},         # specialty 8wk  (2027-04-26 .. 2027-06-20)
     6: {1},         # standalone recovery week (2027-06-21 .. 2027-06-27)
 }
 
