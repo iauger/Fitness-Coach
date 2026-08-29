@@ -11,13 +11,61 @@ Window logic:
 from datetime import date, timedelta
 from src.intervals.client import IntervalsClient
 from src.db.schema import get_connection
-from src.db.store import upsert_activities, upsert_wellness, upsert_events, upsert_planned_workouts, log_sync
+from src.db.store import (
+    upsert_activities, upsert_wellness, upsert_events, upsert_planned_workouts,
+    update_activity_notes, log_sync,
+)
 from src.analysis.compliance import match_planned_workouts
 from src.integrations.google_calendar import sync_planned_workouts, TOKEN_PATH
 
 OVERLAP_DAYS = 2
 MAX_INCREMENTAL_DAYS = 30
 CALENDAR_LOOKAHEAD_DAYS = 14
+# Notes are written whenever the athlete gets round to it, not when the ride uploads, so the
+# 2-day activity window is too narrow to catch them. Scanning a wider span costs one extra
+# list request (chat threads are only fetched for the handful of activities that have one).
+NOTE_LOOKBACK_DAYS = 28
+
+
+def flatten_messages(messages: list[dict], athlete_id: str = "") -> str | None:
+    """
+    Collapse an activity's chat thread into a single note string.
+
+    Keeps non-deleted TEXT messages in the order the API returns them. Messages from anyone
+    other than the athlete are attributed inline, so a comment left by someone else can't be
+    mistaken for the athlete's own read of the session. Returns None for an empty thread —
+    an emptied thread should clear athlete_note, not leave a stale note behind.
+    """
+    parts = []
+    for m in messages:
+        if m.get("type") != "TEXT" or m.get("deleted"):
+            continue
+        content = (m.get("content") or "").strip()
+        if not content:
+            continue
+        if athlete_id and m.get("athlete_id") and m["athlete_id"] != athlete_id:
+            content = f"[{m.get('name') or 'other'}] {content}"
+        parts.append(content)
+    return "\n\n".join(parts) if parts else None
+
+
+def sync_activity_notes(client, activities: list[dict]) -> dict[str, str | None]:
+    """
+    Fetch athlete notes for the activities that have a chat thread.
+
+    `icu_chat_id` is set exactly when a thread exists — verified against 23 activities since
+    2026-07-01, where it was non-null on precisely the 2 carrying notes. Filtering on it keeps
+    this to a couple of requests per sync instead of one per activity.
+    """
+    notes: dict[str, str | None] = {}
+    for a in activities:
+        if not a.get("icu_chat_id"):
+            continue
+        act_id = str(a.get("id", ""))
+        notes[act_id] = flatten_messages(
+            client.get_activity_messages(act_id), client.athlete_id
+        )
+    return notes
 
 
 def _max_wellness_date() -> date | None:
@@ -74,7 +122,7 @@ def incremental_sync(silent: bool = False) -> dict:
     client = IntervalsClient()
     conn = get_connection()
     results = {"start": start.isoformat(), "end": end.isoformat(),
-               "activities": 0, "wellness": 0, "events": 0, "errors": []}
+               "activities": 0, "wellness": 0, "events": 0, "notes": 0, "errors": []}
 
     try:
         activities = client.get_activities(start, end)
@@ -83,6 +131,21 @@ def incremental_sync(silent: bool = False) -> dict:
             log_sync(conn, "activities", start, end, n)
         results["activities"] = n
         log(f"[sync] activities  {n} records")
+
+        # Notes are a separate request per activity, so a failure here must not cost us the
+        # activity rows already written above.
+        try:
+            note_start = min(start, today - timedelta(days=NOTE_LOOKBACK_DAYS))
+            note_scope = (activities if note_start >= start
+                          else client.get_activities(note_start, end))
+            notes = sync_activity_notes(client, note_scope)
+            n_notes = update_activity_notes(notes)
+            results["notes"] = n_notes
+            if notes:
+                log(f"[sync] notes       {n_notes} activities with athlete notes")
+        except Exception as e:
+            results["errors"].append(f"notes: {e}")
+            log(f"[sync] notes       ERROR: {e}")
     except Exception as e:
         results["errors"].append(f"activities: {e}")
         log(f"[sync] activities  ERROR: {e}")

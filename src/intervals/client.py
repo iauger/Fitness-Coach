@@ -42,6 +42,20 @@ class IntervalsClient:
             activities = [a for a in activities if a.get("type") in only_types]
         return activities
 
+    def get_activity_messages(self, activity_id: str) -> list[dict]:
+        """
+        Athlete-authored notes on an activity.
+
+        intervals.icu stores post-ride commentary as a chat thread, not as a field on the
+        activity — `description` is null on every activity we have ever synced, including
+        ones with notes visibly attached in the web UI. This endpoint is the only way to
+        reach that text.
+
+        Only call this for activities whose `icu_chat_id` is non-null; that field is set
+        exactly when a thread exists, so it avoids a request per activity.
+        """
+        return self._get(f"/activity/{activity_id}/messages")
+
     def get_wellness(self, start: date, end: date) -> list[dict]:
         params = {
             "oldest": start.isoformat(),

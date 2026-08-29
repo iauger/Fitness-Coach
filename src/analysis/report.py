@@ -13,6 +13,15 @@ from src.athlete.profile import current_profile
 from src.db.schema import get_connection
 
 
+def _with_weekday(iso_date: str) -> str:
+    """'2026-08-27' -> '2026-08-27 Thu'. The model otherwise infers weekdays from the ISO date
+    and gets them wrong, which matters because athlete notes refer to sessions by weekday."""
+    try:
+        return f"{iso_date} {date.fromisoformat(iso_date).strftime('%a')}"
+    except (ValueError, TypeError):
+        return iso_date
+
+
 def _recent_coaching_memory(limit: int = 3) -> list[str]:
     """Last N coaching log summaries to inject as memory."""
     conn = get_connection()
@@ -253,7 +262,7 @@ def coaching_context_text(ctx: dict | None = None) -> str:
         if upcoming:
             lines.append("  Upcoming:")
             for w in sorted(upcoming, key=lambda w: w["date"])[:5]:
-                lines.append(f"    {w['date']}  {w['name']}"
+                lines.append(f"    {_with_weekday(w['date'])}  {w['name']}"
                              f"  ({w.get('planned_duration_min') or '?'}min"
                              f", {w.get('planned_tss') or '?'} TSS)")
 
@@ -266,7 +275,13 @@ def coaching_context_text(ctx: dict | None = None) -> str:
             hr = f"  HR {int(a['avg_hr'])}bpm" if a["avg_hr"] else ""
             load = f"  load {a['load']}" if a["load"] else ""
             rpe = f"  RPE {int(a['rpe'])}/10" if a.get("rpe") else ""
-            lines.append(f"  {a['date']}  {(a['type'] or 'Unknown'):<16} {dur}{dist}{hr}{load}{rpe}  {a['name']}")
+            lines.append(f"  {_with_weekday(a['date'])}  {(a['type'] or 'Unknown'):<16} {dur}{dist}{hr}{load}{rpe}  {a['name']}")
+            # Not truncated: the note is the athlete's own read of the session, and the detail
+            # that makes it worth having ("legs went midway through the final set") is exactly
+            # what a character cap would cut.
+            if a.get("note"):
+                for para in a["note"].split("\n\n"):
+                    lines.append(f"      note: {para}")
 
     memory = ctx.get("memory", {})
 

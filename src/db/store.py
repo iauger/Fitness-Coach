@@ -106,6 +106,28 @@ def upsert_activities(activities: list[dict], db_path: Path = DB_PATH) -> int:
     return inserted
 
 
+def update_activity_notes(notes: dict[str, str | None], db_path: Path = DB_PATH) -> int:
+    """
+    Write athlete_note for the given activity ids. Keyed {activity_id: note_text}.
+
+    Deliberately a targeted UPDATE rather than a column on upsert_activities: notes are
+    fetched only for activities carrying an icu_chat_id, so folding athlete_note into the
+    main upsert would null it out on every other activity in the same sync window.
+    """
+    if not notes:
+        return 0
+    conn = get_connection(db_path)
+    updated = 0
+    with conn:
+        for act_id, text in notes.items():
+            cur = conn.execute(
+                "UPDATE activities SET athlete_note = ? WHERE id = ?", (text, act_id)
+            )
+            updated += cur.rowcount
+    conn.close()
+    return updated
+
+
 def upsert_wellness(wellness: list[dict], db_path: Path = DB_PATH) -> int:
     conn = get_connection(db_path)
     inserted = 0

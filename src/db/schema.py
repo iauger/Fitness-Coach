@@ -48,6 +48,10 @@ def migrate_db(db_path: Path = DB_PATH) -> None:
             created_at      TEXT NOT NULL
         )""",
         "CREATE INDEX IF NOT EXISTS idx_athlete_profile_metric_date ON athlete_profile(metric, effective_date)",
+        # Athlete's own words about the session, pulled from the intervals.icu activity chat
+        # thread (see IntervalsClient.get_activity_messages). Written by a targeted UPDATE in
+        # store.update_activity_notes, never by upsert_activities.
+        "ALTER TABLE activities ADD COLUMN athlete_note TEXT",
     ]
     with conn:
         for sql in migrations:
@@ -82,6 +86,7 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 tsb         REAL,
                 feel        INTEGER,   -- RPE 1-10
                 calories    REAL,
+                athlete_note TEXT,     -- athlete's own words, from the intervals.icu chat thread
                 raw_json    TEXT       -- full API response
             );
 

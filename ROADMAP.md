@@ -65,6 +65,19 @@ back to this sentence.
   was evaluated alongside is currently parked (real data check, not a guess).
 
 **Ad hoc / debt — not blocking, but real:**
+- **Google Calendar OAuth token is dead and calendar sync is down (Session 15).**
+  `RefreshError: invalid_grant — Token has been expired or revoked`. Cause is upstream config,
+  not code: the Google Cloud OAuth consent screen is in **Testing** publishing status, which
+  expires refresh tokens after 7 days (credentials issued 2026-08-18, died by 08-28). Fix is
+  athlete-side and deliberately deferred — it needs a browser consent round-trip and, to stop
+  recurring, publishing the app to production (`calendar.readonly` is a *sensitive* scope, so
+  that path carries an unverified-app interstitial). Impact is contained: `incremental_sync()`
+  wraps calendar sync in try/except, so intervals.icu activities, wellness, events, and notes
+  all keep syncing; only `planned_workouts` and compliance matching are stale.
+  **Code fix worth doing regardless:** `google_calendar.py:51-53` only falls through to the
+  interactive flow when there is *no* refresh token — a token that exists but is rejected raises
+  straight out. Wrapping the refresh in `try/except RefreshError` would turn this crash into a
+  browser prompt. **Blocks item 8**, which needs a complete 4 weeks of matched compliance data.
 - **`planned_workouts` is a rolling ~30-day-back/14-day-forward window, not a full-history
   table** (`sync_calendar.py`'s defaults) — only 40 rows exist as of Session 13, spanning
   2026-07-20 to 2026-09-05. This isn't a bug (confirmed by checking the actual data, not
@@ -91,9 +104,19 @@ back to this sentence.
   estimate*, not a value anyone set. `_manual_tss()` therefore computes against the right number
   and compliance scores are **not** distorted. The PMC chart's two series ("FTP (tracked)" vs
   "eFTP (estimate)") are correctly showing a real divergence.
-  **Open task, athlete-side not code-side:** get intervals.icu's own FTP *setting* (`icu_ftp` —
-  distinct from the `eftp` estimate) corrected to 238. Once that lands, API-derived load values
-  become trustworthy and `_manual_tss()`'s necessity is worth re-examining. Not before.
+  ~~**Open task, athlete-side not code-side:** get intervals.icu's own FTP *setting* (`icu_ftp`)
+  corrected to 238.~~ **DONE by the athlete, 2026-08-28 (Session 15).** Verified against the API:
+  `sportSettings[0].ftp = 238` and `indoor_ftp = 238`, matching the tracked `athlete_profile`
+  value. The `eftp` model estimate is unchanged at 260 and is *expected* to differ — it's a
+  critical-power fit, not a setting.
+  **New consequence to decide on: the change is not retroactive.** Each activity bakes in the FTP
+  it was analyzed under. The 2026-08-27 ride carries `icu_ftp = 238`; the 08-25 and 08-22 rides
+  carry **297**. So intervals.icu's own `icu_training_load` understates TSS on everything analyzed
+  before the fix (too-high FTP makes the same watts look easier), while `_manual_tss()` computes
+  correctly against the tracked 238 throughout. Options: leave it (the divergence is bounded and
+  historical), force a re-analysis of affected activities upstream, or prefer `_manual_tss()` over
+  `icu_training_load` for the affected date range. Not urgent — but `_manual_tss()` cannot be
+  retired yet, contrary to the note above.
 
 ---
 
@@ -286,10 +309,20 @@ current setup, to ground that discovery rather than starting from a blank page:
        backfilled values against real power data shows a cleanly monotonic relationship:
        RPE 1 → avg NP 165W / TSS 22; RPE 4 → 237W / 86; RPE 8 → 284W / 95. `icu_rpe` is
        **1 = easiest, 10 = hardest**, matching the desired scale.
-     - Still worth a one-off real-world test before declaring intervals.icu the primary entry
-       point: log a *note* there and confirm whether activity-level `description` is
-       athlete-editable post-ride text (it's a different field from the TR workout-description
-       text already used in `planned_workouts`). RPE itself no longer needs verifying.
+     - **Note-entry test RUN and RESOLVED (Session 15) — but the answer was not `description`.**
+       Two real notes were written in intervals.icu on the 2026-08-25 and 2026-08-27 rides.
+       `description` came back **null on both**, on the list *and* the detail endpoint (identical
+       183-key payloads — there is no richer detail response). So did `notes`, `note`, `comment`,
+       `feel`, `perceived_exertion`, `tags`, and `attachments`. Activity-level `description` is
+       **not** athlete-editable post-ride text; it appears to be an import-populated field only.
+     - **Notes live in a chat thread, at `GET /activity/{id}/messages`.** intervals.icu models
+       post-ride commentary as a conversation, not a field — which is also why it supports coach
+       replies. Both notes were there intact, attributed and timestamped. Message shape:
+       `{id, athlete_id, name, created, type: "TEXT", content, deleted, ...}`.
+     - **`icu_chat_id` on the activity is an exact predicate for "has a note"** — non-null on
+       precisely the 2 activities with threads, null on the other 21 since 2026-07-01 (and on
+       2,432 of 2,434 across all history). So this costs a couple of requests per sync, not one
+       per activity. This is what makes the native path cheap enough to be the default.
    - **RPE now reaches the coach (Session 14).** `recent_activities()` didn't select `feel`, so
      RPE was invisible to `build_coaching_context()` regardless of how well-populated the column
      was — adding prompt guidance without this would have been inert. Now surfaced as `rpe` and
@@ -300,9 +333,36 @@ current setup, to ground that discovery rather than starting from a blank page:
      it as standalone for strength, and not remark on its absence as a matter of course.
      Confirmed working on a live run: the coach cited "the Redondo +1 at RPE 5" and "Spickard +3
      at RPE 6" and reasoned about the missing RPE on strength sessions unprompted.
-   - **A CLI tool for manual entry/testing gets built regardless** (`scripts/log_workout.py`-style,
-     writes directly to our DB) — useful for dev/testing independent of whether intervals.icu ends
-     up being the primary real-world entry point.
+   - **Notes now reach the coach (Session 15) — the read path is DONE.** What shipped:
+     `IntervalsClient.get_activity_messages()`; `athlete_note TEXT` on `activities` via
+     `migrate_db()` *and* `init_db()`; `flatten_messages()` / `sync_activity_notes()` in `sync.py`;
+     `store.update_activity_notes()`; wired into `incremental_sync()`; surfaced through
+     `recent_activities()` as `note` and rendered untruncated under each RECENT ACTIVITIES line;
+     `scripts/backfill_notes.py` for history. Verified: a full re-sync repopulates both notes
+     rather than clobbering them.
+     - **`athlete_note` is written by a targeted UPDATE, never by `upsert_activities()`.** Notes
+       are fetched only for activities carrying an `icu_chat_id`, so folding the column into the
+       main upsert's SET list would null it out on every *other* activity in the same window —
+       a different failure mode from the Phase 0 `INSERT OR REPLACE` bug, same end result.
+     - **The note scan uses its own 28-day lookback** (`NOTE_LOOKBACK_DAYS`), not `sync_window()`'s
+       ~2 days. Notes get written whenever the athlete gets round to it, not when the ride uploads
+       — both real notes were written the following morning, and the 8/25 one was already outside
+       the activity window. Costs one extra list request; chat threads are still only fetched for
+       the handful of activities that have one.
+     - Note fetching is wrapped in its own try/except *inside* the activities block, so an API
+       failure there can't cost us the activity rows already written.
+   - **`prompt.py` now tells the coach how to use notes**, not just that they exist: engage with
+     the athlete's reasoning rather than reflecting it back, answer questions he raises about the
+     training itself with an actual view (agreeing or disagreeing), and treat RPE and note as
+     independent signals that can legitimately disagree (RPE 5 with a note describing a hard final
+     set means the average was moderate and the end was not).
+   - **Weekday labels added to snapshot dates** (`report.py:_with_weekday`). Caught on the first
+     live run: the coach called 2026-08-27 "Tuesday" and 2026-08-25 "Sunday" — both wrong. It was
+     inferring weekdays from bare ISO dates, which matters precisely *because* athlete notes refer
+     to sessions by weekday ("same basic workout as Tuesday"). Re-test named both correctly.
+   - **A CLI tool for manual entry/testing is now OPTIONAL, not required** (`scripts/log_workout.py`
+     -style, writing directly to our DB). The native path verified out, so this drops from
+     "primary entry point" to a dev/testing convenience — build it if a need appears.
    - The dashboard/calendar "clickable activity card" UI idea from earlier discussion is a
      plausible eventual target but explicitly deferred — it's blocked on item 12's local backend
      (static HTML has no write path back to the DB) and may be superseded entirely if the
@@ -434,9 +494,10 @@ current setup, to ground that discovery rather than starting from a blank page:
       consistent logging before there's even a bare-minimum usable dataset (30-50 labeled rows)
       for a 3-4 feature regression. **Conclusion: park this specific angle, don't scope it
       further, until item 7 has been live for a few weeks and there's real data to look at.**
-    - FTP not updating correctly from intervals.icu is a known **separate** issue the user is
-      troubleshooting directly — not an ML problem, don't build anything here that depends on
-      that signal until it's confirmed fixed.
+    - ~~FTP not updating correctly from intervals.icu is a known **separate** issue the user is
+      troubleshooting directly~~ — **resolved 2026-08-28**, `icu_ftp` now reads 238. Note the
+      non-retroactivity caveat in "Current state assessment" above before using pre-08-27
+      `icu_training_load` as an ML feature.
 
 ### Next — make it a real app, not a static file
 

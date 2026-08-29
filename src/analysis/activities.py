@@ -27,7 +27,8 @@ def recent_activities(days: int = 28) -> list[dict]:
     since = (date.today() - timedelta(days=days)).isoformat()
     conn = get_connection()
     rows = conn.execute("""
-        SELECT id, date, name, type, moving_time, distance, avg_hr, tss, calories, feel, raw_json
+        SELECT id, date, name, type, moving_time, distance, avg_hr, tss, calories, feel,
+               athlete_note, raw_json
         FROM activities
         WHERE date >= ? AND moving_time IS NOT NULL
         ORDER BY date DESC
@@ -48,6 +49,8 @@ def recent_activities(days: int = 28) -> list[dict]:
             # Athlete's own session RPE, 1-10 (1 = easiest) on TrainerRoad's scale. Sparsely
             # logged — None on most sessions. See prompt.py's "Reading RPE" block.
             "rpe": r["feel"],
+            # Athlete's own words about the session, synced from the intervals.icu chat thread.
+            "note": r["athlete_note"],
             "load": raw.get("icu_training_load") or raw.get("hr_load"),
             "trimp": round(raw.get("trimp", 0), 1),
             "intensity": round(raw.get("icu_intensity", 0), 1),

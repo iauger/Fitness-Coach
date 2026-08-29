@@ -6,6 +6,8 @@ An AI-powered personal coaching layer built on top of intervals.icu. Reads your 
 
 - Pulls activity, wellness, and fitness data from intervals.icu
 - Analyzes training load, recovery, and trends over time
+- Reads your session RPE and the notes you write on rides in intervals.icu, so the coach reasons
+  from how a workout actually felt and not just what the numbers say
 - Uses Claude to generate coach-style check-ins, diagnostics, and recommendations
 - Supports multi-sport training (cycling, running, yoga, weights, swimming)
 - Provides periodization guidance toward specific goals and events
