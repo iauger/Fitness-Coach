@@ -14,3 +14,4 @@ venv/
 # All local/generated/personal data — DB, transcripts, charts, Garmin export,
 # Google OAuth client secret + token. Nothing here should ever be committed.
 data/
+.playwright-mcp/

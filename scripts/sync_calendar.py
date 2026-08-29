@@ -1,13 +1,12 @@
 """
-Sync planned TrainerRoad workouts from Google Calendar into planned_workouts,
+Sync planned TrainerRoad workouts from the calendar's public iCal feed into planned_workouts,
 then match them against actual activities to compute plan adherence.
 
-Requires one-time auth first:
-    python scripts/auth_google_calendar.py
+Requires GCAL_ICAL_URL in .env — see src/integrations/tr_calendar.py. No auth step.
 
 Usage:
     python scripts/sync_calendar.py
-    python scripts/sync_calendar.py --days-back 30 --days-forward 30
+    python scripts/sync_calendar.py --days-back 60 --days-forward 365
 """
 
 import sys
@@ -20,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.db.schema import init_db, migrate_db
 from src.db.store import upsert_planned_workouts
 from src.analysis.compliance import match_planned_workouts
-from src.integrations.google_calendar import sync_planned_workouts
+from src.integrations.tr_calendar import sync_planned_workouts
 
 
 def run(days_back: int, days_forward: int) -> None:
@@ -59,9 +58,9 @@ def run(days_back: int, days_forward: int) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--days-back", type=int, default=14,
-                        help="How many days back to sync + match (default 14)")
-    parser.add_argument("--days-forward", type=int, default=14,
-                        help="How many days ahead to pull upcoming planned workouts (default 14)")
+    parser.add_argument("--days-back", type=int, default=60,
+                        help="How many days back to sync + match (default 60)")
+    parser.add_argument("--days-forward", type=int, default=365,
+                        help="How many days ahead to pull upcoming planned workouts (default 365)")
     args = parser.parse_args()
     run(args.days_back, args.days_forward)

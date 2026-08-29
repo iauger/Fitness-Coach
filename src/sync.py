@@ -16,11 +16,16 @@ from src.db.store import (
     update_activity_notes, log_sync,
 )
 from src.analysis.compliance import match_planned_workouts
-from src.integrations.google_calendar import sync_planned_workouts, TOKEN_PATH
+from src.integrations.tr_calendar import sync_planned_workouts
 
 OVERLAP_DAYS = 2
 MAX_INCREMENTAL_DAYS = 30
-CALENDAR_LOOKAHEAD_DAYS = 14
+# The iCal feed returns the whole plan in one unauthenticated request, so these windows are
+# about how much we keep matched and stored, not about API cost. Lookback covers a full
+# mesocycle plus margin so a 4-week cycle review always has complete compliance data — the
+# old ~2-day window (inherited from sync_window()) was the Session 14 blocker for item 8.
+CALENDAR_LOOKBACK_DAYS = 60
+CALENDAR_LOOKAHEAD_DAYS = 120
 # Notes are written whenever the athlete gets round to it, not when the ride uploads, so the
 # 2-day activity window is too narrow to catch them. Scanning a wider span costs one extra
 # list request (chat threads are only fetched for the handful of activities that have one).
@@ -174,22 +179,26 @@ def incremental_sync(silent: bool = False) -> dict:
 
     conn.close()
 
-    # Calendar sync is best-effort: silently skipped until the user runs
-    # scripts/auth_google_calendar.py once. Not a hard dependency of the core sync.
-    if TOKEN_PATH.exists():
-        try:
-            cal_end = end + timedelta(days=CALENDAR_LOOKAHEAD_DAYS)
-            planned = sync_planned_workouts(start, cal_end)
-            n_planned = upsert_planned_workouts(planned)
-            # Never match today — the day isn't over yet, so a still-pending workout
-            # would get wrongly scored "skipped" before there's been a chance to do it.
-            match_end = min(end, today - timedelta(days=1))
-            compliance = match_planned_workouts(start.isoformat(), match_end.isoformat()) if match_end >= start else {}
-            results["planned_workouts"] = n_planned
-            results["compliance"] = compliance
-            log(f"[sync] calendar    {n_planned} planned workouts  ({compliance})")
-        except Exception as e:
-            results["errors"].append(f"calendar: {e}")
-            log(f"[sync] calendar    ERROR: {e}")
+    # Calendar sync is best-effort — a feed failure must not fail the whole sync.
+    # Unlike the activity window, this deliberately spans a wide range on every run: the
+    # feed is a single request that returns the entire plan regardless, so narrowing it
+    # would cost nothing and buy nothing. The wide window is also what lets a workout whose
+    # activity synced late get re-matched, which the old ~2-day window never did.
+    try:
+        cal_start = today - timedelta(days=CALENDAR_LOOKBACK_DAYS)
+        cal_end = today + timedelta(days=CALENDAR_LOOKAHEAD_DAYS)
+        planned = sync_planned_workouts(cal_start, cal_end)
+        n_planned = upsert_planned_workouts(planned)
+        # Never match today — the day isn't over yet, so a still-pending workout
+        # would get wrongly scored "skipped" before there's been a chance to do it.
+        match_end = today - timedelta(days=1)
+        compliance = (match_planned_workouts(cal_start.isoformat(), match_end.isoformat())
+                      if match_end >= cal_start else {})
+        results["planned_workouts"] = n_planned
+        results["compliance"] = compliance
+        log(f"[sync] calendar    {n_planned} planned workouts  ({compliance})")
+    except Exception as e:
+        results["errors"].append(f"calendar: {e}")
+        log(f"[sync] calendar    ERROR: {e}")
 
     return results
