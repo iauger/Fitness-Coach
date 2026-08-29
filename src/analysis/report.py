@@ -9,6 +9,7 @@ from .fitness import current_fitness, ctl_trend, peak_ctl, ctl_history
 from .activities import recent_activities, sport_distribution, weekly_load_by_sport, yearly_volume
 from .wellness import hrv_summary, sleep_summary, rhr_trend, recovery_flags
 from .compliance import compliance_summary, recent_planned_workouts
+from .training_plan import plan_summary
 from src.athlete.profile import current_profile
 from src.db.schema import get_connection
 
@@ -158,6 +159,8 @@ def build_coaching_context(
             "annual_volume": annual,
             "plan_adherence_8w": plan_adherence,
             "recent_planned_workouts": recent_planned,
+            # None when today falls outside any seeded plan — see seed_training_plan.py.
+            "plan_position": plan_summary(),
         },
         "memory": {
             "coaching_notes": _recent_coaching_memory(limit=3),
@@ -244,6 +247,28 @@ def coaching_context_text(ctx: dict | None = None) -> str:
     ]
     for yr in annual:
         lines.append(f"  {yr['year']}: {yr['tss']:>6.0f} TSS  (~{yr['hours_est']:>4.0f}h est.)")
+
+    pos = ctx["training"].get("plan_position")
+    if pos:
+        wk = pos["week"]
+        cyc = pos["cycle"]
+        lines += ["", "TRAINING PLAN POSITION"]
+        lines.append(f"  {pos['plan_name']}  ({pos['plan_start_date']} to {pos['plan_end_date']}, "
+                     f"{pos['total_weeks']} weeks)")
+        lines.append(f"  Week {wk['plan_week_number']} of {pos['total_weeks']}  "
+                     f"({wk['week_start_date']} to {wk['week_end_date']})  —  "
+                     f"{wk['week_type']} week, {wk['phase']} phase "
+                     f"(week {wk['phase_week_number']} of that phase)")
+        if cyc:
+            state = "closed" if cyc["closed"] else "in progress"
+            lines.append(f"  Current cycle: weeks {cyc['plan_week_range'][0]}-"
+                         f"{cyc['plan_week_range'][1]} ({cyc['weeks']}w, {state})")
+        if pos["weeks_to_rest"] is not None:
+            lines.append(f"  Next rest week: {pos['next_rest_week']} "
+                         f"({pos['weeks_to_rest']} weeks away)")
+        if not pos["cycle_data_complete"]:
+            lines.append("  (Rest weeks are not fully seeded for this plan, so cycle boundaries "
+                         "and next-rest-week are unknown — don't infer them.)")
 
     adherence = ctx["training"].get("plan_adherence_8w") or {}
     if adherence.get("total_planned"):

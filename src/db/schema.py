@@ -52,6 +52,25 @@ def migrate_db(db_path: Path = DB_PATH) -> None:
         # thread (see IntervalsClient.get_activity_messages). Written by a targeted UPDATE in
         # store.update_activity_notes, never by upsert_activities.
         "ALTER TABLE activities ADD COLUMN athlete_note TEXT",
+        # One row per week of a TrainerRoad plan, seeded by hand from the plan's phase view
+        # (scripts/seed_training_plan.py). Not inferable from synced data: intervals.icu carries
+        # its own unrelated plan, and the TR calendar only reaches ~14 days forward.
+        # Plan dates are denormalized onto every row — a full plan is only tens of rows.
+        """CREATE TABLE IF NOT EXISTS training_plan_weeks (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            plan_name        TEXT NOT NULL,
+            plan_start_date  TEXT NOT NULL,
+            plan_end_date    TEXT NOT NULL,
+            week_start_date  TEXT NOT NULL,   -- always a Monday
+            week_end_date    TEXT NOT NULL,   -- the Sunday, inclusive
+            week_type        TEXT NOT NULL,   -- base | build | specialty | rest
+            phase            TEXT NOT NULL,   -- parent block: base | build | specialty
+            phase_number     INTEGER NOT NULL,-- 1-based index of the phase within the plan
+            phase_week_number INTEGER NOT NULL, -- 1-based week within that phase
+            plan_week_number INTEGER NOT NULL,  -- 1-based week within the whole plan
+            UNIQUE(plan_name, week_start_date)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_training_plan_weeks_start ON training_plan_weeks(week_start_date)",
     ]
     with conn:
         for sql in migrations:
