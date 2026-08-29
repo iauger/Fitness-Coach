@@ -19,6 +19,7 @@ if sys.stdout.encoding != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from src.coach.session import checkin
+from src.analysis.training_plan import just_completed_cycle
 
 
 def prompt_for_feel() -> str:
@@ -66,11 +67,27 @@ if __name__ == "__main__":
     parser.add_argument("--no-prompt", action="store_true",
                         help="Skip subjective feel questions")
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--weekly", action="store_true",
+                        help="Force the weekly check-in even if a training cycle just closed")
     args = parser.parse_args()
 
     import os
     if args.model:
         os.environ["COACH_MODEL"] = args.model
+
+    # A closed cycle supersedes that week's check-in rather than sitting alongside it — the
+    # two would fire on the same Monday and overlap almost entirely, and a block review
+    # subsumes the week it ends on. Redirect rather than run silently, so it stays the
+    # athlete's call and no API call happens unasked.
+    closed = just_completed_cycle()
+    if closed and not args.weekly:
+        print(f"A training cycle closed yesterday — plan weeks "
+              f"{closed['plan_week_range'][0]}-{closed['plan_week_range'][1]}, "
+              f"{closed['start_date']} to {closed['end_date']}.\n")
+        print("The 4-week review covers this week too, so run that instead:\n")
+        print("    python scripts/cycle_review.py\n")
+        print("Or pass --weekly to this script to get the ordinary check-in anyway.")
+        sys.exit(0)
 
     feel_context = "" if args.no_prompt else prompt_for_feel()
     print(checkin(feel_context=feel_context, verbose=args.verbose))

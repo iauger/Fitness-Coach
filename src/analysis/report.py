@@ -10,6 +10,7 @@ from .activities import recent_activities, sport_distribution, weekly_load_by_sp
 from .wellness import hrv_summary, sleep_summary, rhr_trend, recovery_flags
 from .compliance import compliance_summary, recent_planned_workouts
 from .training_plan import plan_summary
+from .cycle import latest_review
 from src.athlete.profile import current_profile
 from src.db.schema import get_connection
 
@@ -163,6 +164,10 @@ def build_coaching_context(
             "plan_position": plan_summary(),
         },
         "memory": {
+            # Injected as its own field rather than competing for _recent_coaching_memory()'s
+            # three type-blind slots, where three weekly check-ins would evict it inside a
+            # month — exactly when the next cycle needs it.
+            "last_cycle_review": latest_review(),
             "coaching_notes": _recent_coaching_memory(limit=3),
             "life_events": _recent_life_events(days=90),
             "subjective_feel": _recent_subjective_feel(days=14),
@@ -312,6 +317,22 @@ def coaching_context_text(ctx: dict | None = None) -> str:
                     lines.append(f"      note: {para}")
 
     memory = ctx.get("memory", {})
+
+    review = memory.get("last_cycle_review")
+    if review:
+        lines += [
+            "",
+            f"LAST CYCLE REVIEW ({review['cycle_start']} to {review['cycle_end']}, "
+            f"{review['phase']} phase, plan weeks {review['plan_week_start']}-"
+            f"{review['plan_week_end']})",
+            f"  CTL {review['ctl_start']} -> {review['ctl_end']} "
+            f"({review['ctl_ramp_per_week']} CTL/week)  |  adherence {review['adherence_pct']}%"
+            f"  |  {review['actual_tss']:.0f} of {review['planned_tss']:.0f} planned TSS",
+        ]
+        # Untruncated on purpose: coaching_log's 300-char cap is what this table exists to avoid.
+        if review.get("content"):
+            for para in review["content"].split("\n\n"):
+                lines.append(f"  {para}")
 
     life_events = memory.get("life_events", [])
     if life_events:

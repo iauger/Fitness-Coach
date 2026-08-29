@@ -71,6 +71,38 @@ def migrate_db(db_path: Path = DB_PATH) -> None:
             UNIQUE(plan_name, week_start_date)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_training_plan_weeks_start ON training_plan_weeks(week_start_date)",
+        # One row per completed mesocycle. Deliberately NOT in coaching_log: that table is
+        # rendered with a 300-char truncation and read via a type-blind `LIMIT 3`, so a review
+        # would be cut mid-sentence and then evicted by three weekly check-ins — vanishing right
+        # when the next cycle needs it for comparison.
+        # The named metric columns are the ones compared across cycles, so they have to be
+        # queryable; `metrics_json` holds the full rollup so adding a metric doesn't need a
+        # migration. Both are written from the same deterministic rollup.
+        """CREATE TABLE IF NOT EXISTS cycle_reviews (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            plan_name       TEXT NOT NULL,
+            cycle_start     TEXT NOT NULL,
+            cycle_end       TEXT NOT NULL,
+            phase           TEXT,
+            plan_week_start INTEGER,
+            plan_week_end   INTEGER,
+            weeks           INTEGER,
+            ctl_start       REAL,
+            ctl_end         REAL,
+            ctl_ramp_per_week REAL,
+            tsb_end         REAL,
+            planned_tss     REAL,
+            actual_tss      REAL,
+            adherence_pct   REAL,
+            hrv_build       REAL,   -- mean HRV across the build weeks
+            hrv_rest        REAL,   -- mean HRV across the rest week
+            metrics_json    TEXT NOT NULL,   -- full deterministic rollup
+            content         TEXT,            -- the coach's written review
+            model           TEXT,
+            created_at      TEXT NOT NULL,
+            UNIQUE(plan_name, cycle_start)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_cycle_reviews_start ON cycle_reviews(cycle_start)",
     ]
     with conn:
         for sql in migrations:

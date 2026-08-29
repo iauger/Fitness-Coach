@@ -212,9 +212,36 @@ answer to seem thorough.
 """.strip()
 
 
+CYCLE_REVIEW_FORMAT = """
+## This response: 4-week cycle review
+
+A training block just finished. This is the wider look the weekly check-ins don't take, and it
+replaces the check-in for this week — so don't write a week-in-review, write a block-in-review.
+
+The numbers in the cycle rollout are already computed. Don't recompute them and don't recite
+them back; the point is what they mean together. Work through roughly this arc, as continuous
+prose rather than as sections: what the block was supposed to do and whether it did it; where
+the athlete's own account (RPE, notes) agrees or disagrees with what the load data says; whether
+the rest week actually cleared the fatigue, reading the HRV/RHR/sleep shift rather than assuming
+it did; and what that implies for the block ahead.
+
+If a previous cycle is given, compare against it directly and by name — that comparison is the
+main thing a review offers over a check-in, and those are stored figures, so use them rather
+than hedging.
+
+Be willing to say the block didn't work if it didn't. A review that always concludes "solid
+progress, keep going" is worth nothing. Adherence, ramp rate, and recovery can each disagree
+with the others, and saying which one you trust is the judgement being asked for.
+
+Aim for roughly 700-900 words — this covers four weeks and should be more substantial than a
+weekly check-in, without becoming a report.
+""".strip()
+
+
 FORMATS = {
     "checkin": CHECKIN_FORMAT,
     "conversation": CONVERSATION_FORMAT,
+    "cycle_review": CYCLE_REVIEW_FORMAT,
 }
 
 

@@ -6,12 +6,16 @@ Model controlled by COACH_MODEL env var (default: claude-haiku-4-5).
 import os
 import json
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
 from src.analysis.report import build_coaching_context, coaching_context_text
+from src.analysis.cycle import (
+    cycle_for_review, cycle_metrics, cycle_context_text, previous_review, save_review,
+)
+from src.analysis.training_plan import current_week
 from src.coach.prompt import build_system_prompt
 from src.coach.tools import TOOL_SCHEMAS, execute_tool
 from src.db.schema import get_connection
@@ -109,6 +113,51 @@ def checkin(feel_context: str = "", verbose: bool = False) -> str:
               datetime.utcnow().isoformat()))
     conn.close()
 
+    return response
+
+
+def cycle_review(on: date | None = None, verbose: bool = False) -> str | None:
+    """
+    4-week mesocycle review. Returns None if no cycle has closed yet.
+
+    Deliberately not auto-fired from incremental_sync(): sync runs at the start of every coach
+    session, so an automatic trigger would mean surprise API calls, and a cycle whose Monday
+    passed without any session being run would be missed silently. Invoked explicitly by
+    scripts/cycle_review.py; the weekly check-in points at it when a cycle has just closed.
+
+    Stored in cycle_reviews rather than coaching_log — see the schema comment for why.
+    """
+    cyc = cycle_for_review(on)
+    if cyc is None:
+        return None
+
+    incremental_sync(silent=not verbose)
+
+    metrics = cycle_metrics(cyc)
+    prev = previous_review(cyc["start_date"])
+    # Full athlete context plus the cycle rollup: the review still needs to know goals,
+    # timeline and where the plan goes next, not just what happened in the block.
+    snapshot = coaching_context_text()
+    system = build_system_prompt(
+        f"{snapshot}\n\n{'=' * 70}\n\n{cycle_context_text(metrics, prev)}",
+        mode="cycle_review",
+    )
+    model = DEFAULT_MODEL
+
+    if verbose:
+        print(f"[coach] model: {model}")
+        print(f"[coach] cycle: {cyc['start_date']} .. {cyc['end_date']} "
+              f"(weeks {cyc['plan_week_range'][0]}-{cyc['plan_week_range'][1]})")
+        print(f"[coach] comparing against: {prev['cycle_start'] if prev else 'no prior review'}")
+        print()
+
+    client = _client()
+    messages = [{"role": "user", "content":
+                 "That block just finished. Give me the cycle review."}]
+    response = _run_tool_loop(client, model, system, messages)
+
+    plan_name = current_week(date.fromisoformat(cyc["start_date"]))["plan_name"]
+    save_review(plan_name, metrics, response, model)
     return response
 
 
