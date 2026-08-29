@@ -371,10 +371,40 @@ current setup, to ground that discovery rather than starting from a blank page:
 8. **4-week training-cycle review** (not calendar-monthly — a real TrainerRoad 3-week-build /
    1-week-rest mesocycle). Distinct from the weekly check-in: looks at performance across the
    *full* cycle and forward-looking thoughts heading into the next one, not just the current week.
-   - **New `training_plan_weeks` table**, one row per week: `plan_name` (identifies distinct
-     plans), `plan_start_date`, `plan_end_date`, `week_start_date`, `week_type` (enum: base /
-     build / specialty / rest), `plan_week_number`. Denormalized plan dates on every row is fine
-     at this scale (a full plan is only tens of rows).
+
+   **Schema + plan position: DONE (Session 15). The review itself is still to build.**
+   - ~~**New `training_plan_weeks` table**~~ — **built and seeded.** One row per week:
+     `plan_name`, `plan_start_date`, `plan_end_date`, `week_start_date`, `week_end_date`,
+     `week_type` (base/build/specialty/rest), `phase`, `phase_number`, `phase_week_number`,
+     `plan_week_number`; `UNIQUE(plan_name, week_start_date)`. Denormalized plan dates on every
+     row is fine at this scale.
+     - **`phase` was added beyond the original design** so a rest week still records which block
+       it closed out. `week_type='rest'` overwrites the phase name it sits in, so without a
+       separate column a rest week is orphaned from its parent block and a cycle review can't
+       say "the rest week that closed Base block 2".
+   - **Seeded plan (2026-08-28): TrainerRoad 2026-27, 45 weeks, 2026-08-17 → 2027-06-27.**
+     Base 12wk → Build 8wk → Specialty 8wk → Build 8wk → Specialty 8wk → Recovery 1wk. Rest weeks
+     are **every 4th week of every phase** (confirmed by the athlete), giving 11 clean 4-week
+     cycles that each land exactly on a phase boundary, plus the trailing 1-week recovery block.
+   - **`scripts/seed_training_plan.py`** takes a declarative `PHASES` + `REST_WEEKS` spec and
+     expands it to week rows. Validates that every phase starts on a Monday and that phases are
+     contiguous — both would otherwise fail silently and misalign every downstream week number.
+     Idempotent (`ON CONFLICT DO UPDATE`), and drops orphan weeks when a plan is re-cut.
+   - **`src/analysis/training_plan.py`** — `current_week`, `cycles`, `current_cycle`,
+     `just_completed_cycle`, `plan_summary`, `cycle_data_complete`.
+     `just_completed_cycle()` is the review trigger: it returns a cycle exactly once, on the
+     Monday after that cycle's rest week ends, so a caller fires a review without tracking state.
+     Verified to fire exactly 12 times across the plan's 320 days.
+   - **`cycle_data_complete()` guards every derived figure.** Before rest weeks were confirmed,
+     the plan read as a single 45-week "cycle" with the next rest week 43 weeks away — plausible
+     enough to mislead. Cycle fields now return `None` in that state and the snapshot says so
+     explicitly; week and phase position stay valid regardless, since they don't depend on
+     rest-week placement.
+   - **Surfaced to the coach** as a TRAINING PLAN POSITION block plus `prompt.py` guidance on
+     what cycle position *means* — rising fatigue in week 3 of a build is the plan working, the
+     same reading in week 1 says the last rest week didn't do its job, flat CTL in a rest week is
+     intended. Live-verified: the coach placed him in "week two of a four-week base block", named
+     week 3 as where fatigue bites, and called the 2026-09-07 rest week unprompted.
    - **Cycle boundary detection: derive from `week_type = 'rest'`**, not `plan_week_number % 4`.
      A rest week always closes out the preceding cycle by definition, so it's the more robust
      signal — correctly handles any plan irregularity (a 5-week build before a rest week, a taper
@@ -388,16 +418,26 @@ current setup, to ground that discovery rather than starting from a blank page:
      started this week, runs through 2027-06-18). Not automatically inferred from synced data.
      Note: model it on the **Phase 0-corrected** `seed_profile.py`, not the original — the
      original silently reverted changed values on a bare re-run.
-   - **New evidence (Session 14 audit), worth using as a cross-check:** `events` already contains
-     `category='NOTE', name='Recovery Week'` rows at **2026-07-20** and **2026-08-17** — exactly
-     4 weeks apart, matching TR's 3-on/1-off cadence. These come from the *previous* plan and
-     `NOTE` is a loose contract, so hand-seeding stays the primary path — but validating
-     hand-entered `week_type='rest'` rows against these is close to free and would catch a typo'd
-     date.
-   - **Prerequisite (Session 14 audit):** `incremental_sync()` only syncs/matches planned workouts
-     ~2-3 days back (`sync.py:119` uses `sync_window()`'s start; `scripts/sync_calendar.py`
-     defaults to 14), and nothing ever re-matches older rows. A 4-week review needs a *complete*
-     4 weeks of matched compliance data — widen that window before building this.
+   - ~~**New evidence (Session 14 audit), worth using as a cross-check:** `events` contains
+     `category='NOTE', name='Recovery Week'` rows 4 weeks apart.~~ **DEAD IDEA — checked and
+     rejected (Session 15).** Pulling `events` across the full plan span shows those rows belong
+     to a *different, stale* plan: `plan_applied: 2026-05-26`, a `PLAN` event described as
+     "Peak phase: race intensity, sharpening, taper" tagged `Peak`, with nothing at all past
+     2026-09-21. intervals.icu knows nothing about the TrainerRoad plan, so those NOTEs would
+     have validated hand-seeded rest weeks against the wrong plan entirely. Hand-seeding is the
+     only path, exactly as originally designed.
+   - **Still to build: the review itself.** Everything above is position and structure; nothing
+     yet *reviews* a completed cycle. Remaining work: aggregate compliance / load / recovery /
+     RPE / notes across the cycle `just_completed_cycle()` returns, and generate the review.
+   - **BLOCKING prerequisite — now two things, not one:**
+     1. *(Session 14)* `incremental_sync()` only syncs/matches planned workouts ~2-3 days back
+        (`sync.py` uses `sync_window()`'s start; `scripts/sync_calendar.py` defaults to 14), and
+        nothing ever re-matches older rows. A 4-week review needs a *complete* 4 weeks of matched
+        compliance data — widen that window.
+     2. *(Session 15)* **The Google Calendar OAuth token is dead**, so `planned_workouts` isn't
+        syncing at all and compliance matching is frozen. See the debt list above. Widening the
+        window is pointless until this is restored. The first cycle closes **2026-09-14** — the
+        token needs fixing before then for that review to have data.
 
 9. **Race/event handling.** Folded into the existing coaching methodology rather than a separate
    mode or separate schema — a race is still just an activity with RPE+notes, same loop as any

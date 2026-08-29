@@ -45,13 +45,15 @@ PHASES: list[tuple[str, date, int]] = [
 # This is the one thing the phase view doesn't show, and it's what cycle boundaries key off —
 # see cycle_boundaries() in src/analysis/training_plan.py. A phase with no entry here produces
 # no cycle boundary and the script warns about it.
+#
+# Confirmed 2026-08-28: TrainerRoad's classic 3-on/1-off — every 4th week of every phase.
 REST_WEEKS: dict[int, set[int]] = {
-    1: set(),   # base 12wk   (2026-08-17 .. 2026-11-08)
-    2: set(),   # build 8wk   (2026-11-09 .. 2027-01-03)
-    3: set(),   # specialty 8wk (2027-01-04 .. 2027-02-28)
-    4: set(),   # build 8wk   (2027-03-01 .. 2027-04-25)
-    5: set(),   # specialty 8wk (2027-04-26 .. 2027-06-20)
-    6: {1},     # standalone recovery week (2027-06-21 .. 2027-06-27)
+    1: {4, 8, 12},  # base 12wk      (2026-08-17 .. 2026-11-08)
+    2: {4, 8},      # build 8wk      (2026-11-09 .. 2027-01-03)
+    3: {4, 8},      # specialty 8wk  (2027-01-04 .. 2027-02-28)
+    4: {4, 8},      # build 8wk      (2027-03-01 .. 2027-04-25)
+    5: {4, 8},      # specialty 8wk  (2027-04-26 .. 2027-06-20)
+    6: {1},         # standalone recovery week (2027-06-21 .. 2027-06-27)
 }
 
 VALID_WEEK_TYPES = {"base", "build", "specialty", "rest"}

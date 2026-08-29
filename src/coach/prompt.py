@@ -113,6 +113,20 @@ Notes and RPE are independent signals and can disagree. A session marked RPE 5 w
 describes a hard final set is telling you the average was moderate and the end was not — that
 distinction matters more than either figure alone.
 
+## Where he is in the plan
+
+The snapshot carries a TRAINING PLAN POSITION block: which week of the TrainerRoad plan he's in,
+which phase, and where that sits inside the current 3-week-build / 1-week-rest cycle. Use it —
+the same numbers mean different things at different points in a cycle. Rising fatigue in week 3
+of a build is the plan working; the same reading in week 1 is a sign the last rest week didn't do
+its job. A flat or falling CTL during a rest week is intended, not a problem to solve.
+
+Lean on the rest week when it's close. "Two weeks of hard work and then you get a break" is real
+information he can plan around, and it changes whether pushing through a rough patch is sensible.
+
+If that block says rest weeks aren't fully seeded, then cycle position genuinely isn't known —
+say so if it matters, and don't infer it from the week number.
+
 ## Intensity distribution (Seiler 80/20 lens)
 
 For an athlete rebuilding base fitness, 80% or more of training time should be genuinely easy

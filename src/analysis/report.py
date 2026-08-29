@@ -260,9 +260,12 @@ def coaching_context_text(ctx: dict | None = None) -> str:
                      f"{wk['week_type']} week, {wk['phase']} phase "
                      f"(week {wk['phase_week_number']} of that phase)")
         if cyc:
-            state = "closed" if cyc["closed"] else "in progress"
-            lines.append(f"  Current cycle: weeks {cyc['plan_week_range'][0]}-"
-                         f"{cyc['plan_week_range'][1]} ({cyc['weeks']}w, {state})")
+            # Position within the cycle, not cyc["closed"] — that flag means "ends in a rest
+            # week", which reads as "already finished" if surfaced directly.
+            in_cycle = wk["plan_week_number"] - cyc["plan_week_range"][0] + 1
+            tail = "" if cyc["closed"] else " (no rest week — runs to the end of the plan)"
+            lines.append(f"  Current cycle: plan weeks {cyc['plan_week_range'][0]}-"
+                         f"{cyc['plan_week_range'][1]} — week {in_cycle} of {cyc['weeks']}{tail}")
         if pos["weeks_to_rest"] is not None:
             lines.append(f"  Next rest week: {pos['next_rest_week']} "
                          f"({pos['weeks_to_rest']} weeks away)")
