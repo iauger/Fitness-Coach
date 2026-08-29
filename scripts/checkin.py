@@ -20,22 +20,40 @@ if sys.stdout.encoding != "utf-8":
 
 from src.coach.session import checkin
 from src.analysis.training_plan import just_completed_cycle
+from src.coach.tools import log_subjective_feel
+
+
+def _int_or_none(raw: str) -> int | None:
+    try:
+        v = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return v if 1 <= v <= 10 else None
 
 
 def prompt_for_feel() -> str:
-    """Ask a few quick subjective questions and return context string."""
+    """
+    Ask the weekly subjective questions, write them to subjective_feel, and return a short
+    context string for the prompt.
+
+    The answers are written here rather than left for the model to log. These are the most
+    structured inputs in the whole system — numbers on a fixed scale and a compliance value
+    from a closed enum — and until now they were formatted into prose and passed to the model,
+    reaching the database only if it happened to call log_subjective_feel. Across 7 check-ins
+    that produced 4 stored rows.
+    """
     print("Quick check-in before we look at your data:\n")
     lines = []
 
-    overall = input("  Overall feeling this week (1-10, or press Enter to skip): ").strip()
+    overall = _int_or_none(input("  Overall feeling this week (1-10, or press Enter to skip): ").strip())
     if overall:
         lines.append(f"Overall feel: {overall}/10")
 
-    energy = input("  Energy levels (1-10, or Enter to skip): ").strip()
+    energy = _int_or_none(input("  Energy levels (1-10, or Enter to skip): ").strip())
     if energy:
         lines.append(f"Energy: {energy}/10")
 
-    legs = input("  Leg freshness (1-10, or Enter to skip): ").strip()
+    legs = _int_or_none(input("  Leg freshness (1-10, or Enter to skip): ").strip())
     if legs:
         lines.append(f"Leg freshness: {legs}/10")
 
@@ -50,12 +68,24 @@ def prompt_for_feel() -> str:
         "1": "completed_all", "2": "skipped_some",
         "3": "modified", "4": "rest_week", "5": "not_on_plan",
     }
-    if tr in tr_map:
-        lines.append(f"TR compliance: {tr_map[tr]}")
+    tr_compliance = tr_map.get(tr)
+    if tr_compliance:
+        lines.append(f"TR compliance: {tr_compliance}")
 
     notes = input("  Anything else worth flagging? (injury, illness, stress, etc): ").strip()
     if notes:
         lines.append(f"Notes: {notes}")
+
+    # feel_score is the column's NOT-NULL-in-practice anchor; with nothing to anchor to there
+    # is no row worth writing, though the answers still go to the model as context.
+    if overall is not None:
+        log_subjective_feel(
+            feel_score=overall, energy=energy, legs=legs,
+            tr_compliance=tr_compliance, notes=notes or None, logged_via="checkin",
+        )
+        print("  [logged to subjective_feel]")
+    elif lines:
+        print("  [not logged — an overall feel score is needed to store the rest]")
 
     print()
     return "  ".join(lines) if lines else ""

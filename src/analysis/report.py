@@ -12,6 +12,7 @@ from .compliance import compliance_summary, recent_planned_workouts
 from .training_plan import plan_summary
 from .cycle import latest_review
 from .load import load_correction_text
+from .derive import derived_text
 from src.athlete.profile import current_profile
 from src.db.schema import get_connection
 
@@ -25,15 +26,54 @@ def _with_weekday(iso_date: str) -> str:
         return iso_date
 
 
-def _recent_coaching_memory(limit: int = 3) -> list[str]:
-    """Last N coaching log summaries to inject as memory."""
+# Total characters of coaching memory allowed into the snapshot. A check-in runs 1500-3000
+# chars, so this holds the most recent of each type in full with room to spare.
+MEMORY_CHAR_BUDGET = 6000
+# Most recent N of each coaching_log.type. One is enough: the job of this block is to stop the
+# coach repeating last week verbatim, and the longer arc now lives in cycle_reviews.
+MEMORY_PER_TYPE = 1
+
+
+def _recent_coaching_memory(limit: int = MEMORY_PER_TYPE) -> list[str]:
+    """
+    Most recent `limit` entries of *each* coaching_log type, in full.
+
+    Replaces an `ORDER BY created_at DESC LIMIT 3` with no type filter and a 300-char
+    truncation at render. Both were doing real damage: every one of the stored entries ran
+    longer than 300 chars, so roughly 85% of each was discarded mid-sentence, and because the
+    query was type-blind a run of weekly check-ins would push session summaries out entirely.
+
+    Entries are trimmed only if the whole block exceeds MEMORY_CHAR_BUDGET, oldest first, and
+    a trimmed entry is cut at a paragraph boundary with an explicit marker rather than
+    silently mid-word.
+    """
     conn = get_connection()
     rows = conn.execute("""
         SELECT date, type, content FROM coaching_log
-        ORDER BY created_at DESC LIMIT ?
+        WHERE id IN (
+            SELECT id FROM coaching_log c2
+            WHERE c2.type = coaching_log.type
+            ORDER BY created_at DESC LIMIT ?
+        )
+        ORDER BY created_at
     """, (limit,)).fetchall()
     conn.close()
-    return [f"[{r['date']} {r['type']}] {r['content']}" for r in reversed(rows)]
+
+    entries = [(r["date"], r["type"], r["content"] or "") for r in rows]
+    total = sum(len(c) for _, _, c in entries)
+    out = []
+    for i, (d, t, content) in enumerate(entries):
+        # Trim the oldest entries first while the block is over budget.
+        remaining = len(entries) - i
+        if total > MEMORY_CHAR_BUDGET and remaining > 1:
+            allowance = max(600, MEMORY_CHAR_BUDGET // len(entries))
+            if len(content) > allowance:
+                cut = content.rfind("\n\n", 0, allowance)
+                content = (content[:cut if cut > 300 else allowance].rstrip()
+                           + "\n  [...trimmed for length]")
+                total -= len(content)
+        out.append(f"[{d} {t}] {content}")
+    return out
 
 
 def _recent_life_events(days: int = 90) -> list[dict]:
@@ -223,24 +263,34 @@ def coaching_context_text(ctx: dict | None = None) -> str:
         f"  CTL (fitness):  {cur.get('ctl')}",
         f"  ATL (fatigue):  {cur.get('atl')}",
         f"  TSB (form):     {cur.get('tsb')}",
-        # intervals.icu's rampRate is CTL change per WEEK — verified against the raw data
-        # (7-day CTL delta matches it exactly). It was labelled CTL/day until Session 14, which
-        # put it at odds with METHODOLOGY's ramp-rate thresholds, all of which are weekly.
-        f"  Ramp rate:      {cur.get('ramp_rate')} CTL/week",
         f"  Est. FTP:       {round(cur['eftp'], 0) if cur.get('eftp') else 'N/A'}W",
         f"  Peak CTL ever:  {peak.get('ctl')} (on {peak.get('date')})",
         f"  Current vs peak: {pct}% of peak fitness",
-        f"  8-week trend:   {trend.get('direction')} ({trend.get('start_ctl')} -> {trend.get('end_ctl')} CTL)",
+        # Ramp rate and the 8-week trend direction used to be printed here. They said opposite
+        # things — a positive weekly ramp above a "declining" label — and the model had no
+        # basis to reconcile them. DERIVED METRICS below states the ramp over four windows
+        # instead, which is the same information without the apparent contradiction.
+    ]
+    # Immediately under the CTL/ATL/TSB figures it qualifies. It sat further down at first,
+    # after ANNUAL VOLUME, and a live run quoted "11 percent of your fitness ceiling" straight
+    # off an understated CTL without ever mentioning the caveat. Distance from the numbers it
+    # applies to is the whole problem — same failure as the format rules in Session 14.
+    correction = load_correction_text()
+    if correction:
+        lines += ["", correction]
+    lines += [
         "",
         "RECOVERY SIGNALS",
-        f"  HRV 30d avg: {recovery['hrv'].get('avg_30d')} ms  |  7d avg: {recovery['hrv'].get('avg_7d')} ms  |  trend: {recovery['hrv'].get('trend')}",
-        f"  Sleep 30d avg: {recovery['sleep'].get('avg_hours_30d')}h  |  7d avg: {recovery['sleep'].get('avg_hours_7d')}h  |  score 30d: {recovery['sleep'].get('avg_score_30d')}",
-        f"  Resting HR 30d avg: {recovery['resting_hr'].get('avg_30d')} bpm  |  trend: {recovery['resting_hr'].get('trend')}",
+        f"  Sleep score 30d avg: {recovery['sleep'].get('avg_score_30d')}",
     ]
     if flags:
         lines.append("  FLAGS:")
         for f in flags:
             lines.append(f"    ! {f}")
+    # HRV/RHR/sleep averages and their "stable/declining" word-labels also lived here. The
+    # labels were doing the interpreting; DERIVED METRICS gives 7/28/90-day figures and the
+    # deltas so the coach can judge for itself.
+    lines += ["", derived_text()]
     lines += [
         "",
         "SPORT MIX (last 90 days)",
@@ -253,12 +303,6 @@ def coaching_context_text(ctx: dict | None = None) -> str:
     ]
     for yr in annual:
         lines.append(f"  {yr['year']}: {yr['tss']:>6.0f} TSS  (~{yr['hours_est']:>4.0f}h est.)")
-
-    # Sits immediately before plan position so the coach reads the caveat before the CTL-based
-    # sections it applies to. Returns None once no mis-analysed rides remain in the window.
-    correction = load_correction_text()
-    if correction:
-        lines += ["", correction]
 
     pos = ctx["training"].get("plan_position")
     if pos:
@@ -366,10 +410,13 @@ def coaching_context_text(ctx: dict | None = None) -> str:
 
     coaching_notes = memory.get("coaching_notes", [])
     if coaching_notes:
-        lines += ["", "COACHING MEMORY (recent sessions)"]
+        lines += ["", "COACHING MEMORY (most recent of each kind, in full)"]
         for note in coaching_notes:
-            # wrap long notes
-            lines.append(f"  {note[:300]}")
+            # No truncation here. The 300-char cut this replaces was discarding ~85% of every
+            # stored entry mid-sentence; _recent_coaching_memory() now enforces a budget at
+            # selection time, where it can trim on a paragraph boundary and say that it did.
+            for para in note.split("\n"):
+                lines.append(f"  {para}")
 
     return "\n".join(lines)
 
