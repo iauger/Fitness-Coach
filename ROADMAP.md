@@ -476,7 +476,30 @@ current setup, to ground that discovery rather than starting from a blank page:
    calendar before spring 2027 this is the lowest-urgency item in the tier — revisit when there's
    an actual race to reason about.
 
-10. **Context summarization for check-ins** — a cost-reduction mechanism, not just a quality one.
+10. ~~**Context summarization for check-ins**~~ — **DONE (Session 16).**
+    **What shipped:** `weekly_summaries` table; `src/analysis/weekly.py` (deterministic rollup +
+    storage, no API dependency, reusing `cycle.py`'s load/recovery helpers);
+    `src/coach/summarize.py` (the only place a model compresses rather than coaches);
+    `scripts/weekly_summary.py` (backfill, regeneration, `--metrics-only` inspection with no API
+    call); `checkin()` summarises the just-completed week as a byproduct, wrapped so a
+    summarisation failure can't lose the check-in; and `report.py` tiers the context — raw
+    per-session detail for 14 days, earlier weeks of the current cycle as stored summaries,
+    anything older left out and still reachable via `query_history`.
+    - **The model is called only when a week contains free text.** A week with no notes stores
+      a null narrative at zero cost — two of the three backfilled weeks made no API call.
+    - **Measured on real data:** 1005 chars of notes compressed to 462, keeping where fatigue
+      appeared in the session, his doubt about the volume of sweet spot, and the
+      three-sessions-a-week constraint, while mentioning no TSS, CTL, adherence or HRV figure.
+      Rendered saving is 59% for a note-free week and 32% for a week with two notes — the saving
+      grows with note density, which is the curve this item exists to absorb. At present volume
+      it is a modest win; it matters once a note per session accumulates.
+    - Raw activity detail is what gets the horizon because it is the only block that grows
+      without bound. `DERIVED METRICS` is already compact and fixed-size, and coaching memory is
+      bounded by its own character budget.
+
+    *Original design notes below, kept for the reasoning.*
+
+    **Context summarization for check-ins** — a cost-reduction mechanism, not just a quality one.
     Extends a pattern that already exists: `session.py`'s `end_session()` already summarizes a
     chat session into `coaching_log` instead of replaying the full transcript next time; this
     applies the same idea one layer up, to the per-workout/weekly/cycle data the loops above will
