@@ -290,9 +290,50 @@ def _m001_baseline(conn: sqlite3.Connection) -> None:
     add_column(conn, "activities", "athlete_note", "TEXT")
 
 
+
+CHAT_SESSIONS_SQL = """
+CREATE TABLE IF NOT EXISTS chat_sessions (
+    session_id  TEXT PRIMARY KEY,
+    started_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    ended_at    TEXT,
+    model       TEXT,
+    mode        TEXT NOT NULL DEFAULT 'conversation',
+    title       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  TEXT NOT NULL,
+    seq         INTEGER NOT NULL,
+    role        TEXT NOT NULL,        -- user | assistant
+    content     TEXT NOT NULL,        -- JSON: a string, or a list of content blocks
+    created_at  TEXT NOT NULL,
+    UNIQUE(session_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id, seq);
+"""
+
+
+def _m002_chat_sessions(conn: sqlite3.Connection) -> None:
+    """
+    Durable chat history, so a conversation survives a page refresh.
+
+    CoachSession kept `history` in process memory, which is fine for a CLI that exits when the
+    conversation ends and impossible for a web UI where the client can reload at any moment.
+    `transcripts` does not serve here: it stores one summary row per finished session, written
+    at the end, whereas a resumable conversation needs every turn as it happens.
+
+    `content` is JSON rather than text because a turn is not always a string — an assistant turn
+    that used a tool is a list of content blocks, and those have to round-trip exactly or the
+    next request to the API is malformed.
+    """
+    conn.executescript(CHAT_SESSIONS_SQL)
+
 # (version, name, step). Append only — never renumber or edit an applied migration.
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "baseline schema as of phase 12B", _m001_baseline),
+    (2, "chat sessions and messages for resumable conversations", _m002_chat_sessions),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)

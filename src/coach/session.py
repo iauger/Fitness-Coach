@@ -22,6 +22,7 @@ from src.analysis.weekly import (
 from src.coach.summarize import weekly_narrative
 from src.coach.prompt import build_system_prompt
 from src.coach.tools import TOOL_SCHEMAS, execute_tool
+from src.coach.stream import run_turn, stream_turn, Event
 from src.db.schema import get_connection
 from src.sync import incremental_sync
 
@@ -41,44 +42,14 @@ def _client() -> Anthropic:
 def _run_tool_loop(client: Anthropic, model: str, system: str,
                    messages: list[dict]) -> str:
     """
-    Runs the agentic tool loop: call Claude → execute any tool calls →
-    append results → repeat until stop_reason is end_turn.
-    Returns the final text response.
+    Blocking agentic turn — call Claude, execute any tool calls, append results, repeat until
+    the turn ends. Returns the final text.
+
+    Since phase 12C this delegates to coach/stream.py, which runs the same loop as a generator
+    of typed events. The loop logic lives there once; this wrapper exists so every CLI caller
+    keeps the simple string-returning interface it was written against.
     """
-    while True:
-        response = client.messages.create(
-            model=model,
-            max_tokens=MAX_TOKENS,
-            system=system,
-            tools=TOOL_SCHEMAS,
-            messages=messages,
-        )
-
-        if response.stop_reason == "end_turn":
-            return next(b.text for b in response.content if b.type == "text")
-
-        if response.stop_reason == "tool_use":
-            # append assistant turn with all content blocks
-            messages.append({
-                "role": "assistant",
-                "content": [b.model_dump() for b in response.content],
-            })
-            # execute each tool call and collect results
-            tool_results = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    result = execute_tool(block.name, block.input)
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result,
-                    })
-            messages.append({"role": "user", "content": tool_results})
-            continue
-
-        # unexpected stop reason — return whatever text exists
-        texts = [b.text for b in response.content if hasattr(b, "text")]
-        return " ".join(texts)
+    return run_turn(client, model, system, messages, MAX_TOKENS)
 
 
 def checkin(feel_context: str = "", verbose: bool = False) -> str:
@@ -215,12 +186,15 @@ class CoachSession:
 
     def ask(self, question: str) -> str:
         self.history.append({"role": "user", "content": question})
-        # run tool loop on a copy so the loop can append tool turns
+        # The loop appends to this list as it goes — assistant turns and tool results included —
+        # so the history it leaves behind is the complete, replayable conversation.
         working = list(self.history)
-        reply = _run_tool_loop(self.client, self.model, self.system, working)
-        # sync working history back (tool turns included)
+        reply = run_turn(self.client, self.model, self.system, working, MAX_TOKENS)
+        # No separate assistant append here. Before 12C the loop returned on end_turn *without*
+        # recording the final assistant turn, so this method had to add it as plain text;
+        # stream_turn now records every turn as content blocks, and appending again would
+        # duplicate the answer in the history sent with the next question.
         self.history = working
-        self.history.append({"role": "assistant", "content": reply})
         return reply
 
     def end_session(self) -> str | None:

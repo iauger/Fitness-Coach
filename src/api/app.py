@@ -23,6 +23,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.api.cache import CACHE
+from src.api.chat import router as chat_router
 from src.analysis.activities import recent_activities, sport_distribution, weekly_load_by_sport
 from src.analysis.cycle import cycles, cycle_metrics, cycle_for_review, latest_review
 from src.analysis.derive import derived_metrics
@@ -39,8 +40,10 @@ from src.visualizations.dashboard import build_dashboard
 app = FastAPI(
     title="Fitness Coach",
     description="Local read-only API over the training database (phase 12A).",
-    version="12A",
+    version="12C",
 )
+
+app.include_router(chat_router)
 
 
 # ── pages ─────────────────────────────────────────────────────────────────────
@@ -184,7 +187,7 @@ def health() -> dict[str, Any]:
     finally:
         conn.close()
     st = migration_status()
-    return {"status": "ok", "phase": "12B", "row_counts": counts,
+    return {"status": "ok", "phase": "12C", "row_counts": counts,
             "latest_activity": latest, "cache": CACHE.stats(),
             "schema": {"version": st["current_version"],
                        "latest": st["latest_version"],
@@ -199,3 +202,59 @@ def cache_clear() -> dict:
     """
     CACHE.clear()
     return {"cleared": True}
+
+
+# ── chat test harness ─────────────────────────────────────────────────────────
+
+CHAT_TEST_PAGE = """<!doctype html><meta charset=utf-8><title>coach stream test</title>
+<style>body{font:14px/1.5 ui-monospace,monospace;max-width:60rem;margin:2rem auto;padding:0 1rem;
+background:#111;color:#ddd}#log{white-space:pre-wrap;border:1px solid #333;padding:1rem;
+min-height:20rem;background:#0b0b0b}.t{color:#8bd}.e{color:#f88}input{width:75%;padding:.5rem;
+background:#1a1a1a;color:#ddd;border:1px solid #333}button{padding:.5rem 1rem}</style>
+<h3>coach stream test <small id=sid></small></h3>
+<div id=log></div><p><input id=q placeholder="ask the coach..." autofocus>
+<button onclick=go()>send</button></p>
+<script>
+let session=null;
+const log=document.getElementById('log');
+function add(t,c){const s=document.createElement('span');if(c)s.className=c;s.textContent=t;
+log.appendChild(s);log.scrollTop=log.scrollHeight;}
+async function go(){
+  const q=document.getElementById('q');const question=q.value.trim();if(!question)return;
+  q.value='';add('
+
+> '+question+'
+
+');
+  const r=await fetch('/api/chat/ask',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({question,session_id:session})});
+  const reader=r.body.getReader();const dec=new TextDecoder();let buf='';
+  while(true){const {done,value}=await reader.read();if(done)break;
+    buf+=dec.decode(value,{stream:true});const parts=buf.split('
+
+');buf=parts.pop();
+    for(const p of parts){if(!p.startsWith('data: '))continue;
+      const ev=JSON.parse(p.slice(6));
+      if(ev.type==='session'){session=ev.session_id;document.getElementById('sid').textContent=session;}
+      else if(ev.type==='text')add(ev.text);
+      else if(ev.type==='tool_start')add('
+['+ev.name+' ...]
+','t');
+      else if(ev.type==='tool_end')add('['+ev.name+' done]
+','t');
+      else if(ev.type==='error')add('
+!! '+ev.message+'
+','e');
+    }}
+}
+document.getElementById('q').addEventListener('keydown',e=>{if(e.key==='Enter')go()});
+</script>"""
+
+
+@app.get("/chat-test", response_class=HTMLResponse, include_in_schema=False)
+def chat_test() -> HTMLResponse:
+    """
+    Bare harness for verifying the SSE pipe. The real chat interface is phase 12E; this exists
+    only to prove tokens and tool events arrive incrementally rather than in one lump.
+    """
+    return HTMLResponse(CHAT_TEST_PAGE)
