@@ -21,7 +21,7 @@ back to this sentence.
 
 ---
 
-## Current state assessment (as of 2026-08-23, Session 13)
+## Current state assessment (updated through Session 16, 2026-09-02)
 
 **Solid — build on this:**
 - Data pipeline: intervals.icu sync (full history + incremental), Strava archive fallback +
@@ -75,10 +75,14 @@ back to this sentence.
   that is the *only* load signal for strength, yoga and every other non-power session — so
   cross-sport load is miscounted too. Nothing in this repo can fix it; LTHR has to be reset in
   intervals.icu. A hard session peaking at 173 suggests something nearer 160.
-- **14 commits sit unpushed on `main`** as of 2026-08-29, spanning Sessions 14-16. The remote
-  is 8 commits behind and has none of the data pipeline, dashboard, coaching, plan or cycle
-  work. This also blocks any cloud/remote Claude Code session from being useful, since it would
-  clone a tree that predates all of it.
+- ~~**14 commits sit unpushed on `main`**~~ — **pushed 2026-08-29.** 16 commits went to
+  `github.com/iauger/Fitness-Coach`, the first push in 13+ sessions. `devlog.md` was removed from
+  the 15 unpushed commits first and is now gitignored: the repo is **public**, and the devlog
+  carried the athlete's email, intervals.icu athlete id, and 65 lines of HRV/RHR/sleep/weight
+  figures. Rewriting was free only because nothing had been pushed — redacting in a later commit
+  would have left the strings browsable in history. `f650011` was left untouched so the push was
+  an ordinary fast-forward. A local `backup-before-devlog-removal` branch still holds the
+  pre-rewrite history *including* the full devlog and must never be pushed.
 - **`log_life_event` still depends on the model choosing to call it.** Accepted rather than
   fixed: unlike the check-in's feel scores, a life event genuinely only surfaces mid-conversation
   and has no structured point of capture to write from. Worth revisiting if the `life_events`
@@ -384,7 +388,7 @@ current setup, to ground that discovery rather than starting from a blank page:
      -style, writing directly to our DB). The native path verified out, so this drops from
      "primary entry point" to a dev/testing convenience — build it if a need appears.
    - The dashboard/calendar "clickable activity card" UI idea from earlier discussion is a
-     plausible eventual target but explicitly deferred — it's blocked on item 12's local backend
+     plausible eventual target but explicitly deferred — it's blocked on item 12D's write paths
      (static HTML has no write path back to the DB) and may be superseded entirely if the
      intervals.icu-native path above verifies out.
 
@@ -588,21 +592,94 @@ current setup, to ground that discovery rather than starting from a blank page:
 
 ### Next — make it a real app, not a static file
 
-12. Small local backend (FastAPI or Flask) serving the dashboard + a chat endpoint wired to
-   `src/coach/session.py`. This is what actually unlocks the north star's "chat right there"
-   instead of the current CLI-only `scripts/ask.py`. Also the enabling dependency for item 7's
-   dashboard/calendar UI text-fill, if that path is still wanted after the intervals.icu-native
-   path is verified.
-13. Automated sync — scheduled task (cron / Windows Task Scheduler) running `incremental_sync()`
-   daily instead of manual script runs.
+**Target shape, decided 2026-09-02: a local web app.** FastAPI serving a browser UI, running on
+the athlete's machine against the existing SQLite. That *is* the desktop experience — a native
+shell (Tauri, pywebview, Electron) is a later wrapper around the same server, not a rewrite.
+Remote access (Tailscale, or self-hosting on a local server) is a downstream add-on that changes
+nothing about the application itself. See item 16.
+
+Sequencing rationale: the local server is the common substrate for every destination. Building it
+first defers the auth-and-hosting decision until the app exists and its usage is known, rather
+than designing around a guess. Nothing here forecloses hosting later.
+
+**What already carries over — the migration is smaller than "CLI to app" suggests:**
+- **`src/analysis/*` (~2,300 lines) is already a service layer.** Every function is pure: reads
+  SQLite, returns dicts, no I/O, no printing, no interactivity. `derive.py`, `cycle.py`,
+  `weekly.py`, `training_plan.py`, `load.py`, `compliance.py` need **zero** changes to sit behind
+  HTTP endpoints. The only `print()` in the package is inside a `__main__` block.
+- **The charts are already composable fragments.** `dashboard.py` emits
+  `full_html=False, include_plotlyjs=False`, so each figure is a fragment rather than a page.
+  The hard part of a chart migration is done.
+- **The chat panel markup and CSS already exist** in `dashboard.py` as a disabled placeholder.
+- `src/db`, `src/intervals`, `src/integrations`, `src/athlete` and the sync pipeline are
+  unaffected. Four dependencies total — no framework debt to unwind.
+
+12. **Local backend + web UI.** Replaces the static-file dashboard and the CLI entry points,
+    while leaving the scripts working as a fallback. Sub-phases, in order:
+    - **12A — FastAPI skeleton, read-only.** Wrap the existing analysis functions and serve the
+      current dashboard from the server with no behaviour change. Proves the wrapping works and
+      is mostly mechanical, because the analysis layer is already pure.
+    - **12B — Real schema migrations, before any write path.** `migrate_db()` is one function
+      accreting `ALTER`s forever (known debt, item 15). Acceptable for CLI scripts run by hand;
+      not acceptable once a server starts on boot against a database that might be mid-version.
+      This has to land before 12D, not after.
+    - **12C — Streaming chat. The one genuinely hard piece.** `_run_tool_loop()` is a blocking
+      `while True` around `messages.create()` with no streaming. In a CLI that is fine — you wait,
+      then text appears. In a chat UI a 700-word check-in taking ~30 seconds with no output is
+      unusable, and tool calls (`query_history`, `log_life_event`) are invisible while they run.
+      Requires: token streaming plus tool-call events over SSE or WebSocket, and moving
+      `CoachSession`'s in-memory history into the database so a session survives a refresh — the
+      `transcripts` table already exists for this. Everything else in item 12 is plumbing; this
+      is a redesign.
+    - **12D — Write paths, which are what a UI actually buys.** `checkin.py`'s `prompt_for_feel()`
+      `input()` calls become a form. Then per-activity RPE and notes — item 7's deferred
+      "clickable activity card", which was explicitly blocked on this because static HTML has no
+      write path back to the DB.
+    - **12E — Frontend.** Charts stay Plotly; the server hands over JSON. For a single user,
+      resist a React SPA: server-rendered templates plus htmx gives interactivity with no build
+      step, and the date-filter JS already written in `dashboard.py` ports directly.
+    - **12F — Packaging.** One command or a desktop shortcut, so running it is not
+      `python scripts/*.py`. This is also the natural point to add a native shell if wanted.
+    - **Prompt caching should be designed in here, not retrofitted.** Measured 2026-09-02: a
+      coaching call is **~8,100 input tokens** (system prompt + snapshot) and ~900 output tokens.
+      `CoachSession` resends full history every turn, so a long chat pays full price repeatedly.
+      Cache reads cost ~0.1x and writes ~1.25x (5-minute default TTL, 1-hour available), which is
+      close to a 90% input saving on turns 2+.
+
+13. **Automated sync and scheduled jobs.** Currently `incremental_sync()` runs manually or at the
+    start of a coach session, weekly summaries ride on someone running `checkin.py`, and the
+    cycle-review trigger needs a human to notice. A server can own all three — APScheduler
+    in-process is sufficient. **Note the constraint this creates:** scheduled jobs only run while
+    the machine is awake, which is the main argument for item 16's hosting option later.
 
 ### Later — currently just aspirational goals text, not built
 
 14. Multi-sport recommendation logic (original Phase 5) — today this is only descriptive
     sport-distribution stats, no actual "you should do X this week" reasoning.
-15. Schema migration cleanup, first-class tests, eventual hosting (original Phase 1 note: "local
-    first, designed to be hostable later").
+15. Schema migration cleanup (pulled forward into 12B — it becomes load-bearing there), first-class
+    tests, eventual hosting (original Phase 1 note: "local first, designed to be hostable later").
+    **There are currently no tests.** Read-only CLI scripts inspected by eye are one thing; HTTP
+    write endpoints are another. Tests become necessary at 12D, not before.
 
+16. **Remote access — deferred, and deliberately not designed for yet.** Costed 2026-09-02.
+    Two wants look similar here and are not the same thing:
+    - **Phone access is nearly free.** Put **Tailscale** in front of the local server: the phone
+      joins the tailnet and hits the desktop directly. No public exposure, no auth to build
+      (device auth is the VPN's job), no data migration, no deploy pipeline, $0 on the personal
+      tier. Cloudflare Tunnel is an equivalent alternative, with Cloudflare Access for email-OTP
+      login, also $0. **Neither needs any change to item 12's app.**
+    - **Always-on is what costs money.** Both options above require the desktop to be awake, which
+      collides with item 13's scheduled sync and with a cycle review firing while you are away.
+      Real hosting (Fly, Railway, Render — Render's free tier spins down and would break scheduled
+      sync) is roughly **$5-7/month**, but the dollars are the small part: it mandates auth
+      (without it the app is an open proxy to the `ANTHROPIC_API_KEY`), secrets management, a
+      persistent volume for the ~18MB SQLite, and migrations that run on deploy. Call it 2-3x the
+      backend work, maintained indefinitely.
+    - **API cost is unchanged by any of this** and is not a factor in the decision. At ~8,100
+      input and ~900 output tokens per interaction: Haiku 4.5 is **$0.013** a call (~$1.20/month
+      at 3/day), Sonnet 5 $0.038, Opus 5 $0.064. Current usage is roughly ten calls a *month*.
+    - Revisit when always-on is the actual requirement — which will be obvious from using the
+      app, rather than guessable now.
 ---
 
 ## Data architecture: what gets computed, what gets stored (Session 16)
