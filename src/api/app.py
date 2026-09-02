@@ -32,6 +32,7 @@ from src.analysis.report import build_coaching_context, coaching_context_text
 from src.analysis.training_plan import plan_summary, current_week
 from src.analysis.weekly import summaries_between
 from src.db.schema import get_connection
+from src.db.migrations import status as migration_status
 from src.visualizations.calendar_view import build_calendar_html
 from src.visualizations.dashboard import build_dashboard
 
@@ -182,8 +183,12 @@ def health() -> dict[str, Any]:
             "SELECT MAX(date) d FROM activities").fetchone()["d"]
     finally:
         conn.close()
-    return {"status": "ok", "phase": "12A", "row_counts": counts,
-            "latest_activity": latest, "cache": CACHE.stats()}
+    st = migration_status()
+    return {"status": "ok", "phase": "12B", "row_counts": counts,
+            "latest_activity": latest, "cache": CACHE.stats(),
+            "schema": {"version": st["current_version"],
+                       "latest": st["latest_version"],
+                       "pending": st["pending"]}}
 
 
 @app.post("/api/cache/clear", tags=["ops"])
