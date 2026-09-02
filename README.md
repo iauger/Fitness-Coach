@@ -11,6 +11,7 @@ An AI-powered personal coaching layer built on top of intervals.icu. Reads your 
 - Uses Claude to generate coach-style check-ins, diagnostics, and recommendations
 - Supports multi-sport training (cycling, running, yoga, weights, swimming)
 - Provides periodization guidance toward specific goals and events
+- Tracks where you are in a TrainerRoad plan and reviews each 4-week block when it closes
 
 ## Goals (personal)
 
@@ -19,14 +20,41 @@ An AI-powered personal coaching layer built on top of intervals.icu. Reads your 
 - Cyclocross racing fall 2027
 - Base fitness: 120-mile ride not an overreach
 
+## Running it
+
+Everything is local. The database is SQLite in `data/`, and nothing is hosted.
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env          # add your intervals.icu and Anthropic keys
+
+python scripts/fetch_history.py    # one-time backfill
+python scripts/sync.py             # incremental sync
+python scripts/serve.py --open     # the app
+```
+
+`serve.py` binds to `127.0.0.1` only. It reads `.env`, so it holds your API keys and has no
+authentication — do not expose it on a routable interface. Remote access is a VPN's job.
+
+The CLI entry points still work and remain the fallback:
+
+```bash
+python scripts/checkin.py          # weekly check-in
+python scripts/ask.py              # conversational session
+python scripts/cycle_review.py     # 4-week block review
+python scripts/migrate.py          # schema status
+```
+
 ## Stack
 
-- Python
-- SQLite
-- intervals.icu API
+- Python, SQLite, FastAPI
+- intervals.icu API (activities, wellness, session notes)
+- TrainerRoad calendar via its public iCal feed
 - Claude API (Anthropic)
 
 ## Status
 
-Early development — see [devlog.md](devlog.md) for session-by-session progress and
-[ROADMAP.md](ROADMAP.md) for the north star, current state, and what's being built next.
+In development. The data pipeline, analysis layer and coaching logic are working; the app is
+mid-migration from CLI scripts to a local web app (phases 12A-12C done, 12D-12F remaining).
+
+See [ROADMAP.md](ROADMAP.md) for the north star, current state, and what's being built next.

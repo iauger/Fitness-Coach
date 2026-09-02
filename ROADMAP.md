@@ -616,26 +616,77 @@ than designing around a guess. Nothing here forecloses hosting later.
 
 12. **Local backend + web UI.** Replaces the static-file dashboard and the CLI entry points,
     while leaving the scripts working as a fallback. Sub-phases, in order:
-    - **12A — FastAPI skeleton, read-only.** Wrap the existing analysis functions and serve the
-      current dashboard from the server with no behaviour change. Proves the wrapping works and
-      is mostly mechanical, because the analysis layer is already pure.
-    - **12B — Real schema migrations, before any write path.** `migrate_db()` is one function
-      accreting `ALTER`s forever (known debt, item 15). Acceptable for CLI scripts run by hand;
-      not acceptable once a server starts on boot against a database that might be mid-version.
-      This has to land before 12D, not after.
-    - **12C — Streaming chat. The one genuinely hard piece.** `_run_tool_loop()` is a blocking
-      `while True` around `messages.create()` with no streaming. In a CLI that is fine — you wait,
-      then text appears. In a chat UI a 700-word check-in taking ~30 seconds with no output is
-      unusable, and tool calls (`query_history`, `log_life_event`) are invisible while they run.
-      Requires: token streaming plus tool-call events over SSE or WebSocket, and moving
-      `CoachSession`'s in-memory history into the database so a session survives a refresh — the
-      `transcripts` table already exists for this. Everything else in item 12 is plumbing; this
-      is a redesign.
+    - ~~**12A — FastAPI skeleton, read-only.**~~ **DONE 2026-09-02.** `src/api/app.py` (19
+      routes), `src/api/cache.py`, `scripts/serve.py`. Pages at `/` and `/calendar` with
+      `.html` aliases redirecting so the generated file's header link still works, plus JSON for
+      snapshot, fitness, derived metrics, activities, load, load-correction, plan, cycles,
+      reviews and weekly summaries. FastAPI's `/docs` comes free.
+      - **Verified by byte comparison, not by eye.** The served pages are byte-identical to what
+        `generate_charts.py` writes once Windows text-mode newline translation is normalised —
+        `write_text()` turning `
+` into `
+` was the entire 544-byte difference. For a phase
+        whose claim is "nothing rendered changed", that is a stronger check than a screenshot.
+      - **The cache needed real thought.** `build_dashboard()` takes ~3.8s. Cached against a stat
+        fingerprint of the database, **keyed on `fitness.db-wal` as well as the main file** — the
+        connection runs in WAL mode, so a write lands in the sidecar and can leave the main
+        file's mtime untouched until a checkpoint. Keying on the main file alone would have
+        served a stale dashboard after every sync. Measured 0.88s cold to 0.006s warm.
+      - Binds `127.0.0.1` and warns on any other host: this process reads `.env`, so it holds the
+        intervals and Anthropic keys and has no authentication.
+    - ~~**12B — Real schema migrations, before any write path.**~~ **DONE 2026-09-02.**
+      `src/db/migrations.py` + `scripts/migrate.py`. `PRAGMA user_version` is the authoritative
+      pointer and `schema_migrations` holds history — no new dependency, which suits a project
+      with four of them and no ORM. Alembic would have pulled in SQLAlchemy.
+      - **It found a real bug, not just untidiness.** `init_db()` and `migrate_db()` had drifted:
+        `training_plan_weeks`, `cycle_reviews` and `weekly_summaries` existed **only** in
+        `migrate_db()`, so `scripts/fetch_history.py` — which calls `init_db()` alone — would
+        leave a fresh database missing three tables. Both are now thin delegates over one ordered
+        set of migrations and can no longer disagree.
+      - `except Exception: pass` around every ALTER could not distinguish "already applied" from
+        a syntax error or a missing table. `add_column()` checks `PRAGMA table_info` instead.
+      - Migration 001 is an idempotent baseline of the whole schema, so it converges an empty
+        database and the existing one on the same result — no fragile "does this database predate
+        migrations" heuristic. Verified on a copy first: a database built purely from migrations
+        has identical tables, column names, column order and indexes to the live one, the only
+        delta being `schema_migrations` itself. Applied to the real ~19MB database after backup,
+        with every row count unchanged.
+    - ~~**12C — Streaming chat. The one genuinely hard piece.**~~ **DONE 2026-09-02.**
+      `src/coach/stream.py`, `src/coach/chat_store.py`, `src/api/chat.py`, migration 002.
+      - `stream_turn()` is the same loop as a generator of typed events (`start`, `text`,
+        `tool_start`, `tool_end`, `turn_end`, `error`). `run_turn()` drains it and returns the
+        final text, so `checkin()`, `cycle_review()` and `CoachSession` were untouched. Bounded
+        at `MAX_ITERATIONS`; a failing tool reports the error back to the model rather than
+        aborting the turn.
+      - **`transcripts` did not serve for persistence**, contrary to the plan above: it stores one
+        summary row written at the end, where a resumable conversation needs every turn as it
+        happens. Migration 002 adds `chat_sessions` and `chat_messages`. Content is stored as
+        JSON, not text — an assistant turn that used a tool is a list of content blocks that must
+        round-trip exactly or the next API call is malformed.
+      - **SSE over WebSocket**: traffic is one-directional once a question is asked, and SSE needs
+        no protocol upgrade or extra dependency. The synchronous SDK runs on a worker thread
+        feeding an asyncio queue. The system prompt is built **once per session, not per turn** —
+        it carries the ~8,100-token snapshot, so rebuilding it each turn would re-query the
+        analysis layer and defeat prompt caching.
+      - **A bug the delegation exposed:** the old loop returned on `end_turn` *without* recording
+        the assistant turn, so `CoachSession.ask()` appended it as plain text. `stream_turn`
+        records every turn as blocks, so that append would have duplicated the answer in the
+        history sent with the next question.
+      - Verified live: first token at 1.41s and the turn complete at 2.07s, delivered over 0.65s
+        rather than in one lump; `tool_start`/`tool_end` surfacing correctly across a second loop
+        iteration; sessions persisting, resuming in context, and titled from the opening question.
+      - `/chat-test` is a bare harness proving the pipe. The real interface is 12E.
     - **12D — Write paths, which are what a UI actually buys.** `checkin.py`'s `prompt_for_feel()`
       `input()` calls become a form. Then per-activity RPE and notes — item 7's deferred
       "clickable activity card", which was explicitly blocked on this because static HTML has no
       write path back to the DB.
-    - **12E — Frontend.** Charts stay Plotly; the server hands over JSON. For a single user,
+    - **12E — Frontend. Needs the Playwright MCP reconnected first.** It went down mid-session
+      on 2026-09-02; the install is healthy (package v0.0.80, Chromium present, Node 24.13.0)
+      so it is a session-level drop, recoverable via `/mcp`. 12A and 12B did not need it —
+      byte comparison was the better check — but 12E is where `CLAUDE.md`'s rule stops being
+      a formality, since a chart that renders wrong at a different viewport is exactly the
+      failure mode that survived two sessions of code review before.
+      Charts stay Plotly; the server hands over JSON. For a single user,
       resist a React SPA: server-rendered templates plus htmx gives interactivity with no build
       step, and the date-filter JS already written in `dashboard.py` ports directly.
     - **12F — Packaging.** One command or a desktop shortcut, so running it is not
