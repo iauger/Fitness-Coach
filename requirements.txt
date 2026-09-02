@@ -2,6 +2,13 @@ requests==2.32.3
 python-dotenv==1.0.1
 anthropic==0.55.0
 plotly==5.24.1
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+
 # The four google-api / google-auth packages were dropped in Session 15: planned workouts now
 # come from the TrainerRoad calendar's public iCal feed (src/integrations/tr_calendar.py),
 # which is an unauthenticated GET parsed with the stdlib. No OAuth client remains.
+
+# fastapi + uvicorn added in phase 12A: the app is now served from a local HTTP server
+# (scripts/serve.py) rather than read as a generated file. Bound to 127.0.0.1 - this process
+# holds the API keys and has no auth.
