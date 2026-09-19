@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 if sys.stdout.encoding != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+from src.athlete.profile import get_metric
 from src.db.schema import get_connection, migrate_db
 from src.planning.blocks import (
     DEFAULT_PLAN, add_lit_day, add_second_weekend_ride, expand_plan, intensity_split,
@@ -68,7 +69,24 @@ def print_weekly(sessions: list[dict]) -> None:
               f"{w['longest']:>6.0f}m {w['ride_minutes']/60:>7.1f} {w['tss']:>5.0f}{tag}")
 
 
-def print_detail(sessions: list[dict], only_week: date | None = None) -> None:
+def _watts(session: dict) -> str:
+    """
+    Resolve a prescription's percentages to watts using the FTP tracked for that date.
+
+    Done at render time, never stored. The plan is expressed in percentages precisely so that a
+    ramp test updates every future session at once instead of invalidating the plan.
+    """
+    ftp = get_metric("ftp", as_of=session["date"])
+    p = session["params"]
+    if not ftp or session["archetype"] == "strength":
+        return ""
+    if "pct" in p:
+        return f"   -> {int(p['pct'] * ftp)}W"
+    return ""
+
+
+def print_detail(sessions: list[dict], only_week: date | None = None,
+                 watts: bool = False) -> None:
     current = None
     for s in sessions:
         d = date.fromisoformat(s["date"])
@@ -80,7 +98,8 @@ def print_detail(sessions: list[dict], only_week: date | None = None) -> None:
             wk = next(w for w in weekly_rollup(sessions) if w["week_start"] == current)
             tag = "  (recovery week)" if wk["recovery"] else ""
             print(f"\n  week of {current} — {wk['block']}{tag}")
-        print(f"    {DAYS[s['weekday']]}  {s['role']:<9} {s['prescription']}")
+        print(f"    {DAYS[s['weekday']]}  {s['role']:<9} {s['prescription']}"
+              f"{_watts(s) if watts else ''}")
 
 
 def main() -> int:
@@ -94,6 +113,8 @@ def main() -> int:
     p.add_argument("--detail", action="store_true", help="list every session")
     p.add_argument("--week", type=date.fromisoformat, help="show one week only")
     p.add_argument("--write", action="store_true", help="store to prescribed_sessions")
+    p.add_argument("--watts", action="store_true",
+                   help="resolve percentages to watts using the tracked FTP for each date")
     args = p.parse_args()
 
     start = args.start
@@ -120,13 +141,18 @@ def main() -> int:
     print()
 
     if args.week or args.detail:
-        print_detail(sessions, args.week)
+        print_detail(sessions, args.week, watts=args.watts)
     else:
         print_weekly(sessions)
 
     print(f"\n  intensity: {split['easy_pct']}% easy / {split['hard_pct']}% hard "
           f"({split['easy_hours']}h / {split['hard_hours']}h)")
     print("  measured over the last 28 days for comparison: 22% easy / 78% hard")
+
+    ftp = get_metric("ftp")
+    if args.watts:
+        print(f"  watts resolved against tracked FTP {ftp:.0f}W — re-run after a ramp test "
+              f"and every future session updates.")
 
     if args.write:
         n = store(sessions, args.plan_name)

@@ -109,6 +109,33 @@ def _long2_minutes(block: Block, week_in_block: int) -> int:
     return int(min(minutes, block.long2_cap_min))
 
 
+def _strength_for_week(block: Block, week: int) -> dict[int, str]:
+    """
+    Assign a lift pattern to each strength day, resolving both constraints at once.
+
+    Two rules interact and the order matters. Legs must not be loaded the day before or after
+    weekend endurance - Friday lower-body compromises Saturday, Monday lower-body lands on two
+    days of accumulated fatigue - so those slots are pinned to upper body first. Only then do
+    the remaining slots rotate, which stops a week from lifting the same pattern twice and
+    wasting the second session.
+
+    Resolving the pin before the rotation rather than after is the whole point: doing it the
+    other way round let a collision override the safety rule and put squats the day before a
+    three-hour ride.
+    """
+    days = sorted(d for d, r in block.pattern if r == "strength")
+    has_weekend = any(d in (5, 6) and r in ("long", "long2") for d, r in block.pattern)
+    out: dict[int, str] = {}
+    for d in days:
+        if has_weekend and d in (0, 4):
+            out[d] = "upper"
+    remaining = [d for d in days if d not in out]
+    pool = [v for v in ("lower", "full", "upper") if v not in out.values()] or ["full"]
+    for i, d in enumerate(remaining):
+        out[d] = pool[(week + i) % len(pool)]
+    return out
+
+
 def expand_block(block: Block, start: date, plan_name: str,
                  block_index: int) -> list[dict]:
     """One dict per prescribed session, dated."""
@@ -116,7 +143,7 @@ def expand_block(block: Block, start: date, plan_name: str,
     for week in range(1, block.weeks + 1):
         monday = start + timedelta(weeks=week - 1)
         hard_seen = 0
-        strength_seen = 0
+        strength_variants = _strength_for_week(block, week)
         for weekday, role in sorted(block.pattern):
             day = monday + timedelta(days=weekday)
             if role == "hard":
@@ -130,17 +157,7 @@ def expand_block(block: Block, start: date, plan_name: str,
             elif role == "lit":
                 session = A.lit(block.lit_min, "cadence_drills" if week % 2 == 0 else "steady")
             else:
-                # Rotate by slot as well as week, so the two strength days in a week are not the
-                # same session - the whole point of lifting twice is to cover different patterns.
-                variant = ("lower", "upper", "full")[(week + strength_seen) % 3]
-                # Never load legs immediately before or after the weekend endurance block.
-                # Friday lower-body compromises Saturday; Monday lower-body lands on two days
-                # of accumulated fatigue. Upper body in those slots costs the long rides nothing.
-                if weekday in (0, 4) and any(d in (5, 6) and r in ("long", "long2")
-                                             for d, r in block.pattern):
-                    variant = "upper"
-                session = A.strength(40, variant)
-                strength_seen += 1
+                session = A.strength(40, strength_variants[weekday])
             out.append({
                 "plan_name": plan_name,
                 "date": day.isoformat(),
