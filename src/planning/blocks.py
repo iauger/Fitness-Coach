@@ -27,7 +27,7 @@ from datetime import date, timedelta
 from src.planning import archetypes as A
 
 # Weekday roles a slot can take.
-ROLES = ("hard", "long", "lit", "strength")
+ROLES = ("hard", "long", "long2", "lit", "strength")
 
 MAX_HARD_PER_WEEK = 2
 
@@ -44,6 +44,12 @@ class Block:
     long_step_min: int = 15
     long_cap_min: int = 240
     lit_min: int = 60
+    # Second weekend endurance ride. Kept short and capped well below the Saturday ride: its
+    # value comes from being ridden on Saturday's fatigue, not from its own duration, and it is
+    # constrained by having to finish before the household wakes up.
+    long2_start_min: int = 60
+    long2_step_min: int = 5
+    long2_cap_min: int = 105
     note: str = ""
 
     def __post_init__(self) -> None:
@@ -96,6 +102,13 @@ def _long_minutes(block: Block, week_in_block: int) -> int:
     return int(min(minutes, block.long_cap_min))
 
 
+def _long2_minutes(block: Block, week_in_block: int) -> int:
+    if week_in_block in block.recovery_weeks:
+        week_in_block = max(1, week_in_block - 1)
+    minutes = block.long2_start_min + block.long2_step_min * (week_in_block - 1)
+    return int(min(minutes, block.long2_cap_min))
+
+
 def expand_block(block: Block, start: date, plan_name: str,
                  block_index: int) -> list[dict]:
     """One dict per prescribed session, dated."""
@@ -112,12 +125,21 @@ def expand_block(block: Block, start: date, plan_name: str,
             elif role == "long":
                 session = A.lit(_long_minutes(block, week), "endurance_sprints"
                                 if week % 3 == 0 else "steady")
+            elif role == "long2":
+                session = A.lit(_long2_minutes(block, week), "steady")
             elif role == "lit":
                 session = A.lit(block.lit_min, "cadence_drills" if week % 2 == 0 else "steady")
             else:
                 # Rotate by slot as well as week, so the two strength days in a week are not the
                 # same session - the whole point of lifting twice is to cover different patterns.
-                session = A.strength(40, ("lower", "upper", "full")[(week + strength_seen) % 3])
+                variant = ("lower", "upper", "full")[(week + strength_seen) % 3]
+                # Never load legs immediately before or after the weekend endurance block.
+                # Friday lower-body compromises Saturday; Monday lower-body lands on two days
+                # of accumulated fatigue. Upper body in those slots costs the long rides nothing.
+                if weekday in (0, 4) and any(d in (5, 6) and r in ("long", "long2")
+                                             for d, r in block.pattern):
+                    variant = "upper"
+                session = A.strength(40, variant)
                 strength_seen += 1
             out.append({
                 "plan_name": plan_name,
@@ -265,3 +287,45 @@ def intensity_split(sessions: list[dict], easy_ceiling: float = 0.75) -> dict:
         "easy_pct": round(easy / total * 100, 1) if total else None,
         "hard_pct": round(hard / total * 100, 1) if total else None,
     }
+
+
+def add_second_weekend_ride(blocks: list[Block], strength_to: int = 4) -> list[Block]:
+    """
+    Add a Sunday endurance ride behind the Saturday long ride, relocating Sunday strength.
+
+    Back-to-back endurance days are the cheapest way to train durability: the Sunday ride is
+    ridden on Saturday's fatigue, which rehearses the back half of a long event without
+    requiring a ride that long. That is the adaptation the June target actually needs, and it
+    is why this is a better use of a fourth ride than another midweek hour.
+
+    Deliberately short - 60min growing to 105 - because it is constrained by finishing before
+    the household is up, and because a second *long* ride would compete with Saturday for
+    recovery rather than complementing it.
+
+    The displaced Sunday strength session moves to Friday by default rather than Monday: Monday
+    lands on two days of accumulated weekend fatigue, while Friday leaves the weekend clear and
+    is forced to upper body so it costs Saturday nothing. Pass strength_to=0 for Monday instead.
+
+    The trade to watch is sleep, not training load. The athlete already averages ~6.3-6.7h with
+    9 nights under 6h in 30 days; an early Sunday alarm that costs an hour of it can easily be
+    a net negative. That is a readiness signal to track, not a reason to skip the ride.
+    """
+    out = []
+    carried = None
+    for b in blocks:
+        pattern = [(d, r) for d, r in b.pattern if not (d == 6 and r == "strength")]
+        moved = len(pattern) != len(b.pattern)
+        if moved and not any(d == strength_to for d, _ in pattern):
+            pattern.append((strength_to, "strength"))
+        if not any(d == 6 for d, _ in pattern):
+            pattern.append((6, "long2"))
+        fields = {**b.__dict__, "pattern": sorted(pattern)}
+        # Carry the Sunday duration across block boundaries. Each block otherwise restarts it at
+        # long2_start_min, which would walk the ride back down every time a new block began -
+        # the opposite of the progressive overload the second ride exists to provide.
+        if carried is not None:
+            fields["long2_start_min"] = carried
+        block = Block(**fields)
+        carried = _long2_minutes(block, block.weeks)
+        out.append(block)
+    return out

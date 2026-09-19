@@ -4,7 +4,8 @@ Build a training plan from the archetype library and preview or store it.
     python scripts/plan_build.py                        # weekly summary of the proposed plan
     python scripts/plan_build.py --detail               # every session, dated
     python scripts/plan_build.py --week 2026-09-21      # one week's prescriptions
-    python scripts/plan_build.py --four-rides           # add a fourth ride per week
+    python scripts/plan_build.py --big-weekend          # Sunday endurance behind the Sat long
+    python scripts/plan_build.py --four-rides           # add a midweek fourth ride
     python scripts/plan_build.py --start 2026-09-21 --write   # store to prescribed_sessions
 
 Prescriptions are doses, not workouts: "3x15min @ 93%, 73min, 77 TSS". You match each to a
@@ -30,7 +31,8 @@ if sys.stdout.encoding != "utf-8":
 
 from src.db.schema import get_connection, migrate_db
 from src.planning.blocks import (
-    DEFAULT_PLAN, add_lit_day, expand_plan, intensity_split, weekly_rollup,
+    DEFAULT_PLAN, add_lit_day, add_second_weekend_ride, expand_plan, intensity_split,
+    weekly_rollup,
 )
 
 PLAN_NAME = "Sustainable 2026-27"
@@ -87,6 +89,8 @@ def main() -> int:
                    help="first Monday of the plan (default: next Monday)")
     p.add_argument("--plan-name", default=PLAN_NAME)
     p.add_argument("--four-rides", action="store_true", help="add a fourth ride each week")
+    p.add_argument("--big-weekend", action="store_true",
+                   help="add a Sunday endurance ride behind the Saturday long ride")
     p.add_argument("--detail", action="store_true", help="list every session")
     p.add_argument("--week", type=date.fromisoformat, help="show one week only")
     p.add_argument("--write", action="store_true", help="store to prescribed_sessions")
@@ -100,7 +104,11 @@ def main() -> int:
         print(f"  --start {start} is a {DAYS[start.weekday()]}; plans begin on a Monday.")
         return 1
 
-    blocks = add_lit_day(DEFAULT_PLAN) if args.four_rides else DEFAULT_PLAN
+    blocks = DEFAULT_PLAN
+    if args.big_weekend:
+        blocks = add_second_weekend_ride(blocks)
+    if args.four_rides:
+        blocks = add_lit_day(blocks)
     sessions = expand_plan(blocks, start, args.plan_name)
     split = intensity_split(sessions)
 
