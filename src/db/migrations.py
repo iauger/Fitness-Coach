@@ -330,10 +330,54 @@ def _m002_chat_sessions(conn: sqlite3.Connection) -> None:
     """
     conn.executescript(CHAT_SESSIONS_SQL)
 
+
+PRESCRIBED_SESSIONS_SQL = """
+CREATE TABLE IF NOT EXISTS prescribed_sessions (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_name        TEXT NOT NULL,
+    date             TEXT NOT NULL,
+    weekday          INTEGER NOT NULL,
+    block_index      INTEGER NOT NULL,
+    block_name       TEXT NOT NULL,
+    week_in_block    INTEGER NOT NULL,
+    is_recovery_week INTEGER NOT NULL DEFAULT 0,
+    role             TEXT NOT NULL,        -- hard | long | lit | strength
+    archetype        TEXT NOT NULL,        -- lit | sit | hiit | threshold | strength
+    variant          TEXT NOT NULL,
+    prescription     TEXT NOT NULL,        -- the one-line dose, matched to a library workout
+    minutes          REAL,
+    tss              REAL,
+    intensity_factor REAL,
+    params_json      TEXT NOT NULL,
+    created_at       TEXT NOT NULL,
+    UNIQUE(plan_name, date, role)
+);
+CREATE INDEX IF NOT EXISTS idx_prescribed_sessions_date ON prescribed_sessions(date);
+"""
+
+
+def _m003_prescribed_sessions(conn: sqlite3.Connection) -> None:
+    """
+    What our own plan builder prescribes, kept separate from what is actually on the calendar.
+
+    Deliberately NOT written into `planned_workouts`. That table is owned by
+    integrations/tr_calendar.py, which upserts it wholesale from the TrainerRoad iCal feed, and
+    it is what compliance matching, the calendar view, weekly summaries and cycle reviews all
+    read. Writing prescriptions there would both be clobbered on the next calendar sync and
+    destroy the independence of the adherence figure.
+
+    Keeping them apart also buys a third comparison the project could not make before:
+    prescribed -> planned -> actual. That answers "did the library workout I picked actually
+    match the dose we prescribed", which is the failure mode of using TrainerRoad as a workout
+    source while owning the plan structure ourselves.
+    """
+    conn.executescript(PRESCRIBED_SESSIONS_SQL)
+
 # (version, name, step). Append only — never renumber or edit an applied migration.
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "baseline schema as of phase 12B", _m001_baseline),
     (2, "chat sessions and messages for resumable conversations", _m002_chat_sessions),
+    (3, "prescribed_sessions for the plan builder", _m003_prescribed_sessions),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)
