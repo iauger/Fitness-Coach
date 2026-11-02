@@ -4,6 +4,7 @@ anthropic==0.55.0
 plotly==5.24.1
 fastapi==0.141.1
 uvicorn[standard]==0.52.4
+pytest==9.2.0
 
 # The four google-api / google-auth packages were dropped in Session 15: planned workouts now
 # come from the TrainerRoad calendar's public iCal feed (src/integrations/tr_calendar.py),
@@ -12,3 +13,7 @@ uvicorn[standard]==0.52.4
 # fastapi + uvicorn added in phase 12A: the app is now served from a local HTTP server
 # (scripts/serve.py) rather than read as a generated file. Bound to 127.0.0.1 - this process
 # holds the API keys and has no auth.
+
+# pytest added 2026-11-02 with the project's first tests (tests/test_planning.py). The plan
+# generator had four bugs producing plausible-but-wrong numbers that nothing downstream read,
+# so nothing could have caught them.

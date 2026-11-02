@@ -32,11 +32,10 @@ if sys.stdout.encoding != "utf-8":
 from src.athlete.profile import get_metric
 from src.db.schema import get_connection, migrate_db
 from src.planning.blocks import (
-    DEFAULT_PLAN, add_lit_day, add_second_weekend_ride, expand_plan, intensity_split,
-    weekly_rollup,
+    DEFAULT_PLAN, PLAN_NAME, add_lit_day, add_second_weekend_ride, expand_plan,
+    intensity_split, weekly_rollup,
 )
 
-PLAN_NAME = "Sustainable 2026-27"
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
@@ -145,14 +144,28 @@ def main() -> int:
     else:
         print_weekly(sessions)
 
-    print(f"\n  intensity: {split['easy_pct']}% easy / {split['hard_pct']}% hard "
-          f"({split['easy_hours']}h / {split['hard_hours']}h)")
-    print("  measured over the last 28 days for comparison: 22% easy / 78% hard")
+    pct, hours = split["pct"], split["hours"]
+    print(f"\n  intensity: {pct['easy']}% easy / {pct['moderate']}% moderate / "
+          f"{pct['hard']}% hard")
+    print(f"             ({hours['easy']}h easy, {hours['moderate']}h moderate, "
+          f"{hours['hard']}h hard)")
+    # Three bands, the same ones analysis/derive.py uses, so this is directly comparable to
+    # what has actually been ridden. It previously reported two bands against derive's three
+    # and was printed beside the measured figure as if the two were the same scale.
+    try:
+        from src.analysis.derive import derived_metrics
+        print(f"  measured, last 28 days:  {derived_metrics()['intensity']['pct']}")
+    except Exception as exc:                                    # noqa: BLE001
+        print(f"  (could not read measured intensity: {exc})")
 
     ftp = get_metric("ftp")
     if args.watts:
-        print(f"  watts resolved against tracked FTP {ftp:.0f}W — re-run after a ramp test "
-              f"and every future session updates.")
+        # get_metric returns None on an empty athlete_profile; formatting it crashed.
+        if ftp is None:
+            print("  --watts: no FTP tracked yet — run scripts/seed_profile.py --ftp N")
+        else:
+            print(f"  watts resolved against tracked FTP {ftp:.0f}W — re-run after a ramp "
+                  f"test and every future session updates.")
 
     if args.write:
         n = store(sessions, args.plan_name)

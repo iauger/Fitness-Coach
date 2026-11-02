@@ -30,6 +30,10 @@ class Step:
     seconds: int
     pct: float
     label: str = ""
+    # Optional target cadence. Only set where the cadence *is* the point of the step
+    # (cadence drills); otherwise left None so a serializer omits it rather than
+    # inventing a number.
+    cadence: int | None = None
 
     @property
     def tss(self) -> float:
@@ -104,13 +108,71 @@ def _cooldown(minutes: int = 8) -> list[Step]:
     return [Step(minutes * 60, 0.45, "cool-down")]
 
 
+# ── work-bout shapes ──────────────────────────────────────────────────────────
+#
+# Several variants used to describe their structure in a `note` string while emitting a single
+# flat block — `thirty_fifteen` produced one 9-minute effort at 112% FTP, which is unridable,
+# and its stored TSS described a session nobody was ever prescribed. These build the real thing.
+
+def _alternating(total_s: int, a_s: int, a_pct: float, b_s: int, b_pct: float,
+                 label: str) -> list[Step]:
+    """Repeat a/b until the bout is used up, truncating the final segment rather than overrunning."""
+    steps: list[Step] = []
+    elapsed = 0
+    i = 0
+    while elapsed < total_s:
+        seg_s, pct = (a_s, a_pct) if i % 2 == 0 else (b_s, b_pct)
+        seg_s = min(seg_s, total_s - elapsed)
+        if seg_s <= 0:
+            break
+        steps.append(Step(seg_s, pct, label))
+        elapsed += seg_s
+        i += 1
+    return steps
+
+
+def _hard_start(total_s: int, lead_s: int, lead_pct: float, pct: float,
+                label: str) -> list[Step]:
+    """A short supra-target opener, then settle. Deliberately not a separate interval."""
+    lead_s = min(lead_s, total_s)
+    out = [Step(lead_s, lead_pct, f"{label} — hard start")]
+    if total_s - lead_s > 0:
+        out.append(Step(total_s - lead_s, pct, label))
+    return out
+
+
+def _ramp(total_s: int, low: float, high: float, segments: int = 4) -> list[Step]:
+    """Stepped approximation of a continuous ramp."""
+    seg = total_s // segments
+    steps = []
+    for i in range(segments):
+        pct = round(low + (high - low) * i / max(1, segments - 1), 3)
+        dur = seg if i < segments - 1 else total_s - seg * (segments - 1)
+        steps.append(Step(dur, pct, f"ramp {i + 1}/{segments}"))
+    return steps
+
+
+def _bout_steps(total_s: int, cfg: dict, label: str) -> list[Step]:
+    """One work bout, expanded according to whatever shape the variant declares."""
+    if "micro" in cfg:
+        m = cfg["micro"]
+        return _alternating(total_s, m["a_s"], m["a_pct"], m["b_s"], m["b_pct"], label)
+    if "lead" in cfg:
+        return _hard_start(total_s, cfg["lead"]["lead_s"], cfg["lead"]["lead_pct"],
+                           cfg["pct"], label)
+    return [Step(total_s, cfg["pct"], label)]
+
+
 # ── archetypes ────────────────────────────────────────────────────────────────
 
 LIT_VARIANTS = {
     "steady":            {"pct": 0.62},
-    "cadence_drills":    {"pct": 0.62, "note": "alternate 5min @ 95rpm / 5min @ 75rpm"},
-    "endurance_sprints": {"pct": 0.62, "note": "one 15s all-out sprint every 20-30min"},
-    "progressive":       {"pct": 0.66, "note": "start 55%, finish 72%"},
+    "cadence_drills":    {"pct": 0.62, "note": "alternate 5min @ 95rpm / 5min @ 75rpm",
+                          "cadence_block_s": 300, "cadences": (95, 75)},
+    "endurance_sprints": {"pct": 0.62, "note": "one 15s all-out sprint every 25min",
+                          "sprint_every_s": 1500, "sprint_s": 15, "sprint_pct": 1.80},
+    "progressive":       {"pct": 0.66, "note": "start 55%, finish 72%",
+                          "ramp": (0.55, 0.72)},
 }
 
 
@@ -123,8 +185,33 @@ def lit(minutes: int, variant: str = "steady") -> Session:
     purpose from duration-dependent to intensity-dependent stimulus.
     """
     cfg = LIT_VARIANTS[variant]
-    return Session("lit", variant,
-                   steps=[Step(minutes * 60, cfg["pct"], cfg.get("note", "steady endurance"))],
+    total = minutes * 60
+    if "ramp" in cfg:
+        steps = _ramp(total, *cfg["ramp"])
+    elif "cadences" in cfg:
+        # Same power throughout; the cadence is the stimulus, so it is carried on the Step
+        # rather than left in prose a serializer would drop.
+        steps = []
+        elapsed, i = 0, 0
+        while elapsed < total:
+            seg = min(cfg["cadence_block_s"], total - elapsed)
+            steps.append(Step(seg, cfg["pct"], "cadence block",
+                              cadence=cfg["cadences"][i % len(cfg["cadences"])]))
+            elapsed += seg
+            i += 1
+    elif "sprint_every_s" in cfg:
+        steps = []
+        elapsed = 0
+        while elapsed < total:
+            seg = min(cfg["sprint_every_s"], total - elapsed)
+            steps.append(Step(seg, cfg["pct"], "steady endurance"))
+            elapsed += seg
+            if total - elapsed > cfg["sprint_s"] * 4:
+                steps.append(Step(cfg["sprint_s"], cfg["sprint_pct"], "all-out sprint"))
+                elapsed += cfg["sprint_s"]
+    else:
+        steps = [Step(total, cfg["pct"], "steady endurance")]
+    return Session("lit", variant, steps=steps,
                    params={"minutes": minutes, "pct": cfg["pct"], **cfg})
 
 
@@ -147,7 +234,11 @@ def sit(variant: str = "medium", reps: int | None = None) -> Session:
     steps = _warmup(15)
     for i in range(cfg["reps"]):
         steps.append(Step(cfg["work_s"], SIT_NOMINAL_PCT, f"all-out {i+1}"))
-        steps.append(Step(cfg["rest_min"] * 60, 0.45, "full recovery"))
+        # Guard that hiit() and threshold() both had and this did not: without it every SIT
+        # session carried a full recovery interval immediately before the cool-down, inflating
+        # the stored duration and TSS by 3-6 minutes.
+        if i < cfg["reps"] - 1:
+            steps.append(Step(cfg["rest_min"] * 60, 0.45, "full recovery"))
     steps += _cooldown(8)
     return Session("sit", variant, steps=steps, params=cfg)
 
@@ -160,9 +251,11 @@ HIIT_VARIANTS = {
     "straight_6":    {"work_min": 6, "reps": 4, "pct": 1.06, "rest_ratio": 0.5},
     "straight_8":    {"work_min": 8, "reps": 3, "pct": 1.04, "rest_ratio": 0.5},
     "thirty_fifteen": {"work_min": 9, "reps": 3, "pct": 1.12, "rest_ratio": 0.6,
-                       "note": "30s on / 15s off within each bout"},
+                       "note": "30s on / 15s off within each bout",
+                       "micro": {"a_s": 30, "a_pct": 1.12, "b_s": 15, "b_pct": 0.45}},
     "hard_start":    {"work_min": 5, "reps": 4, "pct": 1.08, "rest_ratio": 0.5,
-                      "note": "first 30s at 130%, then settle to target"},
+                      "note": "first 30s at 130%, then settle to target",
+                      "lead": {"lead_s": 30, "lead_pct": 1.30}},
 }
 
 
@@ -177,7 +270,7 @@ def hiit(variant: str = "straight_5", reps: int | None = None,
     cfg["rest_min"] = rest_min
     steps = _warmup(15)
     for i in range(cfg["reps"]):
-        steps.append(Step(int(cfg["work_min"] * 60), cfg["pct"], f"bout {i+1}"))
+        steps += _bout_steps(int(cfg["work_min"] * 60), cfg, f"bout {i+1}")
         if i < cfg["reps"] - 1:
             steps.append(Step(int(rest_min * 60), 0.45, "recovery"))
     steps += _cooldown(10)
@@ -192,7 +285,8 @@ THRESHOLD_VARIANTS = {
     "continuous":   {"work_min": 40, "reps": 1, "pct": 0.88, "rest_min": 0},
     "sweet_spot":   {"work_min": 18, "reps": 3, "pct": 0.89, "rest_min": 4},
     "over_unders":  {"work_min": 15, "reps": 3, "pct": 0.95, "rest_min": 5,
-                     "note": "alternate 2min @ 92% / 1min @ 103%"},
+                     "note": "alternate 2min @ 92% / 1min @ 103%",
+                     "micro": {"a_s": 120, "a_pct": 0.92, "b_s": 60, "b_pct": 1.03}},
 }
 
 
@@ -205,7 +299,7 @@ def threshold(variant: str = "long_reps", reps: int | None = None,
         cfg["work_min"] = work_min
     steps = _warmup(12)
     for i in range(cfg["reps"]):
-        steps.append(Step(int(cfg["work_min"] * 60), cfg["pct"], f"effort {i+1}"))
+        steps += _bout_steps(int(cfg["work_min"] * 60), cfg, f"effort {i+1}")
         if i < cfg["reps"] - 1 and cfg["rest_min"]:
             steps.append(Step(int(cfg["rest_min"] * 60), 0.45, "release"))
     steps += _cooldown(8)

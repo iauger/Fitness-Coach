@@ -24,7 +24,14 @@ execution layer while this owns the structure, and defers .zwo generation entire
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from src.analysis.derive import EASY_IF_CEILING, HARD_IF_FLOOR
 from src.planning import archetypes as A
+
+# The one plan name. scripts/plan_build.py used "Sustainable 2026-27" while
+# scripts/seed_training_plan.py used "TrainerRoad 2026-27", so prescribed_sessions could never
+# join training_plan_weeks - and that join is what current_week, cycles, plan_summary,
+# cycle_metrics and week_metrics all key on.
+PLAN_NAME = "Sustainable 2026-27"
 
 # Weekday roles a slot can take.
 ROLES = ("hard", "long", "long2", "lit", "strength")
@@ -50,6 +57,10 @@ class Block:
     long2_start_min: int = 60
     long2_step_min: int = 5
     long2_cap_min: int = 105
+    # Readable phase name for training_plan_weeks / cycle reviews. Defaults to block_type, but
+    # Reset and Taper are both block_type="base" and would otherwise be indistinguishable in a
+    # review that says which phase a cycle closed out.
+    phase_label: str = ""
     note: str = ""
 
     def __post_init__(self) -> None:
@@ -113,21 +124,25 @@ def _strength_for_week(block: Block, week: int) -> dict[int, str]:
     """
     Assign a lift pattern to each strength day, resolving both constraints at once.
 
-    Two rules interact and the order matters. Legs must not be loaded the day before or after
-    weekend endurance - Friday lower-body compromises Saturday, Monday lower-body lands on two
-    days of accumulated fatigue - so those slots are pinned to upper body first. Only then do
-    the remaining slots rotate, which stops a week from lifting the same pattern twice and
-    wasting the second session.
+    Two rules interact and the order matters. Legs must not be loaded on either side of a long
+    ride, so those slots are pinned to upper body first; only then do the remaining slots rotate,
+    which stops a week lifting the same pattern twice and wasting the second session.
 
-    Resolving the pin before the rotation rather than after is the whole point: doing it the
-    other way round let a collision override the safety rule and put squats the day before a
-    three-hour ride.
+    Adjacency is computed from the pattern rather than hardcoded. An earlier version pinned
+    weekdays 0 and 4 on the assumption the long ride sat on Saturday with strength on Friday and
+    Monday. Every block in DEFAULT_PLAN actually schedules strength on 2 and 6, so the pin never
+    fired and the rotation was free to put lower body on **Sunday, the day after the Saturday
+    long ride** - which happened in 6 of 19 weeks. The rule existed and the plan violated it.
+
+    Wrapping mod 7 is deliberate: the plan repeats weekly, so Monday follows the previous week's
+    Sunday. If both strength days end up adjacent to a long ride they both go upper - protecting
+    the legs matters more than varying the pattern.
     """
     days = sorted(d for d, r in block.pattern if r == "strength")
-    has_weekend = any(d in (5, 6) and r in ("long", "long2") for d, r in block.pattern)
+    long_days = {d for d, r in block.pattern if r in ("long", "long2")}
     out: dict[int, str] = {}
     for d in days:
-        if has_weekend and d in (0, 4):
+        if long_days & {(d - 1) % 7, (d + 1) % 7}:
             out[d] = "upper"
     remaining = [d for d in days if d not in out]
     pool = [v for v in ("lower", "full", "upper") if v not in out.values()] or ["full"]
@@ -226,7 +241,7 @@ def weekly_rollup(sessions: list[dict]) -> list[dict]:
 
 DEFAULT_PLAN: list[Block] = [
     Block(
-        name="Reset — consistency and easy volume",
+        name="Reset — consistency and easy volume", phase_label="reset",
         block_type="base", weeks=4,
         pattern=[(1, "hard"), (2, "strength"), (3, "lit"), (5, "long"), (6, "strength")],
         hard_variants=["sweet_spot", "continuous"],
@@ -235,7 +250,7 @@ DEFAULT_PLAN: list[Block] = [
         note="One hard session only. Re-establish the long ride after a block of 60-75min rides.",
     ),
     Block(
-        name="Base — threshold and durability",
+        name="Base — threshold and durability", phase_label="base",
         block_type="threshold", weeks=6,
         pattern=[(1, "hard"), (2, "strength"), (3, "hard"), (5, "long"), (6, "strength")],
         hard_variants=["long_reps", "medium_reps", "continuous", "over_unders"],
@@ -244,7 +259,7 @@ DEFAULT_PLAN: list[Block] = [
         note="Threshold hedged low, per the source. Long ride carries the durability load.",
     ),
     Block(
-        name="Build — VO2 and sustained power",
+        name="Build — VO2 and sustained power", phase_label="build",
         block_type="hiit", weeks=6,
         pattern=[(1, "hard"), (2, "strength"), (3, "hard"), (5, "long"), (6, "strength")],
         hard_variants=["straight_5", "straight_4", "thirty_fifteen", "straight_6"],
@@ -253,56 +268,99 @@ DEFAULT_PLAN: list[Block] = [
         note="Sub-maximal by design — extend time in the domain, keep half a rep in reserve.",
     ),
     Block(
-        name="Sharpen — neuromuscular",
-        block_type="sit", weeks=3,
+        name="Specialty — race-specific endurance", phase_label="specialty",
+        block_type="threshold", weeks=10,
+        pattern=[(1, "hard"), (2, "strength"), (3, "hard"), (5, "long"), (6, "strength")],
+        hard_variants=["over_unders", "sweet_spot", "long_reps", "continuous"],
+        recovery_weeks={4, 8},
+        long_start_min=210, long_step_min=15, long_cap_min=300,
+        note="Long ride carries toward event duration; threshold work keeps the ceiling up.",
+    ),
+    Block(
+        name="Sharpen — neuromuscular", phase_label="sharpen",
+        block_type="sit", weeks=4,
         pattern=[(1, "hard"), (2, "strength"), (3, "lit"), (5, "long"), (6, "strength")],
         hard_variants=["medium", "long", "short"],
-        recovery_weeks={3},
+        recovery_weeks={4},
         long_start_min=210, long_step_min=0, long_cap_min=240,
         note="Short, hard, cheap. Keeps top-end alive without eating into long-ride recovery.",
+    ),
+    Block(
+        name="Taper — into the gravel A race", phase_label="taper",
+        block_type="base", weeks=2,
+        pattern=[(1, "hard"), (3, "lit"), (5, "long"), (6, "strength")],
+        hard_variants=["short_reps"],
+        recovery_weeks={2},
+        long_start_min=120, long_step_min=-60, long_cap_min=120, lit_min=45,
+        note="Volume down, a little intensity retained. Race sits in the final week.",
     ),
 ]
 
 
-def add_lit_day(blocks: list[Block], weekday: int = 0, minutes: int = 60) -> list[Block]:
+def _respec(block: Block, **changes) -> Block:
+    """
+    Rebuild a Block with changes applied, deep-copying its mutable fields.
+
+    `Block(**{**b.__dict__, ...})` shallow-copies, so a rebuilt block shared `hard_variants`
+    and `recovery_weeks` with the original. Mutating either afterwards would silently alter
+    both, and these helpers hand back new plans that callers may well edit.
+    """
+    fields = {**block.__dict__, **changes}
+    fields["hard_variants"] = list(fields["hard_variants"])
+    fields["recovery_weeks"] = set(fields["recovery_weeks"])
+    fields["pattern"] = sorted(fields["pattern"])
+    return Block(**fields)
+
+
+def add_lit_day(blocks: list[Block], weekday: int = 0, minutes: int | None = None) -> list[Block]:
     """
     Return the plan with one extra low-intensity ride per week.
 
     Offered rather than assumed. It lifts weekly ride hours by about an hour and pushes the week
     to six sessions, which is a real commitment against the athlete's stated life load - and an
     unkept fourth ride is worse than a planned three, because the plan stops being trusted.
+
+    `minutes` overrides the block's `lit_min` for the added day. It previously sat in the
+    signature and was never read, so `add_lit_day(blocks, minutes=90)` silently produced
+    60-minute rides.
     """
     out = []
     for b in blocks:
         if any(d == weekday for d, _ in b.pattern):
             out.append(b)
             continue
-        out.append(Block(**{**b.__dict__, "pattern": sorted(b.pattern + [(weekday, "lit")])}))
+        changes = {"pattern": b.pattern + [(weekday, "lit")]}
+        if minutes is not None:
+            changes["lit_min"] = minutes
+        out.append(_respec(b, **changes))
     return out
 
 
-def intensity_split(sessions: list[dict], easy_ceiling: float = 0.75) -> dict:
+def intensity_split(sessions: list[dict]) -> dict:
     """
-    Share of ride time below/above the easy threshold, on the same basis analysis/derive.py uses.
+    Share of ride time by intensity band, on exactly the basis analysis/derive.py uses.
 
-    This is the number the plan exists to move: the current block measured 0% easy and 78-100%
-    hard. Strength is excluded - 80/20 is an endurance rule, and resistance work scores easy on
-    any power or HR measure while costing real fatigue.
+    This claimed to match `derive.py` while using **two** bands against its three: everything at
+    or above 0.75 was reported as hard, where `derive` calls 0.75-0.85 moderate. 31% of this
+    plan's minutes fall in that gap, so the plan's "% hard" and the measured "% hard" printed
+    beside it were never comparable numbers. The thresholds are imported rather than redefined
+    so the two cannot drift apart again.
+
+    Strength is excluded - 80/20 is an endurance rule, and resistance work scores easy on any
+    power or HR measure while costing real fatigue.
     """
-    easy = hard = 0.0
+    bands = {"easy": 0.0, "moderate": 0.0, "hard": 0.0}
     for s in sessions:
         if s["archetype"] == "strength":
             continue
-        if s["intensity_factor"] < easy_ceiling:
-            easy += s["minutes"]
-        else:
-            hard += s["minutes"]
-    total = easy + hard
+        intensity = s["intensity_factor"]
+        band = ("easy" if intensity < EASY_IF_CEILING
+                else "moderate" if intensity < HARD_IF_FLOOR else "hard")
+        bands[band] += s["minutes"]
+    total = sum(bands.values())
     return {
-        "easy_hours": round(easy / 60, 1),
-        "hard_hours": round(hard / 60, 1),
-        "easy_pct": round(easy / total * 100, 1) if total else None,
-        "hard_pct": round(hard / total * 100, 1) if total else None,
+        "hours": {k: round(v / 60, 1) for k, v in bands.items()},
+        "pct": {k: (round(v / total * 100, 1) if total else None) for k, v in bands.items()},
     }
 
 
@@ -327,22 +385,85 @@ def add_second_weekend_ride(blocks: list[Block], strength_to: int = 4) -> list[B
     9 nights under 6h in 30 days; an early Sunday alarm that costs an hour of it can easily be
     a net negative. That is a readiness signal to track, not a reason to skip the ride.
     """
-    out = []
-    carried = None
+    out: list[Block] = []
+    carried: int | None = None
     for b in blocks:
         pattern = [(d, r) for d, r in b.pattern if not (d == 6 and r == "strength")]
-        moved = len(pattern) != len(b.pattern)
-        if moved and not any(d == strength_to for d, _ in pattern):
-            pattern.append((strength_to, "strength"))
-        if not any(d == 6 for d, _ in pattern):
-            pattern.append((6, "long2"))
-        fields = {**b.__dict__, "pattern": sorted(pattern)}
-        # Carry the Sunday duration across block boundaries. Each block otherwise restarts it at
-        # long2_start_min, which would walk the ride back down every time a new block began -
-        # the opposite of the progressive overload the second ride exists to provide.
+        displaced = len(pattern) != len(b.pattern)
+
+        if displaced:
+            # Relocate, never drop. This used to delete the session outright when the target day
+            # was occupied, quietly taking the week from two strength days to one.
+            target = strength_to
+            if any(d == target for d, _ in pattern):
+                free = [d for d in (4, 0, 3, 1) if not any(x == d for x, _ in pattern)]
+                if not free:
+                    raise ValueError(
+                        "block %r: cannot relocate Sunday strength - weekday %d is taken and "
+                        "no fallback day is free" % (b.name, strength_to))
+                target = free[0]
+            pattern.append((target, "strength"))
+
+        if any(d == 6 for d, _ in pattern):
+            # Sunday taken by something other than strength (e.g. add_lit_day(weekday=6) ran
+            # first). Adding nothing silently is worse than saying so.
+            raise ValueError(
+                "block %r: Sunday is already taken by %r; cannot add the second weekend ride"
+                % (b.name, dict(pattern)[6]))
+        pattern.append((6, "long2"))
+
+        # Carry the Sunday duration across blocks, starting one step ABOVE where the previous
+        # block finished. Seeding with the finishing value made every boundary repeat a week,
+        # and because _long2_minutes steps back during a recovery week - the last week of every
+        # DEFAULT_PLAN block - the progression also lost a step each time. Traced 70, 70, 90,
+        # 105, then flat.
+        changes = {"pattern": pattern}
         if carried is not None:
-            fields["long2_start_min"] = carried
-        block = Block(**fields)
-        carried = _long2_minutes(block, block.weeks)
+            changes["long2_start_min"] = min(carried + b.long2_step_min, b.long2_cap_min)
+        block = _respec(b, **changes)
+        # Nominal final-week duration, ignoring the recovery-week step-back.
+        carried = min(block.long2_start_min + block.long2_step_min * (block.weeks - 1),
+                      block.long2_cap_min)
         out.append(block)
     return out
+
+
+def plan_weeks_rows(blocks: list[Block], start: date, plan_name: str = PLAN_NAME) -> list[dict]:
+    """
+    Rows for `training_plan_weeks`, derived from the same blocks the sessions come from.
+
+    That table was hand-seeded from TrainerRoad's phase view by scripts/seed_training_plan.py.
+    Now that the plan is generated here, seeding it from a plan we no longer follow would leave
+    plan position, cycle boundaries and every weekly/cycle rollup describing the wrong thing.
+    Generating both from one source also makes the plan_name join correct by construction
+    rather than by remembering to keep two constants in step.
+
+    `week_type` is 'rest' on a recovery week, otherwise the block's own phase - matching the
+    enum the table has always used, where a rest week overwrites the phase name and `phase`
+    carries the parent block.
+    """
+    rows: list[dict] = []
+    total_weeks = sum(b.weeks for b in blocks)
+    plan_start = start
+    plan_end = start + timedelta(weeks=total_weeks) - timedelta(days=1)
+    cursor = start
+    plan_week = 0
+    for phase_number, b in enumerate(blocks, start=1):
+        phase = b.phase_label or ("rest" if b.block_type == "recovery" else b.block_type)
+        for week_in_block in range(1, b.weeks + 1):
+            plan_week += 1
+            week_start = cursor + timedelta(weeks=week_in_block - 1)
+            rows.append({
+                "plan_name": plan_name,
+                "plan_start_date": plan_start.isoformat(),
+                "plan_end_date": plan_end.isoformat(),
+                "week_start_date": week_start.isoformat(),
+                "week_end_date": (week_start + timedelta(days=6)).isoformat(),
+                "week_type": "rest" if week_in_block in b.recovery_weeks else phase,
+                "phase": phase,
+                "phase_number": phase_number,
+                "phase_week_number": week_in_block,
+                "plan_week_number": plan_week,
+            })
+        cursor += timedelta(weeks=b.weeks)
+    return rows
