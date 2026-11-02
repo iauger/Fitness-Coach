@@ -183,8 +183,12 @@ def build_coaching_context(
     recent_planned = recent_planned_workouts(days=14)
 
     # weeks until key events
+    # The gravel A race is 2027-06-18 — the "Gravel Thing", 8:00 / 387 TSS, confirmed on the
+    # TrainerRoad calendar and recorded in seed_training_plan.py and planning/blocks.py. This read
+    # 2027-05-01 until 2026-11-02, so the coach was told the event was ~7 weeks earlier than it is
+    # and reasoned about the timeline accordingly.
     cx_target = date(2027, 10, 1)
-    gravel_target = date(2027, 5, 1)
+    gravel_target = date(2027, 6, 18)
     today_d = date.today()
     weeks_to_cx = (cx_target - today_d).days // 7
     weeks_to_gravel = (gravel_target - today_d).days // 7
@@ -283,8 +287,8 @@ def coaching_context_text(ctx: dict | None = None) -> str:
     for g in ctx["athlete"]["goals"]:
         lines.append(f"  - {g}")
     lines += [
-        f"  Weeks to gravel target (May 2027): {timeline['weeks_to_gravel_target']}",
-        f"  Weeks to CX target (Oct 2027):     {timeline['weeks_to_cx_target']}",
+        f"  Weeks to gravel A race (2027-06-18): {timeline['weeks_to_gravel_target']}",
+        f"  Weeks to CX target (Oct 2027):       {timeline['weeks_to_cx_target']}",
         "",
         "FITNESS (PMC)",
         f"  CTL (fitness):  {cur.get('ctl')}",
