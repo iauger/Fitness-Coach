@@ -1,0 +1,564 @@
+{
+ "_comment": "Frozen snapshot of measured weekly volume, 2025-09-01 to 2026-11-02, generated once from data/fitness.db via analysis.activities.week_volume. Committed deliberately: the live database grows every time a ride syncs, so replay assertions read against it would drift and eventually fail for reasons unrelated to the code. Regenerate only if week_volume's contract changes, and expect the replay expectations to be re-derived.",
+ "generated": "2026-11-02",
+ "weeks": [
+  {
+   "week_start": "2025-09-01",
+   "ride_min": 332.8,
+   "ride_days": 5,
+   "longest_ride_min": 89.5,
+   "strength_sessions": 0,
+   "training_days": 5,
+   "any_activity": true
+  },
+  {
+   "week_start": "2025-09-08",
+   "ride_min": 271.7,
+   "ride_days": 4,
+   "longest_ride_min": 90.3,
+   "strength_sessions": 0,
+   "training_days": 4,
+   "any_activity": true
+  },
+  {
+   "week_start": "2025-09-15",
+   "ride_min": 256.3,
+   "ride_days": 4,
+   "longest_ride_min": 90.5,
+   "strength_sessions": 0,
+   "training_days": 4,
+   "any_activity": true
+  },
+  {
+   "week_start": "2025-09-22",
+   "ride_min": 277.8,
+   "ride_days": 4,
+   "longest_ride_min": 96.5,
+   "strength_sessions": 0,
+   "training_days": 4,
+   "any_activity": true
+  },
+  {
+   "week_start": "2025-09-29",
+   "ride_min": 181.9,
+   "ride_days": 3,
+   "longest_ride_min": 61.0,
+   "strength_sessions": 0,
+   "training_days": 4,
+   "any_activity": true
+  },
+  {
+   "week_start": "2025-10-06",
+   "ride_min": 271.9,
+   "ride_days": 4,
+   "longest_ride_min": 90.5,
+   "strength_sessions": 0,
+   "training_days": 4,
+   "any_activity": true
+  },
+  {
+   "week_start": "2025-10-13",
+   "ride_min": 221.9,
+   "ride_days": 4,
+   "longest_ride_min": 60.5,
+   "strength_sessions": 0,
+   "training_days": 4,
+   "any_activity": true
+  },
+  {
+   "week_start": "2025-10-20",
+   "ride_min": 168.7,
+   "ride_days": 3,
+   "longest_ride_min": 60.5,
+   "strength_sessions": 0,
+   "training_days": 5,
+   "any_activity": true
+  },
+  {
+   "week_start": "2025-10-27",
+   "ride_min": 225.0,
+   "ride_days": 5,
+   "longest_ride_min": 48.4,
+   "strength_sessions": 0,
+   "training_days": 6,
+   "any_activity": true
+  },
+  {
+   "week_start": "2025-11-03",
+   "ride_min": 167.6,
+   "ride_days": 2,
+   "longest_ride_min": 91.0,
+   "strength_sessions": 2,
+   "training_days": 4,
+   "any_activity": true
+  },
+  {
+   "week_start": "2025-11-10",
+   "ride_min": 241.4,
+   "ride_days": 3,
+   "longest_ride_min": 90.8,
+   "strength_sessions": 2,
+   "training_days": 3,
+   "any_activity": true
+  },
+  {
+   "week_start": "2025-11-17",
+   "ride_min": 151.1,
+   "ride_days": 2,
+   "longest_ride_min": 90.4,
+   "strength_sessions": 1,
+   "training_days": 3,
+   "any_activity": true
+  },
+  {
+   "week_start": "2025-11-24",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 1,
+   "training_days": 1,
+   "any_activity": true
+  },
+  {
+   "week_start": "2025-12-01",
+   "ride_min": 61.1,
+   "ride_days": 1,
+   "longest_ride_min": 61.1,
+   "strength_sessions": 0,
+   "training_days": 1,
+   "any_activity": true
+  },
+  {
+   "week_start": "2025-12-08",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 0,
+   "training_days": 0,
+   "any_activity": false
+  },
+  {
+   "week_start": "2025-12-15",
+   "ride_min": 31.9,
+   "ride_days": 1,
+   "longest_ride_min": 31.9,
+   "strength_sessions": 1,
+   "training_days": 3,
+   "any_activity": true
+  },
+  {
+   "week_start": "2025-12-22",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 0,
+   "training_days": 0,
+   "any_activity": false
+  },
+  {
+   "week_start": "2025-12-29",
+   "ride_min": 395.8,
+   "ride_days": 6,
+   "longest_ride_min": 101.7,
+   "strength_sessions": 0,
+   "training_days": 6,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-01-05",
+   "ride_min": 344.5,
+   "ride_days": 6,
+   "longest_ride_min": 90.8,
+   "strength_sessions": 0,
+   "training_days": 6,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-01-12",
+   "ride_min": 307.7,
+   "ride_days": 5,
+   "longest_ride_min": 71.0,
+   "strength_sessions": 0,
+   "training_days": 5,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-01-19",
+   "ride_min": 31.4,
+   "ride_days": 1,
+   "longest_ride_min": 31.4,
+   "strength_sessions": 1,
+   "training_days": 2,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-01-26",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 0,
+   "training_days": 0,
+   "any_activity": false
+  },
+  {
+   "week_start": "2026-02-02",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 0,
+   "training_days": 0,
+   "any_activity": false
+  },
+  {
+   "week_start": "2026-02-09",
+   "ride_min": 336.5,
+   "ride_days": 5,
+   "longest_ride_min": 90.5,
+   "strength_sessions": 0,
+   "training_days": 5,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-02-16",
+   "ride_min": 364.4,
+   "ride_days": 6,
+   "longest_ride_min": 90.4,
+   "strength_sessions": 0,
+   "training_days": 6,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-02-23",
+   "ride_min": 313.9,
+   "ride_days": 5,
+   "longest_ride_min": 90.6,
+   "strength_sessions": 0,
+   "training_days": 5,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-03-02",
+   "ride_min": 181.0,
+   "ride_days": 3,
+   "longest_ride_min": 60.6,
+   "strength_sessions": 0,
+   "training_days": 3,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-03-09",
+   "ride_min": 299.9,
+   "ride_days": 5,
+   "longest_ride_min": 60.0,
+   "strength_sessions": 0,
+   "training_days": 5,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-03-16",
+   "ride_min": 250.0,
+   "ride_days": 4,
+   "longest_ride_min": 65.0,
+   "strength_sessions": 0,
+   "training_days": 4,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-03-23",
+   "ride_min": 259.1,
+   "ride_days": 3,
+   "longest_ride_min": 139.1,
+   "strength_sessions": 0,
+   "training_days": 3,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-03-30",
+   "ride_min": 240.0,
+   "ride_days": 4,
+   "longest_ride_min": 60.0,
+   "strength_sessions": 0,
+   "training_days": 4,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-04-06",
+   "ride_min": 74.0,
+   "ride_days": 2,
+   "longest_ride_min": 45.9,
+   "strength_sessions": 0,
+   "training_days": 2,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-04-13",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 0,
+   "training_days": 0,
+   "any_activity": false
+  },
+  {
+   "week_start": "2026-04-20",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 1,
+   "training_days": 1,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-04-27",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 0,
+   "training_days": 0,
+   "any_activity": false
+  },
+  {
+   "week_start": "2026-05-04",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 0,
+   "training_days": 0,
+   "any_activity": false
+  },
+  {
+   "week_start": "2026-05-11",
+   "ride_min": 179.4,
+   "ride_days": 3,
+   "longest_ride_min": 60.0,
+   "strength_sessions": 2,
+   "training_days": 3,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-05-18",
+   "ride_min": 60.0,
+   "ride_days": 1,
+   "longest_ride_min": 60.0,
+   "strength_sessions": 0,
+   "training_days": 1,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-05-25",
+   "ride_min": 30.0,
+   "ride_days": 1,
+   "longest_ride_min": 30.0,
+   "strength_sessions": 3,
+   "training_days": 3,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-06-01",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 2,
+   "training_days": 2,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-06-08",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 3,
+   "training_days": 3,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-06-15",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 0,
+   "training_days": 0,
+   "any_activity": false
+  },
+  {
+   "week_start": "2026-06-22",
+   "ride_min": 181.7,
+   "ride_days": 3,
+   "longest_ride_min": 60.8,
+   "strength_sessions": 2,
+   "training_days": 4,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-06-29",
+   "ride_min": 46.3,
+   "ride_days": 1,
+   "longest_ride_min": 46.3,
+   "strength_sessions": 3,
+   "training_days": 3,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-07-06",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 1,
+   "training_days": 1,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-07-13",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 4,
+   "training_days": 4,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-07-20",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 1,
+   "training_days": 1,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-07-27",
+   "ride_min": 32.6,
+   "ride_days": 1,
+   "longest_ride_min": 32.6,
+   "strength_sessions": 3,
+   "training_days": 3,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-08-03",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 1,
+   "training_days": 1,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-08-10",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 0,
+   "training_days": 0,
+   "any_activity": false
+  },
+  {
+   "week_start": "2026-08-17",
+   "ride_min": 199.3,
+   "ride_days": 3,
+   "longest_ride_min": 75.3,
+   "strength_sessions": 2,
+   "training_days": 7,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-08-24",
+   "ride_min": 206.8,
+   "ride_days": 3,
+   "longest_ride_min": 75.4,
+   "strength_sessions": 2,
+   "training_days": 5,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-08-31",
+   "ride_min": 200.1,
+   "ride_days": 3,
+   "longest_ride_min": 75.3,
+   "strength_sessions": 1,
+   "training_days": 5,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-09-07",
+   "ride_min": 135.8,
+   "ride_days": 2,
+   "longest_ride_min": 75.2,
+   "strength_sessions": 0,
+   "training_days": 2,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-09-14",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 0,
+   "training_days": 0,
+   "any_activity": false
+  },
+  {
+   "week_start": "2026-09-21",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 0,
+   "training_days": 0,
+   "any_activity": false
+  },
+  {
+   "week_start": "2026-09-28",
+   "ride_min": 162.6,
+   "ride_days": 3,
+   "longest_ride_min": 62.0,
+   "strength_sessions": 0,
+   "training_days": 3,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-10-05",
+   "ride_min": 120.8,
+   "ride_days": 2,
+   "longest_ride_min": 60.4,
+   "strength_sessions": 0,
+   "training_days": 2,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-10-12",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 0,
+   "training_days": 0,
+   "any_activity": false
+  },
+  {
+   "week_start": "2026-10-19",
+   "ride_min": 174.4,
+   "ride_days": 3,
+   "longest_ride_min": 60.7,
+   "strength_sessions": 0,
+   "training_days": 3,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-10-26",
+   "ride_min": 124.4,
+   "ride_days": 2,
+   "longest_ride_min": 64.1,
+   "strength_sessions": 0,
+   "training_days": 2,
+   "any_activity": true
+  },
+  {
+   "week_start": "2026-11-02",
+   "ride_min": 0.0,
+   "ride_days": 0,
+   "longest_ride_min": 0.0,
+   "strength_sessions": 0,
+   "training_days": 0,
+   "any_activity": false
+  }
+ ]
+}
