@@ -16,9 +16,10 @@ import pytest
 from src.analysis.derive import EASY_IF_CEILING, HARD_IF_FLOOR
 from src.planning import archetypes as A
 from src.planning.blocks import (
-    DEFAULT_PLAN, PLAN_NAME, Block, add_lit_day, add_second_weekend_ride, expand_plan,
-    intensity_split, plan_weeks_rows, weekly_rollup,
+    MAX_HARD_PER_WEEK, PLAN_NAME, ROTATION, ROTATION_LOOP_FROM, Block, expand_week,
+    intensity_split, pattern_for, plan_week_row, rotation_after, weekly_rollup,
 )
+from src.planning.progression import CAP_TIER, TIERS
 
 START = date(2026, 11, 9)  # a Monday
 
@@ -155,13 +156,12 @@ def test_rep_count_in_summary_matches_rep_count_in_steps(archetype):
                     if s.label.startswith(label)})
         assert reps == session.params["reps"], f"{archetype}/{variant}"
 
-
 # ── block expansion and its constraints ───────────────────────────────────────
 
-def test_no_block_exceeds_the_hard_session_cap():
-    for block in DEFAULT_PLAN:
+def test_no_block_declares_more_hard_sessions_than_the_cap():
+    for block in ROTATION:
         hard = sum(1 for _, role in block.pattern if role == "hard")
-        assert hard <= 2, block.name
+        assert hard <= MAX_HARD_PER_WEEK, block.name
 
 
 def test_block_rejects_too_many_hard_sessions():
@@ -170,99 +170,176 @@ def test_block_rejects_too_many_hard_sessions():
               pattern=[(0, "hard"), (2, "hard"), (4, "hard")])
 
 
-@pytest.mark.parametrize("plan_fn", [
-    lambda: DEFAULT_PLAN,
-    lambda: add_second_weekend_ride(DEFAULT_PLAN),
-    lambda: add_lit_day(DEFAULT_PLAN),
-])
-def test_legs_are_never_loaded_next_to_a_long_ride(plan_fn):
-    """
-    The guard existed but pinned hardcoded weekdays 0 and 4, while every block schedules
-    strength on 2 and 6 — so it never fired and 6 of 19 weeks put lower body on the Sunday
-    after the Saturday long ride.
-    """
-    blocks = plan_fn()
-    for block in blocks:
-        long_days = {d for d, r in block.pattern if r in ("long", "long2")}
-        strength_days = [d for d, r in block.pattern if r == "strength"]
-        sessions = expand_plan([block], START, "t")
-        by_day = {}
-        for s in sessions:
-            if s["archetype"] == "strength":
-                by_day.setdefault(s["week_in_block"], {})[s["weekday"]] = s["variant"]
-        for week, assigned in by_day.items():
-            for day in strength_days:
-                adjacent = long_days & {(day - 1) % 7, (day + 1) % 7}
-                if adjacent:
-                    assert assigned[day] == "upper", (
-                        f"{block.name} week {week}: {assigned[day]} on weekday {day}, "
-                        f"adjacent to a long ride")
+def test_block_rejects_two_sessions_on_one_weekday():
+    with pytest.raises(ValueError, match="one weekday"):
+        Block(name="bad", block_type="base", weeks=1,
+              pattern=[(1, "lit"), (1, "long")])
 
 
-def test_a_week_never_repeats_the_same_lift_pattern():
-    for block in DEFAULT_PLAN:
-        sessions = [s for s in expand_plan([block], START, "t")
+@pytest.mark.parametrize("tier", sorted(TIERS))
+@pytest.mark.parametrize("block", ROTATION, ids=[b.name for b in ROTATION])
+def test_a_tier_never_adds_a_hard_session_the_block_did_not_declare(block, tier):
+    """Reduction only. If a tier could add one, the cap would need re-validating per tier."""
+    declared = sum(1 for _, r in block.pattern if r == "hard")
+    got = sum(1 for _, r in pattern_for(block, tier) if r == "hard")
+    assert got <= declared
+    assert got <= TIERS[tier].hard
+
+
+@pytest.mark.parametrize("tier", sorted(TIERS))
+@pytest.mark.parametrize("block", ROTATION, ids=[b.name for b in ROTATION])
+def test_the_long_ride_is_never_dropped(block, tier):
+    """It is the session the whole plan exists to protect."""
+    assert any(r == "long" for _, r in pattern_for(block, tier)), f"{block.name} T{tier}"
+
+
+@pytest.mark.parametrize("week_type", ["normal", "reentry"])
+@pytest.mark.parametrize("tier", sorted(TIERS))
+@pytest.mark.parametrize("block", ROTATION, ids=[b.name for b in ROTATION])
+def test_strength_is_never_trimmed(block, tier, week_type):
+    """
+    Not at the floor, not in a recovery week, not on a re-entry week. Strength survived 8 of the
+    21 zero-ride weeks in the reference history; it is the anchor the floor is built on.
+    """
+    for week in range(1, block.weeks + 1):
+        sessions = expand_week(block, week, tier, START, week_type=week_type)
+        assert sum(1 for s in sessions if s["archetype"] == "strength") == 2
+
+
+@pytest.mark.parametrize("tier", sorted(TIERS))
+@pytest.mark.parametrize("block", ROTATION, ids=[b.name for b in ROTATION])
+def test_legs_are_never_loaded_next_to_a_long_ride(block, tier):
+    """
+    The guard has been wrong twice. First it pinned hardcoded weekdays 0 and 4 while every block
+    scheduled strength on 2 and 6, so it never fired and 6 of 19 weeks put lower body on the
+    Sunday after the Saturday long ride. Then it read `block.pattern` — the nominal full week —
+    which after tier reduction is not the week being generated.
+
+    Parametrised over tiers for exactly that reason: the reduction is where the risk now lives.
+    """
+    for week in range(1, block.weeks + 1):
+        for week_type in ("normal", "reentry"):
+            sessions = expand_week(block, week, tier, START, week_type=week_type)
+            long_days = {s["weekday"] for s in sessions if s["role"] == "long"}
+            for s in sessions:
+                if s["archetype"] == "strength" and s["variant"] == "lower":
+                    adjacent = long_days & {(s["weekday"] - 1) % 7, (s["weekday"] + 1) % 7}
+                    assert not adjacent, (
+                        f"{block.name} T{tier} wk{week} {week_type}: lower body on weekday "
+                        f"{s['weekday']}, adjacent to a long ride")
+
+
+@pytest.mark.parametrize("tier", sorted(TIERS))
+@pytest.mark.parametrize("block", ROTATION, ids=[b.name for b in ROTATION])
+def test_a_week_never_repeats_the_same_lift_pattern(block, tier):
+    for week in range(1, block.weeks + 1):
+        variants = [s["variant"] for s in expand_week(block, week, tier, START)
                     if s["archetype"] == "strength"]
-        per_week = {}
-        for s in sessions:
-            per_week.setdefault(s["week_in_block"], []).append(s["variant"])
-        for week, variants in per_week.items():
-            # two upper-body days are allowed when both abut a long ride; otherwise distinct
-            if variants.count("upper") < 2:
-                assert len(set(variants)) == len(variants), f"{block.name} week {week}"
+        # two upper-body days are allowed when both abut a long ride; otherwise distinct
+        if variants.count("upper") < 2:
+            assert len(set(variants)) == len(variants), f"{block.name} T{tier} wk{week}"
 
 
-def test_expansion_is_date_contiguous_across_block_boundaries():
-    sessions = expand_plan(DEFAULT_PLAN, START, PLAN_NAME)
-    weeks = sorted({w["week_start"] for w in weekly_rollup(sessions)})
-    for earlier, later in zip(weeks, weeks[1:]):
-        gap = date.fromisoformat(later) - date.fromisoformat(earlier)
-        assert gap == timedelta(days=7), f"gap between {earlier} and {later}"
-    assert len(weeks) == sum(b.weeks for b in DEFAULT_PLAN)
+# ── dose comes from the tier, never from the calendar ─────────────────────────
+
+@pytest.mark.parametrize("block", ROTATION, ids=[b.name for b in ROTATION])
+def test_the_long_ride_does_not_grow_across_a_block(block):
+    """
+    The single most important property of the rebuild. `_long_minutes` used to be
+    `long_start_min + long_step_min * (week_in_block - 1)`, so a block's seventh week asked for
+    more than its sixth whether or not the first six had happened.
+    """
+    for tier in TIERS:
+        longs = [
+            next(s["minutes"] for s in expand_week(block, week, tier, START)
+                 if s["role"] == "long")
+            for week in range(1, block.weeks + 1)
+        ]
+        assert len(set(longs)) <= 2, f"{block.name} T{tier}: long ride varies {longs}"
+        # the only permitted variation is the recovery-week step-down
+        assert max(longs) == TIERS[tier].long_min
 
 
-# ── the transformation helpers ────────────────────────────────────────────────
-
-def test_second_weekend_ride_relocates_strength_instead_of_dropping_it():
-    busy = add_lit_day(DEFAULT_PLAN, weekday=4)       # occupy the default target
-    result = add_second_weekend_ride(busy, strength_to=4)
-    for original, changed in zip(busy, result):
-        before = sum(1 for _, r in original.pattern if r == "strength")
-        after = sum(1 for _, r in changed.pattern if r == "strength")
-        assert after == before, f"{changed.name}: strength session dropped"
-
-
-def test_second_weekend_ride_refuses_rather_than_silently_doing_nothing():
-    once = add_second_weekend_ride(DEFAULT_PLAN)
-    with pytest.raises(ValueError, match="Sunday is already taken"):
-        add_second_weekend_ride(once)
+@pytest.mark.parametrize("tier", sorted(TIERS))
+def test_weekly_volume_lands_near_the_tier_target(tier):
+    """Within one short session: the hard slot is 52-82min against a nominal 55-60."""
+    for block in ROTATION:
+        week = weekly_rollup(expand_week(block, 1, tier, START))[0]
+        target = TIERS[tier].target_min
+        assert abs(week["ride_minutes"] - target) <= 30, (
+            f"{block.name} T{tier}: {week['ride_minutes']}min vs target {target}min")
+        assert week["rides"] == TIERS[tier].rides
 
 
-def test_sunday_ride_progresses_monotonically_across_blocks():
-    """Seeding the next block with the previous block's finishing value repeated a week,
-    and the recovery-week step-back silently lost a step at every boundary."""
-    sessions = expand_plan(add_second_weekend_ride(DEFAULT_PLAN), START, "t")
-    longs = [s["minutes"] for s in sorted(
-        (x for x in sessions if x["role"] == "long2"), key=lambda x: x["date"])]
-    assert longs == sorted(longs), "the second weekend ride goes backwards"
-    assert longs[-1] > longs[0]
+def test_a_recovery_week_drops_the_hard_session_and_shortens_the_long_ride():
+    block = ROTATION[2]                                    # Threshold, recovery in 3 and 6
+    normal = expand_week(block, 1, 3, START)
+    recovery = expand_week(block, 3, 3, START)
+    assert any(s["role"] == "hard" for s in normal)
+    assert not any(s["role"] == "hard" for s in recovery)
+    long_normal = next(s["minutes"] for s in normal if s["role"] == "long")
+    long_recovery = next(s["minutes"] for s in recovery if s["role"] == "long")
+    assert long_recovery < long_normal
 
 
-def test_transform_helpers_do_not_share_mutable_state():
-    changed = add_lit_day(DEFAULT_PLAN)
-    assert changed[0].hard_variants is not DEFAULT_PLAN[0].hard_variants
-    assert changed[0].recovery_weeks is not DEFAULT_PLAN[0].recovery_weeks
+def test_a_reentry_week_carries_no_hard_session_at_any_tier():
+    for block in ROTATION:
+        for tier in TIERS:
+            sessions = expand_week(block, 1, tier, START, week_type="reentry")
+            assert not any(s["role"] == "hard" for s in sessions), f"{block.name} T{tier}"
 
 
-def test_add_lit_day_honours_its_minutes_argument():
-    """The parameter existed in the signature and was never read."""
-    assert all(b.lit_min == 90 for b in add_lit_day(DEFAULT_PLAN, minutes=90))
+def test_the_entry_block_has_no_hard_session_at_any_tier():
+    """
+    "When starting from a lower baseline, the first thing to build is consistency." The entry
+    block is also where a long absence restarts, so it must stay easy even at the ceiling.
+    """
+    consistency = ROTATION[0]
+    for tier in TIERS:
+        for week in range(1, consistency.weeks + 1):
+            sessions = expand_week(consistency, week, tier, START)
+            assert not any(s["role"] == "hard" for s in sessions)
+
+
+def test_hard_variants_rotate_so_no_two_weeks_of_a_block_repeat():
+    for block in ROTATION:
+        if not block.hard_variants:
+            continue
+        variants = [
+            next((s["variant"] for s in expand_week(block, week, CAP_TIER, START)
+                  if s["role"] == "hard"), None)
+            for week in range(1, block.weeks + 1)
+        ]
+        ridden = [v for v in variants if v]
+        assert len(set(ridden)) == len(ridden), f"{block.name} repeats: {variants}"
+
+
+# ── rotation ──────────────────────────────────────────────────────────────────
+
+def test_the_rotation_loops_over_the_emphasis_blocks_and_never_ends():
+    seen = []
+    index = ROTATION_LOOP_FROM
+    for _ in range(len(ROTATION) * 3):
+        seen.append(index)
+        index = rotation_after(index)
+    assert 0 not in seen, "the entry block is only re-entered by a long absence"
+    assert set(seen) == set(range(ROTATION_LOOP_FROM, len(ROTATION)))
+
+
+def test_nothing_in_the_rotation_tapers():
+    assert not any("taper" in b.phase for b in ROTATION)
+    assert not any("taper" in b.name.lower() for b in ROTATION)
 
 
 # ── reporting ─────────────────────────────────────────────────────────────────
 
+def _every_session_at(tier: int) -> list[dict]:
+    return [s for block in ROTATION for week in range(1, block.weeks + 1)
+            for s in expand_week(block, week, tier, START)]
+
+
 def test_intensity_split_uses_the_same_bands_as_the_analysis_layer():
-    sessions = expand_plan(DEFAULT_PLAN, START, "t")
+    sessions = _every_session_at(CAP_TIER)
     split = intensity_split(sessions)
     assert set(split["pct"]) == {"easy", "moderate", "hard"}
 
@@ -279,32 +356,43 @@ def test_intensity_split_uses_the_same_bands_as_the_analysis_layer():
 
 
 def test_intensity_split_survives_an_empty_plan():
-    split = intensity_split([])
-    assert split["pct"]["easy"] is None
+    assert intensity_split([])["pct"]["easy"] is None
+
+
+def test_the_rotation_is_mostly_easy_riding():
+    pct = intensity_split(_every_session_at(CAP_TIER))["pct"]
+    assert pct["easy"] > 60, pct
+    assert pct["hard"] < 5, pct
 
 
 # ── plan weeks ────────────────────────────────────────────────────────────────
 
-def test_plan_weeks_cover_the_race_and_share_the_session_plan_name():
-    rows = plan_weeks_rows(DEFAULT_PLAN, START)
-    assert rows[0]["plan_name"] == PLAN_NAME
-    race = [r for r in rows if r["week_start_date"] <= "2027-06-18" <= r["week_end_date"]]
-    assert race, "the plan does not reach the 2027-06-18 A race"
-    assert race[0]["phase"] == "taper"
+def test_plan_week_row_shares_the_plan_name_with_the_sessions():
+    block = ROTATION[0]
+    row = plan_week_row(START, block, 1, 1, 1, tier=1)
+    session = expand_week(block, 1, 1, START)[0]
+    assert row["plan_name"] == session["plan_name"] == PLAN_NAME
 
 
-def test_plan_weeks_are_contiguous_and_numbered_without_gaps():
-    rows = plan_weeks_rows(DEFAULT_PLAN, START)
-    assert [r["plan_week_number"] for r in rows] == list(range(1, len(rows) + 1))
-    for earlier, later in zip(rows, rows[1:]):
-        assert (date.fromisoformat(later["week_start_date"])
-                - date.fromisoformat(earlier["week_start_date"])) == timedelta(days=7)
+def test_plan_week_row_spans_monday_to_sunday_and_normalises_its_date():
+    row = plan_week_row(date(2026, 11, 12), ROTATION[0], 1, 1, 1, tier=1)   # a Thursday
+    assert row["week_start_date"] == "2026-11-09"
+    assert row["week_end_date"] == "2026-11-15"
 
 
-def test_recovery_weeks_are_marked_rest():
-    rows = plan_weeks_rows(DEFAULT_PLAN, START)
-    for block_number, block in enumerate(DEFAULT_PLAN, start=1):
-        in_block = [r for r in rows if r["phase_number"] == block_number]
-        for row in in_block:
-            expected_rest = row["phase_week_number"] in block.recovery_weeks
-            assert (row["week_type"] == "rest") == expected_rest, row
+def test_a_recovery_week_is_marked_rest_and_a_reentry_week_is_marked_reentry():
+    block = ROTATION[2]                                    # recovery in 3 and 6
+    assert plan_week_row(START, block, 1, 1, 1, tier=1)["week_type"] == block.phase
+    assert plan_week_row(START, block, 1, 3, 3, tier=1)["week_type"] == "rest"
+    assert plan_week_row(START, block, 1, 1, 1, tier=1,
+                         week_type="reentry")["week_type"] == "reentry"
+
+
+def test_the_plan_has_no_end_date_only_a_goal():
+    """
+    plan_end_date carries the CX goal (2027-10-01) rather than a plan end, because the rotation
+    does not end. The old DEFAULT_PLAN ran out in mid-March 2027 and left week 33 undefined.
+    """
+    row = plan_week_row(START, ROTATION[0], 1, 1, 1, tier=1)
+    assert row["plan_end_date"] == "2027-10-01"
+    assert row["plan_end_date"] > row["week_end_date"]
