@@ -7,6 +7,7 @@ import json
 from datetime import date, timedelta
 from .fitness import current_fitness, ctl_trend, peak_ctl, ctl_history
 from .activities import recent_activities, sport_distribution, weekly_load_by_sport, yearly_volume
+from src.planning.constants import GOAL_DATE, GRAVEL_DATE
 from .wellness import hrv_summary, sleep_summary, rhr_trend, recovery_flags
 from .compliance import compliance_summary, recent_planned_workouts
 from .training_plan import plan_summary, current_cycle
@@ -182,13 +183,13 @@ def build_coaching_context(
     plan_adherence = compliance_summary(weeks=8)
     recent_planned = recent_planned_workouts(days=14)
 
-    # weeks until key events
-    # The gravel A race is 2027-06-18 — the "Gravel Thing", 8:00 / 387 TSS, confirmed on the
-    # TrainerRoad calendar and recorded in seed_training_plan.py and planning/blocks.py. This read
-    # 2027-05-01 until 2026-11-02, so the coach was told the event was ~7 weeks earlier than it is
-    # and reasoned about the timeline accordingly.
-    cx_target = date(2027, 10, 1)
-    gravel_target = date(2027, 6, 18)
+    # Weeks until key events. CX autumn 2027 is the primary goal; the June 2027 gravel event is
+    # opt-in and the rotation does not taper for it — if it is wanted, a block gets inserted a few
+    # weeks out. The old plan peaked for gravel and tapered four months before CX, which is how a
+    # secondary goal ended up shaping the whole season. Both dates come from planning/constants.py
+    # so the plan generator and the report cannot disagree about them.
+    cx_target = date.fromisoformat(GOAL_DATE)
+    gravel_target = date.fromisoformat(GRAVEL_DATE)
     today_d = date.today()
     weeks_to_cx = (cx_target - today_d).days // 7
     weeks_to_gravel = (gravel_target - today_d).days // 7
@@ -287,8 +288,10 @@ def coaching_context_text(ctx: dict | None = None) -> str:
     for g in ctx["athlete"]["goals"]:
         lines.append(f"  - {g}")
     lines += [
-        f"  Weeks to gravel A race (2027-06-18): {timeline['weeks_to_gravel_target']}",
-        f"  Weeks to CX target (Oct 2027):       {timeline['weeks_to_cx_target']}",
+        f"  Weeks to CX target ({GOAL_DATE}, primary): "
+        f"{timeline['weeks_to_cx_target']}",
+        f"  Weeks to gravel ({GRAVEL_DATE}, opt-in — no taper planned for it): "
+        f"{timeline['weeks_to_gravel_target']}",
         "",
         "FITNESS (PMC)",
         f"  CTL (fitness):  {cur.get('ctl')}",

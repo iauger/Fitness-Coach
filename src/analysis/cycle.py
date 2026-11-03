@@ -20,11 +20,19 @@ from src.clock import utc_now_iso
 
 
 def _weeks_in_cycle(conn, cycle: dict) -> list[dict]:
+    """
+    The weeks of one cycle, from the plan that cycle belongs to.
+
+    Filtered on `plan_name` because this table holds more than one plan. Unfiltered, a date range
+    that two seeded plans both cover returns each week twice, and every figure built on top —
+    cycle length, planned TSS, the per-week breakdown — doubles. The cycle dict carries the plan
+    it was derived from (`training_plan.._cycle`), so the filter cannot disagree with its caller.
+    """
     rows = conn.execute("""
         SELECT * FROM training_plan_weeks
-        WHERE week_start_date >= ? AND week_end_date <= ?
+        WHERE plan_name = ? AND week_start_date >= ? AND week_end_date <= ?
         ORDER BY week_start_date
-    """, (cycle["start_date"], cycle["end_date"])).fetchall()
+    """, (cycle["plan_name"], cycle["start_date"], cycle["end_date"])).fetchall()
     return [dict(r) for r in rows]
 
 

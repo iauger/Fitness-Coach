@@ -17,6 +17,7 @@ from src.db.schema import get_connection
 from src.athlete.profile import get_metric
 from src.analysis.dates import monday_of
 from src.analysis.load import sum_effective_tss
+from src.planning.constants import PLAN_NAME
 
 # Seiler's three-zone model in intensity-factor terms. LT1 (the aerobic threshold, above which
 # a session stops being conversational) sits near IF 0.75; LT2 near 0.85, which is also the
@@ -57,7 +58,15 @@ def ctl_ramps(conn, today: date) -> dict:
 
 # ── weekly load, planned vs actual ────────────────────────────────────────────
 
-def weekly_load(conn, today: date, weeks: int = 8) -> list[dict]:
+def weekly_load(conn, today: date, weeks: int = 8,
+                plan_name: str = PLAN_NAME) -> list[dict]:
+    """
+    Per-week planned vs actual load.
+
+    `plan_name` filters `training_plan_weeks`, which holds more than one plan — unfiltered, a
+    week covered by two seeded plans matched twice and whichever row SQLite returned first
+    supplied week_type and plan_week_number, silently and non-deterministically.
+    """
     start = monday_of(today) - timedelta(weeks=weeks - 1)
     rows = []
     for i in range(weeks):
@@ -74,7 +83,8 @@ def weekly_load(conn, today: date, weeks: int = 8) -> list[dict]:
             "AND atl IS NOT NULL ORDER BY date DESC LIMIT 1", (we.isoformat(),)).fetchone()
         wk = conn.execute(
             "SELECT week_type, plan_week_number FROM training_plan_weeks "
-            "WHERE week_start_date = ?", (ws.isoformat(),)).fetchone()
+            "WHERE plan_name = ? AND week_start_date = ?",
+            (plan_name, ws.isoformat())).fetchone()
         is_current = ws <= today <= we
         # Planned load for a week in progress counts sessions that haven't come round yet, so
         # the percentage would read as underperformance rather than as an unfinished week.

@@ -184,7 +184,8 @@ def health() -> dict[str, Any]:
     conn = get_connection()
     try:
         for t in ("activities", "wellness", "planned_workouts", "prescribed_sessions",
-                  "training_plan_weeks", "weekly_summaries", "cycle_reviews"):
+                  "training_plan_weeks", "weekly_summaries", "cycle_reviews",
+                  "plan_progression"):
             try:
                 counts[t] = conn.execute(f"SELECT COUNT(*) n FROM {t}").fetchone()["n"]
             except sqlite3.Error as exc:

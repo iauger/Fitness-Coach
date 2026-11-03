@@ -25,61 +25,36 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 if sys.stdout.encoding != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from src.analysis.activities import week_volume
-from src.analysis.dates import monday_of, mondays_between
+from src.analysis.dates import monday_of
 from src.athlete.profile import get_metric
-from src.db.schema import get_connection
+from src.db.schema import read_connection, write_connection
 from src.planning.blocks import (
-    PLAN_NAME, ROTATION, ROTATION_LOOP_FROM, expand_week, intensity_split, rotation_after,
-    weekly_rollup,
+    PLAN_NAME, ROTATION, expand_week, intensity_split, rotation_after, weekly_rollup,
 )
-from src.planning.progression import TIERS, classify_week, next_state
+from src.planning.progression import TIERS
+from src.planning.progression_store import current_state
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 # Verified live: the OneDrive copy of this folder is stale from 2021, so do not write there.
 ZWIFT_DIR = r"C:\Users\iauge\Documents\Zwift\Workouts\393440"
 
-# How far back to look when deriving the current tier. Long enough to cover the longest gap in
-# the reference history plus the climb out of it.
-LOOKBACK_WEEKS = 26
 
-
-def derive_state(today: date, start_tier: int = 1) -> dict:
+def derive_state(today: date, start_tier: int = 1, persist: bool = True) -> dict:
     """
-    Replay the gate over recent measured weeks to find where the athlete actually is.
+    Where the athlete actually is: tier, rotation position and week type.
 
-    Only *fully elapsed* weeks are graded — the current week has not happened yet, and grading it
-    would read an unfinished week as underperformance.
+    Read from `plan_progression` via `planning/progression_store`, which decides each week once
+    when it closes and never re-decides it. This used to replay 26 weeks on every invocation and
+    guess the rotation position, so the answer could move under a session already on the
+    calendar — a Thursday ride syncing late would re-grade the week behind it.
+
+    `persist=False` for an `--as-of` what-if: computing where a future date would put you must
+    not file that date's decisions as though they had happened.
     """
-    conn = get_connection()
-    try:
-        this_monday = monday_of(today)
-        first = this_monday - timedelta(weeks=LOOKBACK_WEEKS)
-        weeks = [week_volume(conn, m) for m in mondays_between(first, this_monday)
-                 if m < this_monday]
-    finally:
-        conn.close()
-
-    tier = start_tier
-    history: list[dict] = []
-    decision = None
-    for week in weeks:
-        history.append(classify_week(week, tier))
-        decision = next_state(history, tier)
-        tier = decision.tier
-
-    # Where in the rotation to start. The Consistency block is the entry point for a cold start
-    # and where a long absence restarts; it carries no hard session at any tier. An athlete who
-    # has been riding — six of the last eight weeks here — is returning from something rather
-    # than from nothing, and four weeks of pure endurance is its own abandonment risk.
-    # Block position is derived here only because nothing persists it yet; the roller (step 4)
-    # takes this over.
-    block_index = 0 if (decision and decision.rotation == "restart_rotation") \
-        else ROTATION_LOOP_FROM
-
-    return {"tier": tier, "decision": decision, "block_index": block_index, "weeks": weeks,
-            "recent": history[-6:] if history else []}
+    opener = write_connection if persist else read_connection
+    with opener() as conn:
+        return current_state(conn, today, start_tier=start_tier, persist=persist)
 
 
 def _watts(session: dict) -> str:
@@ -140,29 +115,45 @@ def main() -> int:
     args = p.parse_args()
 
     today = args.as_of or date.today()
-    state = derive_state(today)
+    # A pretend date must not file its decisions as real ones — see derive_state.
+    persisted = args.as_of is None
+    state = derive_state(today, persist=persisted)
     tier = args.tier if args.tier is not None else state["tier"]
     block_index = args.block if args.block is not None else state["block_index"]
 
     print(f"\n  {args.plan_name} — as of {today} ({DAYS[today.weekday()]})")
     if state["recent"]:
-        print("\n  recent completed weeks:")
+        if not persisted:
+            label = "simulated weeks — nothing was recorded"
+        elif state["seeded_from"] == "stored":
+            label = "recent decided weeks"
+        else:
+            label = "weeks before the plan started (counterfactual — no gate was running)"
+        print(f"\n  {label}:")
         for row in state["recent"]:
             print(f"    {row['week_start']}  {row['ride_min']/60:>5.2f}h  "
-                  f"{row['ride_days']} rides  {row['outcome']}"
+                  f"{row['ride_days']} rides  vs T{row['tier']}  {row['outcome']}"
                   f"{'  (strength held)' if row['habit_held'] else ''}")
-    if state["decision"]:
-        print(f"\n  gate: T{state['tier']} — {state['decision'].reason}")
+    print(f"\n  gate: T{state['tier']} — {state['reason']}")
+    through = state["decided_through"]
+    n = state["decided_weeks"]
+    if not persisted:
+        print(f"        {n} week{'' if n == 1 else 's'} simulated through {through} "
+              f"— a what-if, not written")
+    elif through:
+        print(f"        decided through {through} ({n} week{'' if n == 1 else 's'} on record)")
+    else:
+        print(f"        nothing on record yet — the plan's first week closes "
+              f"{(monday_of(today) + timedelta(days=6)).isoformat()}")
     if args.tier is not None:
         print(f"  (overridden to T{tier})")
     spec = TIERS[tier]
     print(f"  T{tier}: {spec.rides} rides, {spec.target_hours}h, long {spec.long_min}min, "
           f"{spec.hard} hard, strength {spec.strength}")
 
-    week_type = "reentry" if (state["decision"] and
-                              state["decision"].week_type == "reentry") else "normal"
+    week_type = state["week_type"]
     all_sessions = []
-    bi, wib = block_index, 1
+    bi, wib = block_index, state["week_in_block"]
     for offset in range(args.weeks):
         monday = monday_of(today) + timedelta(weeks=offset)
         block = ROTATION[bi]

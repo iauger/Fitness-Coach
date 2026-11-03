@@ -30,11 +30,10 @@ from src.analysis.derive import EASY_IF_CEILING, HARD_IF_FLOOR
 from src.planning import archetypes as A
 from src.planning.progression import TIERS
 
-# No year in the name: the plan has no end date. A year-stamped second name is what made the
-# prescribed -> planned join impossible before (plan_build wrote "Sustainable 2026-27" while
-# seed_training_plan used "TrainerRoad 2026-27"), and that join is what current_week, cycles,
-# plan_summary, cycle_metrics and week_metrics all key on.
-PLAN_NAME = "Sustainable rolling"
+# Re-exported from planning/constants.py, which has no imports of its own. The three readers in
+# src.analysis that need to filter on the plan name cannot import this module — blocks.py already
+# imports src.analysis.derive above, so the dependency would be circular.
+from src.planning.constants import GOAL_DATE, PLAN_NAME  # noqa: F401  (re-export)
 
 # Weekday roles a slot can take.
 ROLES = ("hard", "long", "lit", "strength")
@@ -158,6 +157,32 @@ def rotation_after(block_index: int) -> int:
     """The next block in the rotation, looping over the emphasis blocks."""
     nxt = block_index + 1
     return nxt if nxt < len(ROTATION) else ROTATION_LOOP_FROM
+
+
+def advance_position(block_index: int, week_in_block: int, rotation: str) -> tuple[int, int]:
+    """
+    Where the next week sits in the rotation, given the gate's `rotation` verdict.
+
+    The three verdicts come from `progression.next_state` and mean what they say:
+
+    - `continue` — the next week of this block, rolling into the next block at its end.
+    - `restart_block` — week 1 of the same block. A 2-3 week absence loses the block's
+      accumulated progression but not its emphasis; resuming at week 5 of a 6-week threshold
+      block after a fortnight off asks for a position that was never earned.
+    - `restart_rotation` — week 1 of block 0, which is Consistency. Four weeks off is a cold
+      start, and Consistency is the only block carrying no hard session at any tier.
+
+    Separated from the gate because the gate is deliberately free of any knowledge of blocks —
+    it decides dose and re-entry, and the rotation is this module's business.
+    """
+    if rotation == "restart_rotation":
+        return 0, 1
+    if rotation == "restart_block":
+        return block_index, 1
+    nxt = week_in_block + 1
+    if nxt > ROTATION[block_index].weeks:
+        return rotation_after(block_index), 1
+    return block_index, nxt
 
 
 # ── tier-aware pattern ────────────────────────────────────────────────────────
@@ -307,7 +332,8 @@ def expand_week(block: Block, week_in_block: int, tier: int, monday: date,
 
 def plan_week_row(monday: date, block: Block, block_index: int, week_in_block: int,
                   plan_week_number: int, tier: int, week_type: str = "normal",
-                  plan_name: str = PLAN_NAME, goal_date: str = "2027-10-01") -> dict:
+                  plan_name: str = PLAN_NAME, goal_date: str = GOAL_DATE,
+                  plan_start: str | None = None) -> dict:
     """
     One row for `training_plan_weeks`, derived from the same block the sessions come from.
 
@@ -322,7 +348,7 @@ def plan_week_row(monday: date, block: Block, block_index: int, week_in_block: i
     recovery = week_in_block in block.recovery_weeks
     return {
         "plan_name": plan_name,
-        "plan_start_date": start.isoformat(),
+        "plan_start_date": plan_start or start.isoformat(),
         "plan_end_date": goal_date,
         "week_start_date": start.isoformat(),
         "week_end_date": (start + timedelta(days=6)).isoformat(),

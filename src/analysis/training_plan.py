@@ -59,6 +59,10 @@ def cycles(plan_name: str | None = None) -> list[dict]:
 
 def _cycle(weeks: list[dict], closed: bool) -> dict:
     return {
+        # Carried so a caller that re-reads training_plan_weeks for this cycle can filter on the
+        # same plan the cycle was derived from. cycles() may be called with plan_name=None, in
+        # which case the rows still all belong to one plan by the time they reach here.
+        "plan_name": weeks[0]["plan_name"],
         "start_date": weeks[0]["week_start_date"],
         "end_date": weeks[-1]["week_end_date"],
         "weeks": len(weeks),
