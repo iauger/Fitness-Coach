@@ -20,7 +20,7 @@ from datetime import date
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.db.schema import init_db, migrate_db
+from src.db.schema import migrate_db
 from src.athlete.profile import set_metric, get_metric
 
 # (default value, default effective_date, default note) — height is static, so it's
@@ -43,7 +43,7 @@ def update(metric: str, value: float, effective_date: str = None, note: str = No
 
 
 if __name__ == "__main__":
-    init_db()
+    migrate_db()
     migrate_db()
 
     parser = argparse.ArgumentParser()

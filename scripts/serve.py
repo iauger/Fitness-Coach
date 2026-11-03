@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import uvicorn
 
-from src.db.schema import init_db, migrate_db
+from src.db.schema import migrate_db
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8800
@@ -40,7 +40,7 @@ def main() -> None:
     args = p.parse_args()
 
     # Cheap and idempotent; means a fresh clone can serve without running a seed script first.
-    init_db()
+    migrate_db()
     migrate_db()
 
     if args.host not in ("127.0.0.1", "localhost", "::1"):

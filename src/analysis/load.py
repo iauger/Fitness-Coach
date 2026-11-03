@@ -101,19 +101,6 @@ def effective_tss(row, raw: dict | None = None) -> tuple[float, bool]:
     return round((row["moving_time"] * intensity_factor ** 2 / 3600) * 100, 1), True
 
 
-def daily_load(conn, start: str, end: str) -> dict[str, float]:
-    """Corrected TSS per day across a date range."""
-    rows = conn.execute("""
-        SELECT date, moving_time, np, tss, raw_json FROM activities
-        WHERE date BETWEEN ? AND ? AND moving_time IS NOT NULL
-    """, (start, end)).fetchall()
-    out: dict[str, float] = {}
-    for r in rows:
-        tss, _ = effective_tss(r)
-        out[r["date"]] = out.get(r["date"], 0.0) + tss
-    return out
-
-
 def sum_effective_tss(conn, start: str, end: str) -> tuple[float, int, int]:
     """(total corrected TSS, activity count, how many were corrected) over a range."""
     rows = conn.execute("""

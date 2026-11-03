@@ -82,32 +82,6 @@ def peak_ctl(years: int = 9) -> dict:
     return {"date": row["date"], "ctl": round(row["ctl"], 1)}
 
 
-def fitness_gaps() -> list[dict]:
-    """Identify periods where CTL dropped significantly — training gaps."""
-    rows = _wellness_rows(days=365 * 9)
-    gaps = []
-    prev_ctl = None
-    gap_start = None
-
-    for r in rows:
-        ctl = r["ctl"]
-        d = r["date"]
-        if prev_ctl is not None:
-            drop = prev_ctl - ctl
-            if drop > 10 and gap_start is None:
-                gap_start = d
-            elif drop <= 0 and gap_start is not None:
-                gaps.append({
-                    "start": gap_start,
-                    "end": d,
-                    "ctl_drop": round(prev_ctl - ctl, 1),
-                })
-                gap_start = None
-        prev_ctl = ctl
-
-    return gaps[-5:]  # most recent 5 significant gaps
-
-
 def ctl_trend(weeks: int = 8) -> dict:
     """Direction and magnitude of CTL change over recent weeks."""
     rows = _wellness_rows(days=weeks * 7)

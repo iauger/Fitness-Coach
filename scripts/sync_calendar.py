@@ -16,14 +16,14 @@ from datetime import date, timedelta
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.db.schema import init_db, migrate_db
+from src.db.schema import migrate_db
 from src.db.store import upsert_planned_workouts
 from src.analysis.compliance import match_planned_workouts
 from src.integrations.tr_calendar import sync_planned_workouts
 
 
 def run(days_back: int, days_forward: int) -> None:
-    init_db()
+    migrate_db()
     migrate_db()
 
     today = date.today()

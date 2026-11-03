@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import contextmanager
 import os
 from pathlib import Path
 
@@ -14,6 +15,41 @@ def get_connection(db_path: Path = DB_PATH) -> sqlite3.Connection:
     return conn
 
 
+@contextmanager
+def write_connection(db_path: Path = DB_PATH):
+    """
+    A connection that commits on success, rolls back on error, and always closes.
+
+    `with conn:` alone is sqlite3's *transaction* manager — it commits or rolls back, and does
+    not close. The idiom this replaces was:
+
+        conn = get_connection()
+        with conn:
+            conn.execute(...)
+        conn.close()
+
+    where any exception inside the block skips the close. In a one-shot script that is
+    harmless, but scripts/serve.py is long-lived, and in WAL mode a connection that is only
+    collected later holds back checkpointing in the meantime.
+    """
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
+
+
+@contextmanager
+def read_connection(db_path: Path = DB_PATH):
+    """A connection that always closes. No transaction is opened."""
+    conn = get_connection(db_path)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
 def migrate_db(db_path: Path = DB_PATH) -> None:
     """
     Apply pending schema migrations. Retained as the name every script already calls; the
@@ -21,26 +57,9 @@ def migrate_db(db_path: Path = DB_PATH) -> None:
 
     Previously this held a list of ALTERs run under `except Exception: pass`, which could not
     tell an already-applied change from a broken one, and which had drifted apart from
-    init_db() — three tables existed only here.
+    the old init_db() — three tables existed only here.
     """
     from .migrations import migrate
     migrate(db_path)
 
 
-def init_db(db_path: Path = DB_PATH) -> None:
-    """
-    Create the schema. Now identical in effect to migrate_db(): a single ordered set of
-    migrations builds an empty database and brings an existing one forward, so the two can no
-    longer disagree. Both names are kept because scripts call one, the other, or both.
-    """
-    from .migrations import migrate
-    migrate(db_path)
-
-
-def schema_version(db_path: Path = DB_PATH) -> int:
-    from .migrations import current_version
-    conn = get_connection(db_path)
-    try:
-        return current_version(conn)
-    finally:
-        conn.close()

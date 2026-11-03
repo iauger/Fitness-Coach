@@ -74,12 +74,11 @@ def sync_activity_notes(client, activities: list[dict]) -> dict[str, str | None]
 
 
 def _max_wellness_date() -> date | None:
-    conn = get_connection()
-    row = conn.execute("""
-        SELECT MAX(date) as max_date FROM wellness
-        WHERE date <= ?
-    """, (date.today().isoformat(),)).fetchone()
-    conn.close()
+    with read_connection() as conn:
+        row = conn.execute("""
+            SELECT MAX(date) as max_date FROM wellness
+            WHERE date <= ?
+        """, (date.today().isoformat(),)).fetchone()
     val = row["max_date"] if row else None
     return date.fromisoformat(val) if val else None
 
@@ -176,8 +175,13 @@ def incremental_sync(silent: bool = False) -> dict:
     except Exception as e:
         results["errors"].append(f"events: {e}")
         log(f"[sync] events      ERROR: {e}")
-
-    conn.close()
+    finally:
+        # Defensive rather than a fix for an observed leak: each of the three sections above
+        # catches Exception itself, so the close was already reached on every normal path.
+        # This covers the case where a future section stops catching, or raises before its own
+        # try. The genuinely leaky idiom was `conn = get_connection(); with conn: ...;
+        # conn.close()` with no except at all, which is what write_connection() now handles.
+        conn.close()
 
     # Calendar sync is best-effort — a feed failure must not fail the whole sync.
     # Unlike the activity window, this deliberately spans a wide range on every run: the

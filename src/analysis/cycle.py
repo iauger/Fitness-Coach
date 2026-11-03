@@ -13,9 +13,10 @@ deliberately easy week doesn't dilute the read on the hard ones.
 
 import json
 from datetime import date, datetime
-from src.db.schema import get_connection
+from src.db.schema import get_connection, write_connection
 from src.analysis.training_plan import cycles
 from src.analysis.load import sum_effective_tss
+from src.clock import utc_now_iso
 
 
 def _weeks_in_cycle(conn, cycle: dict) -> list[dict]:
@@ -212,8 +213,7 @@ def save_review(plan_name: str, metrics: dict, content: str, model: str) -> None
     """Upsert on (plan_name, cycle_start) so re-running a review replaces rather than duplicates."""
     c, f, comp = metrics["cycle"], metrics["fitness"], metrics["compliance"]
     rec = metrics["recovery"]
-    conn = get_connection()
-    with conn:
+    with write_connection() as conn:
         conn.execute("""
             INSERT INTO cycle_reviews (
                 plan_name, cycle_start, cycle_end, phase, plan_week_start, plan_week_end,
@@ -236,9 +236,8 @@ def save_review(plan_name: str, metrics: dict, content: str, model: str) -> None
             metrics["totals"]["planned_tss"], metrics["totals"]["actual_tss"],
             comp.get("adherence_pct"),
             (rec["build_weeks"] or {}).get("hrv"), (rec["rest_week"] or {}).get("hrv"),
-            json.dumps(metrics), content, model, datetime.utcnow().isoformat(),
+            json.dumps(metrics), content, model, utc_now_iso(),
         ))
-    conn.close()
 
 
 def cycle_context_text(metrics: dict, prev: dict | None = None) -> str:

@@ -23,8 +23,9 @@ from src.coach.summarize import weekly_narrative
 from src.coach.prompt import build_system_prompt
 from src.coach.tools import TOOL_SCHEMAS, execute_tool
 from src.coach.stream import run_turn, stream_turn, Event
-from src.db.schema import get_connection
+from src.db.schema import get_connection, write_connection
 from src.sync import incremental_sync
+from src.clock import today_local_iso, utc_now_iso
 
 load_dotenv()
 
@@ -89,14 +90,12 @@ def checkin(feel_context: str = "", verbose: bool = False) -> str:
 
     # persist to coaching_log
     session_id = str(uuid.uuid4())[:8]
-    conn = get_connection()
-    with conn:
+    with write_connection() as conn:
         conn.execute("""
             INSERT INTO coaching_log (session_id, date, type, model, content, created_at)
             VALUES (?, ?, 'checkin', ?, ?, ?)
-        """, (session_id, datetime.utcnow().date().isoformat(), model, response,
-              datetime.utcnow().isoformat()))
-    conn.close()
+        """, (session_id, today_local_iso(), model, response,
+              utc_now_iso()))
 
     return response
 
@@ -134,6 +133,18 @@ def cycle_review(on: date | None = None, verbose: bool = False) -> str | None:
 
     incremental_sync(silent=not verbose)
 
+    # Resolved before the API call, not after. This used to sit below _run_tool_loop and
+    # subscript current_week(...) directly, which is declared `-> dict | None` — so a cycle
+    # whose start Monday is outside any seeded plan raised TypeError *after* the model had been
+    # paid for, and the review text was lost with it.
+    week = current_week(date.fromisoformat(cyc["start_date"]))
+    if week is None:
+        raise RuntimeError(
+            f"cycle starting {cyc['start_date']} is not inside any seeded training plan, so "
+            f"the review cannot be filed against one. Seed training_plan_weeks for that date "
+            f"first — reviews are keyed on (plan_name, cycle_start).")
+    plan_name = week["plan_name"]
+
     metrics = cycle_metrics(cyc)
     prev = previous_review(cyc["start_date"])
     # Full athlete context plus the cycle rollup: the review still needs to know goals,
@@ -157,7 +168,13 @@ def cycle_review(on: date | None = None, verbose: bool = False) -> str | None:
                  "That block just finished. Give me the cycle review."}]
     response = _run_tool_loop(client, model, system, messages)
 
-    plan_name = current_week(date.fromisoformat(cyc["start_date"]))["plan_name"]
+    if not (response or "").strip():
+        # cycle_reviews is UNIQUE(plan_name, cycle_start), so an empty row is not a harmless
+        # no-op: the cycle is thereafter treated as reviewed and never offered again.
+        raise RuntimeError(
+            f"the model returned no text for the cycle starting {cyc['start_date']}; refusing "
+            f"to file an empty review, which would mark the cycle reviewed permanently.")
+
     save_review(plan_name, metrics, response, model)
     return response
 
@@ -172,7 +189,7 @@ class CoachSession:
         self.verbose = verbose
         self.client = _client()
         self.session_id = str(uuid.uuid4())[:8]
-        self.started_at = datetime.utcnow().isoformat()
+        self.started_at = utc_now_iso()
         self.history: list[dict] = []
 
         incremental_sync(silent=not verbose)
@@ -202,12 +219,12 @@ class CoachSession:
         if not self.history:
             return None
 
-        ended_at = datetime.utcnow().isoformat()
+        ended_at = utc_now_iso()
         turns = sum(1 for m in self.history if m["role"] == "user")
 
         # save raw transcript
         TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
-        date_str = datetime.utcnow().strftime("%Y-%m-%d")
+        date_str = today_local_iso()
         transcript_path = TRANSCRIPT_DIR / f"{date_str}-{self.session_id}.json"
         transcript_data = {
             "session_id": self.session_id,
@@ -233,8 +250,7 @@ class CoachSession:
         )
 
         # persist everything
-        conn = get_connection()
-        with conn:
+        with write_connection() as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO transcripts
                 (session_id, started_at, ended_at, model, turns, summary, file_path)
@@ -245,8 +261,7 @@ class CoachSession:
                 INSERT INTO coaching_log (session_id, date, type, model, content, created_at)
                 VALUES (?, ?, 'session_summary', ?, ?, ?)
             """, (self.session_id, date_str, self.model, summary,
-                  datetime.utcnow().isoformat()))
-        conn.close()
+                  utc_now_iso()))
 
         return summary
 

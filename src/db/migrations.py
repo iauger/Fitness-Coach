@@ -31,6 +31,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .schema import DB_PATH, get_connection
+from src.clock import utc_now_iso
 
 
 # ── helpers that make a step safe to re-run ───────────────────────────────────
@@ -414,7 +415,7 @@ def migrate(db_path: Path = DB_PATH, verbose: bool = False) -> list[tuple[int, s
                 conn.execute(
                     "INSERT OR REPLACE INTO schema_migrations (version, name, applied_at) "
                     "VALUES (?, ?, ?)",
-                    (number, name, datetime.utcnow().isoformat()),
+                    (number, name, utc_now_iso()),
                 )
                 # PRAGMA cannot be parameterised; `number` comes from this module, not input.
                 conn.execute(f"PRAGMA user_version = {number}")

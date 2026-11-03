@@ -12,7 +12,6 @@ from src.db.schema import get_connection
 CYCLING_TYPES = ("Ride", "VirtualRide", "GravelRide", "MountainBikeRide", "EBikeRide")
 
 COMPLETED_PCT = 85
-PARTIAL_PCT = 40
 
 
 def _manual_tss(np: float | None, moving_time_sec: float | None, activity_date: str) -> float | None:
@@ -60,59 +59,64 @@ def match_planned_workouts(start: str, end: str) -> dict:
     there's no reliable way to match them against the activities table's cycling-only search.
     """
     conn = get_connection()
-    planned = [dict(r) for r in conn.execute("""
-        SELECT id, date, planned_tss, planned_duration_min
-        FROM planned_workouts
-        WHERE date BETWEEN ? AND ? AND planned_tss IS NOT NULL
-        ORDER BY date
-    """, (start, end)).fetchall()]
+    try:
+            planned = [dict(r) for r in conn.execute("""
+                SELECT id, date, planned_tss, planned_duration_min
+                FROM planned_workouts
+                WHERE date BETWEEN ? AND ? AND planned_tss IS NOT NULL
+                ORDER BY date
+            """, (start, end)).fetchall()]
 
-    used_activity_ids: set[str] = set()
-    counts: dict[str, int] = defaultdict(int)
+            used_activity_ids: set[str] = set()
+            counts: dict[str, int] = defaultdict(int)
 
-    with conn:
-        for pw in planned:
-            candidates = [a for a in _cycling_activities_on(conn, pw["date"])
-                         if a["id"] not in used_activity_ids]
+            with conn:
+                for pw in planned:
+                    candidates = [a for a in _cycling_activities_on(conn, pw["date"])
+                                 if a["id"] not in used_activity_ids]
 
-            if not candidates:
-                conn.execute("""
-                    UPDATE planned_workouts
-                    SET matched_activity_id = NULL, compliance_status = 'skipped', compliance_pct = 0
-                    WHERE id = ?
-                """, (pw["id"],))
-                counts["skipped"] += 1
-                continue
+                    if not candidates:
+                        conn.execute("""
+                            UPDATE planned_workouts
+                            SET matched_activity_id = NULL, compliance_status = 'skipped', compliance_pct = 0
+                            WHERE id = ?
+                        """, (pw["id"],))
+                        counts["skipped"] += 1
+                        continue
 
-            planned_dur = pw["planned_duration_min"] or 0
-            best = (min(candidates, key=lambda a: abs((a["moving_time"] or 0) / 60 - planned_dur))
-                   if planned_dur else candidates[0])
-            used_activity_ids.add(best["id"])
+                    planned_dur = pw["planned_duration_min"] or 0
+                    best = (min(candidates, key=lambda a: abs((a["moving_time"] or 0) / 60 - planned_dur))
+                           if planned_dur else candidates[0])
+                    used_activity_ids.add(best["id"])
 
-            actual_load = (_manual_tss(best.get("np"), best.get("moving_time"), pw["date"])
-                          or _activity_load(best["raw_json"]))
-            if pw["planned_tss"] and actual_load:
-                pct = round(actual_load / pw["planned_tss"] * 100, 1)
-            elif planned_dur:
-                pct = round((best["moving_time"] or 0) / 60 / planned_dur * 100, 1)
-            else:
-                pct = None
+                    actual_load = (_manual_tss(best.get("np"), best.get("moving_time"), pw["date"])
+                                  or _activity_load(best["raw_json"]))
+                    if pw["planned_tss"] and actual_load:
+                        pct = round(actual_load / pw["planned_tss"] * 100, 1)
+                    elif planned_dur:
+                        pct = round((best["moving_time"] or 0) / 60 / planned_dur * 100, 1)
+                    else:
+                        pct = None
 
-            if pct is None or pct >= COMPLETED_PCT:
-                status = "completed"
-            elif pct >= PARTIAL_PCT:
-                status = "partial"
-            else:
-                status = "partial"  # matched but well short — still logged as partial, not skipped
+                    # Anything matched but short of COMPLETED_PCT is "partial", however short. A
+                    # deliberate choice: "skipped" means nothing was ridden that day, so a weak ride
+                    # must not land in the same bucket as an absence. This was written as two branches
+                    # either side of a PARTIAL_PCT threshold that both assigned "partial", leaving the
+                    # constant unreachable and implying a third status that never existed.
+                    status = "completed" if (pct is None or pct >= COMPLETED_PCT) else "partial"
 
-            conn.execute("""
-                UPDATE planned_workouts
-                SET matched_activity_id = ?, compliance_status = ?, compliance_pct = ?
-                WHERE id = ?
-            """, (best["id"], status, pct, pw["id"]))
-            counts[status] += 1
+                    conn.execute("""
+                        UPDATE planned_workouts
+                        SET matched_activity_id = ?, compliance_status = ?, compliance_pct = ?
+                        WHERE id = ?
+                    """, (best["id"], status, pct, pw["id"]))
+                    counts[status] += 1
 
-    conn.close()
+    finally:
+        # The matcher walks every planned row and writes to each; an exception part
+        # way through used to skip the close entirely, leaving a WAL reader open in
+        # the long-lived server process.
+        conn.close()
     return dict(counts)
 
 

@@ -26,8 +26,12 @@ if __name__ == "__main__":
     if args.model:
         os.environ["COACH_MODEL"] = args.model
 
+    # Passed explicitly. src.coach.session is imported at line 18, above, so its
+    # DEFAULT_MODEL is already bound by the time --model edits the environment — the override
+    # had no effect, and this line then printed the requested model while the session ran on
+    # the other one.
     model = os.environ.get("COACH_MODEL", "claude-haiku-4-5")
-    session = CoachSession(verbose=True)
+    session = CoachSession(model=model, verbose=True)
     print(f"\nCoach ready ({model}). Commands: 'quit' to end session, 'reset' to clear history.\n")
 
     try:

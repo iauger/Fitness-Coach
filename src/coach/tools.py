@@ -5,9 +5,10 @@ Each tool has a schema (sent to Claude) and an execute function (called locally)
 
 import json
 from datetime import datetime, date
-from src.db.schema import get_connection
+from src.db.schema import get_connection, write_connection
+from src.clock import today_local_iso, utc_now_iso
 
-NOW = lambda: datetime.utcnow().isoformat()
+NOW = utc_now_iso
 
 
 # ── Tool schemas (sent to Claude) ─────────────────────────────────────────────
@@ -194,13 +195,11 @@ TOOL_SCHEMAS = [
 def log_life_event(type: str, start_date: str, end_date: str = None,
                    severity: str = None, note: str = None,
                    logged_via: str = "chat") -> dict:
-    conn = get_connection()
-    with conn:
+    with write_connection() as conn:
         conn.execute("""
             INSERT INTO life_events (start_date, end_date, type, severity, note, logged_at, logged_via)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (start_date, end_date, type, severity, note, NOW(), logged_via))
-    conn.close()
     end_str = f" to {end_date}" if end_date else ""
     return {"status": "logged", "event": f"{type}{end_str}: {note or ''}"}
 
@@ -208,15 +207,13 @@ def log_life_event(type: str, start_date: str, end_date: str = None,
 def log_subjective_feel(feel_score: int, energy: int = None, motivation: int = None,
                         legs: int = None, tr_compliance: str = None, notes: str = None,
                         date: str = None, logged_via: str = "chat") -> dict:
-    target_date = date or datetime.utcnow().date().isoformat()
-    conn = get_connection()
-    with conn:
+    target_date = date or today_local_iso()
+    with write_connection() as conn:
         conn.execute("""
             INSERT INTO subjective_feel
             (date, feel_score, energy, motivation, legs, tr_compliance, notes, logged_at, logged_via)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (target_date, feel_score, energy, motivation, legs, tr_compliance, notes, NOW(), logged_via))
-    conn.close()
     return {"status": "logged", "date": target_date, "feel_score": feel_score,
             "tr_compliance": tr_compliance}
 
@@ -333,9 +330,8 @@ def calculate_ramp_target(target_ctl: float, target_date: str) -> dict:
 
 def update_goal(action: str, description: str = None, target_date: str = None,
                 priority: str = "secondary", goal_id: int = None) -> dict:
-    conn = get_connection()
     now = NOW()
-    with conn:
+    with write_connection() as conn:
         if action == "add":
             conn.execute("""
                 INSERT INTO goals (description, target_date, priority, status, created_at, updated_at)

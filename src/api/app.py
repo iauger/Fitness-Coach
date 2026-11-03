@@ -16,6 +16,7 @@ Binds to 127.0.0.1 by default. This process holds the intervals.icu and Anthropi
 is item 16 and is a VPN's job, not this server's.
 """
 
+import sqlite3
 from datetime import date
 from typing import Any
 
@@ -175,19 +176,28 @@ def weeks(start: date | None = None, end: date | None = None) -> list[dict]:
 
 @app.get("/api/health", tags=["ops"])
 def health() -> dict[str, Any]:
+    # Every lookup here is best-effort. On an unmigrated or partly-migrated database a missing
+    # table raised OperationalError and the endpoint 500'd *before* reporting the migration
+    # status that would have explained why — which is precisely when health is worth calling.
+    counts: dict[str, Any] = {}
+    latest = None
     conn = get_connection()
     try:
-        counts = {
-            t: conn.execute(f"SELECT COUNT(*) n FROM {t}").fetchone()["n"]
-            for t in ("activities", "wellness", "planned_workouts",
-                      "training_plan_weeks", "weekly_summaries", "cycle_reviews")
-        }
-        latest = conn.execute(
-            "SELECT MAX(date) d FROM activities").fetchone()["d"]
+        for t in ("activities", "wellness", "planned_workouts", "prescribed_sessions",
+                  "training_plan_weeks", "weekly_summaries", "cycle_reviews"):
+            try:
+                counts[t] = conn.execute(f"SELECT COUNT(*) n FROM {t}").fetchone()["n"]
+            except sqlite3.Error as exc:
+                counts[t] = f"unavailable: {exc}"
+        try:
+            latest = conn.execute("SELECT MAX(date) d FROM activities").fetchone()["d"]
+        except sqlite3.Error:
+            pass
     finally:
         conn.close()
     st = migration_status()
-    return {"status": "ok", "phase": "12C", "row_counts": counts,
+    degraded = any(isinstance(v, str) for v in counts.values()) or st["pending"]
+    return {"status": "degraded" if degraded else "ok", "phase": "12C", "row_counts": counts,
             "latest_activity": latest, "cache": CACHE.stats(),
             "schema": {"version": st["current_version"],
                        "latest": st["latest_version"],

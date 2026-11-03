@@ -5,7 +5,7 @@ Inspect and apply schema migrations.
     python scripts/migrate.py --apply      # apply pending migrations
     python scripts/migrate.py --db path    # target another database file
 
-Migrations also run automatically wherever init_db()/migrate_db() are already called, including
+Migrations also run automatically wherever migrate_db() is already called, including
 scripts/serve.py at boot. This script exists so the state can be inspected without starting
 anything, and so applying is an explicit act when you want it to be.
 """

@@ -3,6 +3,7 @@ import sqlite3
 from datetime import date
 from pathlib import Path
 from .schema import get_connection, DB_PATH
+from src.clock import utc_now_iso
 
 
 _SPORT_GROUPS = {
@@ -219,4 +220,4 @@ def log_sync(conn: sqlite3.Connection, data_type: str, start: date, end: date,
     conn.execute("""
         INSERT INTO sync_log (synced_at, data_type, start_date, end_date, records, status)
         VALUES (?, ?, ?, ?, ?, ?)
-    """, (datetime.utcnow().isoformat(), data_type, start.isoformat(), end.isoformat(), records, status))
+    """, (utc_now_iso(), data_type, start.isoformat(), end.isoformat(), records, status))

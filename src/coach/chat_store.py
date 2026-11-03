@@ -14,18 +14,17 @@ import json
 import uuid
 from datetime import datetime
 
-from src.db.schema import get_connection
+from src.db.schema import get_connection, write_connection
+from src.clock import utc_now_iso
 
 
 def new_session(model: str, mode: str = "conversation", title: str | None = None) -> str:
     session_id = str(uuid.uuid4())[:8]
-    now = datetime.utcnow().isoformat()
-    conn = get_connection()
-    with conn:
+    now = utc_now_iso()
+    with write_connection() as conn:
         conn.execute(
             "INSERT INTO chat_sessions (session_id, started_at, updated_at, model, mode, title) "
             "VALUES (?, ?, ?, ?, ?, ?)", (session_id, now, now, model, mode, title))
-    conn.close()
     return session_id
 
 
@@ -59,9 +58,8 @@ def replace_history(session_id: str, messages: list[dict]) -> None:
     turn, and so on. Rewriting the run keeps the stored history exactly what the next API call
     will send, which is the only version that matters.
     """
-    now = datetime.utcnow().isoformat()
-    conn = get_connection()
-    with conn:
+    now = utc_now_iso()
+    with write_connection() as conn:
         conn.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,))
         conn.executemany(
             "INSERT INTO chat_messages (session_id, seq, role, content, created_at) "
@@ -70,18 +68,15 @@ def replace_history(session_id: str, messages: list[dict]) -> None:
              for i, m in enumerate(messages)])
         conn.execute("UPDATE chat_sessions SET updated_at = ? WHERE session_id = ?",
                      (now, session_id))
-    conn.close()
 
 
 def set_title_if_unset(session_id: str, text: str) -> None:
     """Name a session after its opening question, so a session list is readable."""
     title = " ".join(text.split())[:80]
-    conn = get_connection()
-    with conn:
+    with write_connection() as conn:
         conn.execute(
             "UPDATE chat_sessions SET title = ? WHERE session_id = ? AND "
             "(title IS NULL OR title = '')", (title, session_id))
-    conn.close()
 
 
 def list_sessions(limit: int = 25) -> list[dict]:
@@ -97,8 +92,6 @@ def list_sessions(limit: int = 25) -> list[dict]:
 
 
 def end_session(session_id: str) -> None:
-    conn = get_connection()
-    with conn:
+    with write_connection() as conn:
         conn.execute("UPDATE chat_sessions SET ended_at = ? WHERE session_id = ?",
-                     (datetime.utcnow().isoformat(), session_id))
-    conn.close()
+                     (utc_now_iso(), session_id))

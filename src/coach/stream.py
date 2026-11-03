@@ -143,7 +143,19 @@ def run_turn(client: Anthropic, model: str, system: str, messages: list[dict],
     the CLI: same loop, same messages mutation, same returned string.
     """
     text = ""
+    saw_turn_end = False
+    errors: list[str] = []
     for event in stream_turn(client, model, system, messages, max_tokens):
         if event.type == "turn_end":
-            text = event.text
+            text, saw_turn_end = event.text, True
+        elif event.type == "error":
+            errors.append(event.message)
+
+    if not saw_turn_end:
+        # stream_turn yields `error` and returns *without* a turn_end when the API call itself
+        # fails. This used to fall through and return "", which every caller took for a real
+        # answer: checkin() wrote the empty string into coaching_log, and cycle_review() filed
+        # it against a UNIQUE(plan_name, cycle_start) row that was thereafter treated as
+        # reviewed. A failed call has to be loud.
+        raise RuntimeError("the model turn failed: " + ("; ".join(errors) or "no turn_end"))
     return text

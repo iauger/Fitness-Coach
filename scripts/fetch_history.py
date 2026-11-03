@@ -17,7 +17,7 @@ from datetime import date, timedelta
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.intervals.client import IntervalsClient
-from src.db.schema import init_db
+from src.db.schema import migrate_db
 from src.db.store import upsert_activities, upsert_wellness, upsert_events, log_sync
 from src.db.schema import get_connection
 
@@ -34,7 +34,7 @@ def date_chunks(start: date, end: date, chunk: int = CHUNK_DAYS):
 
 def fetch_all(start: date, end: date, verbose: bool = True) -> None:
     client = IntervalsClient()
-    init_db()
+    migrate_db()
     conn = get_connection()
 
     def log(msg):

@@ -13,13 +13,14 @@ derive.py's metrics fail — see the "what gets computed, what gets stored" rule
 
 import json
 from datetime import date, datetime, timedelta
-from src.db.schema import get_connection
+from src.db.schema import get_connection, write_connection
 from src.analysis.cycle import _load_for_range, _recovery_for_range
 
 # Re-exported so `from src.analysis.weekly import monday_of, last_completed_week` keeps working
 # (scripts/weekly_summary.py). The definitions moved to analysis/dates.py so that derive.py and
 # activities.py can share them without importing this module's cycle/training_plan chain.
 from src.analysis.dates import monday_of, last_completed_week  # noqa: F401
+from src.clock import utc_now_iso
 
 
 def week_metrics(week_start: date) -> dict:
@@ -93,8 +94,7 @@ def has_qualitative_content(m: dict) -> bool:
 
 
 def save_summary(m: dict, narrative: str | None, model: str | None) -> None:
-    conn = get_connection()
-    with conn:
+    with write_connection() as conn:
         conn.execute("""
             INSERT INTO weekly_summaries (
                 week_start, week_end, plan_week_number, week_type, phase, planned_tss,
@@ -114,9 +114,8 @@ def save_summary(m: dict, narrative: str | None, model: str | None) -> None:
             m["week_start"], m["week_end"], m["plan_week_number"], m["week_type"], m["phase"],
             m["planned_tss"], m["actual_tss"], m["sessions_count"], m["adherence_pct"],
             m["ctl_end"], m["tsb_end"], m["hrv"], m["rhr"], m["sleep_hrs"], m["mean_rpe"],
-            json.dumps(m), narrative, model, datetime.utcnow().isoformat(),
+            json.dumps(m), narrative, model, utc_now_iso(),
         ))
-    conn.close()
 
 
 def summaries_between(start: str, end: str) -> list[dict]:
