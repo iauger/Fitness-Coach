@@ -6,6 +6,7 @@ so that a 30/15 bout emits real alternating 30s and 15s steps instead of describ
 note string, and flattening them here would undo that and produce an unridable file.
 """
 
+import re
 import xml.etree.ElementTree as ET
 
 import pytest
@@ -77,11 +78,35 @@ def test_xml_special_characters_are_escaped():
     assert root.findtext("name") == 'Ride & "go" <fast>'
 
 
-def test_filenames_are_safe_on_windows():
-    assert safe_filename("3x15min @ 90% / 1.5min") == "3x15min_@_90%__1.5min.zwo"
+def test_filenames_are_safe_on_windows_and_safe_to_sync():
+    """
+    A whitelist, not a blacklist. Zwift uploads imported workouts to its cloud so they reach
+    other devices, and names with special characters are reported to stop that sync — and
+    threshold prescriptions are full of `@`, `%` and `/`, exactly the characters a
+    Windows-illegal blacklist would let through.
+    """
+    assert safe_filename("3x15min @ 90% / 1.5min") == "3x15min_90_1.5min.zwo"
     assert safe_filename('a<b>c:d"e\\f|g?h*i') == "abcdefghi.zwo"
+    assert safe_filename("VO2 63min (thirty fifteen)") == "VO2_63min_thirty_fifteen.zwo"
     assert safe_filename("   ") == "workout.zwo"
+    assert safe_filename("...") == "workout.zwo"
     assert safe_filename("ok").endswith(".zwo")
+
+
+@pytest.mark.parametrize("session", [s for s in A.catalogue() if s.archetype != "strength"],
+                         ids=lambda s: f"{s.archetype}-{s.variant}")
+def test_real_session_names_produce_sync_safe_filenames(session):
+    name = safe_filename(f"2026-11-03_{session_name(session)}")
+    assert re.fullmatch(r"[A-Za-z0-9._-]+\.zwo", name), name
+
+
+def test_a_session_is_comfortably_under_zwifts_64kb_sync_limit():
+    """Over 64 KB a .zwo stays on the machine it was imported on and never reaches other
+    devices. The longest session in the library is nowhere near, but assert it rather than
+    assume it — the 30/15 set emits one block per 30 or 15 seconds."""
+    biggest = max(len(to_zwo(s, "x").encode("utf-8"))
+                  for s in A.catalogue() if s.archetype != "strength")
+    assert biggest < 64 * 1024, f"largest session serialises to {biggest} bytes"
 
 
 def test_session_names_say_what_the_session_is():

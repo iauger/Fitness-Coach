@@ -17,13 +17,18 @@ from xml.sax.saxutils import escape
 
 from src.planning.archetypes import Session
 
-# Zwift tolerates most characters in a filename, but these cause real trouble on Windows.
-_UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+# A whitelist rather than a blacklist of Windows-illegal characters. Zwift uploads imported
+# workouts to its cloud so they appear on other devices, and its forums report that names with
+# special characters can stop that sync happening. Threshold prescriptions are full of `@`, `%`
+# and `/`, so a blacklist of just the Windows-illegal set let exactly the risky ones through.
+_ALLOWED = re.compile(r"[^A-Za-z0-9._-]")
+_RUNS = re.compile(r"_{2,}")
 
 
 def safe_filename(name: str) -> str:
-    """A filename Zwift will list and Windows will accept."""
-    cleaned = _UNSAFE.sub("", name).strip().replace(" ", "_")
+    """A filename Zwift will list, sync, and Windows will accept."""
+    cleaned = _ALLOWED.sub("", name.strip().replace(" ", "_"))
+    cleaned = _RUNS.sub("_", cleaned).strip("_.")
     return (cleaned or "workout") + ".zwo"
 
 
