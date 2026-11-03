@@ -36,8 +36,13 @@ from src.planning.progression_store import current_state
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
-# Verified live: the OneDrive copy of this folder is stale from 2021, so do not write there.
-ZWIFT_DIR = r"C:\Users\iauge\Documents\Zwift\Workouts\393440"
+ZWIFT_ID = "393440"
+
+
+def zwift_dir() -> Path:
+    """The folder Zwift reads. Resolved at call time — see planning/zwo.ZWIFT_ROOTS."""
+    from src.planning.zwo import zwift_workouts_dir
+    return zwift_workouts_dir(ZWIFT_ID)
 
 
 def derive_state(today: date, start_tier: int = 1, persist: bool = True) -> dict:
@@ -110,7 +115,7 @@ def main() -> int:
     p.add_argument("--plan-name", default=PLAN_NAME)
     p.add_argument("--zwo", type=date.fromisoformat, metavar="YYYY-MM-DD",
                    help="write that day's ride to the Zwift workouts folder")
-    p.add_argument("--zwo-dir", default=ZWIFT_DIR,
+    p.add_argument("--zwo-dir", default=None,
                    help="where .zwo files go (default: the live Zwift folder)")
     p.add_argument("--zwo-name", default=None, metavar="NAME",
                    help="override the generated workout name (one ride only)")
@@ -176,7 +181,8 @@ def main() -> int:
           f"{pct['hard']}% hard")
 
     if args.zwo:
-        rc = write_zwo(all_sessions, args.zwo, Path(args.zwo_dir),
+        out = Path(args.zwo_dir) if args.zwo_dir else zwift_dir()
+        rc = write_zwo(all_sessions, args.zwo, out,
                        name_override=args.zwo_name)
         if rc:
             return rc

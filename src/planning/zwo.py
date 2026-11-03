@@ -114,3 +114,34 @@ def supersede(out_dir: Path, on: date, keep: set[Path]) -> list[Path]:
         path.unlink()
         removed.append(path)
     return removed
+
+
+# Zwift's workout folder on Windows, newest location first.
+#
+# Hardcoding this has already failed once. Zwift 1.0.167761, installed 2026-11-02 23:36, moved
+# its data directory from Documents to AppData\Local, migrated all 92 .zwo files across, and left
+# an _INFO_README.txt in the old folder saying so. A workout written to the old path afterwards
+# was never seen, while the pre-migration copy went on being listed — which looked exactly like
+# Zwift refusing to pick up an edit, and was nothing of the kind.
+#
+# Both folders still exist and both still hold the athlete's hand-made workouts, so "the
+# directory is there" is no evidence it is the live one. Order is what decides it.
+ZWIFT_ROOTS = (
+    ("AppData", "Local", "Zwift"),
+    # Pre-1.0.167761. A fallback for an older install. The OneDrive mirror of this path is stale
+    # from 2021 and is not a candidate at all.
+    ("Documents", "Zwift"),
+)
+
+
+def zwift_workouts_dir(athlete_id: str, home: Path | None = None,
+                       roots: tuple = ZWIFT_ROOTS) -> Path:
+    """
+    The workouts folder Zwift actually reads.
+
+    Returns the first candidate that exists, or the newest candidate when none does — so a fresh
+    install gets the current location rather than a path Zwift has stopped reading.
+    """
+    base = home or Path.home()
+    candidates = [base.joinpath(*root, "Workouts", athlete_id) for root in roots]
+    return next((c for c in candidates if c.is_dir()), candidates[0])

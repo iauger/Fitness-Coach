@@ -16,6 +16,7 @@ import pytest
 from src.planning import archetypes as A
 from src.planning.zwo import (
     AUTHOR, AUTHOR_TAG, safe_filename, session_name, supersede, to_zwo,
+    zwift_workouts_dir,
 )
 
 
@@ -167,3 +168,36 @@ def test_a_generated_file_carries_the_author_tag_supersede_matches_on(tmp_path):
     """
     session = A.lit(60, "steady")
     assert AUTHOR_TAG in to_zwo(session, "Endurance 60min")
+
+
+# ── which folder Zwift actually reads ─────────────────────────────────────────
+
+ROOTS = (("AppData", "Local", "Zwift"), ("Documents", "Zwift"))
+
+
+def test_the_newest_location_wins_when_both_exist(tmp_path):
+    """
+    The bug this function exists to stop recurring.
+
+    Zwift 1.0.167761 moved its data directory and migrated the .zwo files across, leaving both
+    folders present and both full. A workout written to the old path was then never seen, while
+    the migrated copy went on being listed — indistinguishable, from the outside, from Zwift
+    refusing to pick up an edit. "The directory exists" is not evidence it is the live one.
+    """
+    for root in ROOTS:
+        (tmp_path.joinpath(*root, "Workouts", "393440")).mkdir(parents=True)
+    got = zwift_workouts_dir("393440", home=tmp_path, roots=ROOTS)
+    assert got == tmp_path / "AppData" / "Local" / "Zwift" / "Workouts" / "393440"
+
+
+def test_the_old_location_is_used_when_it_is_the_only_one(tmp_path):
+    """An older Zwift install that has not migrated yet still has to work."""
+    (tmp_path / "Documents" / "Zwift" / "Workouts" / "393440").mkdir(parents=True)
+    got = zwift_workouts_dir("393440", home=tmp_path, roots=ROOTS)
+    assert got == tmp_path / "Documents" / "Zwift" / "Workouts" / "393440"
+
+
+def test_with_no_folder_at_all_the_newest_location_is_returned(tmp_path):
+    """A fresh install should be pointed at where Zwift reads now, not where it used to."""
+    got = zwift_workouts_dir("393440", home=tmp_path, roots=ROOTS)
+    assert got == tmp_path / "AppData" / "Local" / "Zwift" / "Workouts" / "393440"
