@@ -6,6 +6,7 @@ import json
 from datetime import date, timedelta
 from collections import defaultdict
 from src.db.schema import get_connection
+from src.analysis.dates import monday_of
 from src.analysis.load import effective_tss
 
 SPORT_GROUPS = {
@@ -79,8 +80,7 @@ def weekly_load_by_sport(weeks: int | None = 12) -> list[dict]:
 
     weekly: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     for r in rows:
-        d = date.fromisoformat(r["date"])
-        week_start = (d - timedelta(days=d.weekday())).isoformat()
+        week_start = monday_of(date.fromisoformat(r["date"])).isoformat()
         raw = json.loads(r["raw_json"])
         load = raw.get("icu_training_load") or raw.get("hr_load") or 0
         group = _sport_group(r["type"] or "")
@@ -91,6 +91,61 @@ def weekly_load_by_sport(weeks: int | None = 12) -> list[dict]:
         {"week": week, **{k: round(v, 1) for k, v in loads.items()}}
         for week, loads in sorted(weekly.items())
     ]
+
+
+def week_volume(conn, monday: date) -> dict:
+    """
+    What was actually trained in one Monday-to-Sunday week.
+
+    The repo had no measured weekly-hours function before this — `derive.weekly_load` compares
+    planned to actual *TSS*, and `yearly_volume` estimates hours as `tss / 60`. The rolling plan
+    generator grades a week on ride minutes, so it needs the measured figure.
+
+    Deliberately NOT built on `analysis/compliance.py`. A gate reading plan adherence inherits
+    every way the matcher fails for reasons unrelated to training: strength is excluded by design
+    (`planned_tss IS NULL`), HR-only and non-power rides score wrong, and an outdoor ride that
+    doesn't resemble its prescription scores `partial`. Reading `moving_time` straight off
+    `activities` inherits exactly one failure mode — a ride that didn't sync.
+
+    Takes `conn` rather than opening its own, because the roller evaluates many weeks per run.
+    Returns a zero-filled dict for a week with no rows: an empty week is a real answer here, not
+    missing data, and it is the case the re-entry rule turns on.
+    """
+    start = monday_of(monday)
+    end = start + timedelta(days=7)
+    rows = conn.execute("""
+        SELECT date, type, moving_time FROM activities
+        WHERE date >= ? AND date < ? AND moving_time IS NOT NULL
+    """, (start.isoformat(), end.isoformat())).fetchall()
+
+    ride_sec = 0.0
+    longest_sec = 0.0
+    ride_days: set[str] = set()
+    training_days: set[str] = set()
+    strength = 0
+    for r in rows:
+        # _sport_group's "cycling" set is the same five types as compliance.CYCLING_TYPES;
+        # using the local grouping keeps this module's one notion of sport authoritative.
+        group = _sport_group(r["type"] or "")
+        secs = r["moving_time"] or 0
+        day = r["date"][:10]
+        training_days.add(day)
+        if group == "cycling":
+            ride_sec += secs
+            longest_sec = max(longest_sec, secs)
+            ride_days.add(day)
+        elif group == "strength":
+            strength += 1
+
+    return {
+        "week_start": start.isoformat(),
+        "ride_min": round(ride_sec / 60, 1),
+        "ride_days": len(ride_days),
+        "longest_ride_min": round(longest_sec / 60, 1),
+        "strength_sessions": strength,
+        "training_days": len(training_days),
+        "any_activity": bool(rows),
+    }
 
 
 def sport_distribution(days: int = 90) -> dict:

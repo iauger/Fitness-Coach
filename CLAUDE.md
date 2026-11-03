@@ -32,3 +32,10 @@ and no console warning.
    implies interactive correctness.
 
 Skip this only for non-visual changes (data pipeline, analysis logic, docs).
+
+## Chart conventions are already fixed
+
+This project's chart design is settled in `src/visualizations/` — colour palette, layout,
+and the PMC 4-panel structure. Do not load the `dataviz` skill for routine chart
+regeneration or edits that follow existing patterns; follow the modules instead. Load it
+only when designing a genuinely new chart type or reconsidering the palette.

@@ -24,6 +24,7 @@ execution layer while this owns the structure, and defers .zwo generation entire
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from src.analysis.dates import monday_of
 from src.analysis.derive import EASY_IF_CEILING, HARD_IF_FLOOR
 from src.planning import archetypes as A
 
@@ -206,8 +207,7 @@ def weekly_rollup(sessions: list[dict]) -> list[dict]:
     """Per-week totals — the view that shows whether the intensity balance actually holds."""
     weeks: dict[str, dict] = {}
     for s in sessions:
-        d = date.fromisoformat(s["date"])
-        monday = (d - timedelta(days=d.weekday())).isoformat()
+        monday = monday_of(date.fromisoformat(s["date"])).isoformat()
         w = weeks.setdefault(monday, {
             "week_start": monday, "block": s["block_name"],
             "recovery": s["is_recovery_week"], "sessions": 0, "rides": 0,

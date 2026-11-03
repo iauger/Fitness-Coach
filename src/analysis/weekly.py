@@ -16,14 +16,10 @@ from datetime import date, datetime, timedelta
 from src.db.schema import get_connection
 from src.analysis.cycle import _load_for_range, _recovery_for_range
 
-
-def monday_of(d: date) -> date:
-    return d - timedelta(days=d.weekday())
-
-
-def last_completed_week(on: date | None = None) -> date:
-    """Monday of the most recent week that has fully elapsed."""
-    return monday_of(on or date.today()) - timedelta(weeks=1)
+# Re-exported so `from src.analysis.weekly import monday_of, last_completed_week` keeps working
+# (scripts/weekly_summary.py). The definitions moved to analysis/dates.py so that derive.py and
+# activities.py can share them without importing this module's cycle/training_plan chain.
+from src.analysis.dates import monday_of, last_completed_week  # noqa: F401
 
 
 def week_metrics(week_start: date) -> dict:

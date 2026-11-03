@@ -15,6 +15,7 @@ import json
 from datetime import date, timedelta
 from src.db.schema import get_connection
 from src.athlete.profile import get_metric
+from src.analysis.dates import monday_of
 from src.analysis.load import sum_effective_tss
 
 # Seiler's three-zone model in intensity-factor terms. LT1 (the aerobic threshold, above which
@@ -25,8 +26,6 @@ EASY_IF_CEILING = 0.75
 HARD_IF_FLOOR = 0.85
 
 
-def _monday(d: date) -> date:
-    return d - timedelta(days=d.weekday())
 
 
 # ── ramp reconciliation ───────────────────────────────────────────────────────
@@ -59,7 +58,7 @@ def ctl_ramps(conn, today: date) -> dict:
 # ── weekly load, planned vs actual ────────────────────────────────────────────
 
 def weekly_load(conn, today: date, weeks: int = 8) -> list[dict]:
-    start = _monday(today) - timedelta(weeks=weeks - 1)
+    start = monday_of(today) - timedelta(weeks=weeks - 1)
     rows = []
     for i in range(weeks):
         ws = start + timedelta(weeks=i)
