@@ -401,9 +401,6 @@ def strength(minutes: int = 40, variant: str = "full") -> Session:
                    params={"minutes": minutes, **cfg})
 
 
-BUILDERS = {"lit": lit, "sit": sit, "hiit": hiit, "threshold": threshold, "strength": strength}
-
-
 def variant_names(archetype: str) -> list[str]:
     return sorted({
         "lit": LIT_VARIANTS, "sit": SIT_VARIANTS, "hiit": HIIT_VARIANTS,
