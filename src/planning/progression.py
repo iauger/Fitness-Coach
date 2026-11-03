@@ -31,15 +31,29 @@ from dataclasses import dataclass
 MET_FRACTION = 0.90
 PARTIAL_FRACTION = 0.50
 
-# Consecutive met weeks needed to advance, out of a trailing window of this size.
-ADVANCE_MET = 3
-ADVANCE_WINDOW = 4
+# Consecutive met weeks needed to climb one rung.
+#
+# One, because `met` is *already* a volume gate — it requires riding at least MET_FRACTION of
+# what was asked and hitting the tier's ride-day count — and each rung above T1 is only about
+# 10% more volume. Requiring several on top mostly adds latency, and the de-ramp above takes the
+# rung straight back if the next fortnight goes badly, so the climb is self-limiting: you cannot
+# climb faster than you actually ride.
+#
+# This was a trailing 3-of-4 until it was measured against the reference year, where it parked
+# the gate at the floor for 19 consecutive weeks while the athlete was riding 3.0-3.5h, and
+# through one stretch asked for 2.0h across three weeks of 6.6h, 5.7h and 5.1h. A prescription
+# at a third of what someone is already doing gets ignored exactly like one at triple. At one
+# week the same history stalls for 6 weeks instead of 19.
+ADVANCE_MET_WEEKS = 1
 
-# Entering the 3.5-4h band costs the anchor habit: strength in this many of the window's weeks.
+# Entering the 3.5-4h band costs the anchor habit: strength in this many of the last few weeks.
 # Required at exactly one transition. Strength has not been logged since 2026-09-02, so requiring
-# it on every promotion would freeze the gate at the floor on day one.
+# it on every promotion would freeze the gate at the floor on day one. The window here is
+# independent of ADVANCE_MET_WEEKS — the habit question is about the recent past, not about the
+# single week that triggered the climb.
 STRENGTH_GATED_TIER = 3
 STRENGTH_GATED_WEEKS = 3
+STRENGTH_WINDOW = 4
 
 
 @dataclass(frozen=True)
@@ -85,8 +99,6 @@ TIERS: dict[int, Tier] = {
 
 FLOOR_TIER = min(TIERS)
 CAP_TIER = max(TIERS)
-# A short gap steps down but not below here. T0 is reserved for long gaps.
-SHORT_GAP_FLOOR = 1
 
 
 @dataclass(frozen=True)
@@ -150,8 +162,8 @@ def _may_enter_tier(tier: int, window: list[dict]) -> tuple[bool, str]:
     held = sum(1 for row in window if row["habit_held"])
     if held >= STRENGTH_GATED_WEEKS:
         return True, ""
-    return False, (f"T{STRENGTH_GATED_TIER} needs strength in {STRENGTH_GATED_WEEKS} of "
-                   f"{len(window)} weeks; {held} held")
+    return False, (f"T{STRENGTH_GATED_TIER} needs strength in {STRENGTH_GATED_WEEKS} of the last "
+                   f"{STRENGTH_WINDOW} weeks; {held} of {len(window)} held")
 
 
 def next_state(history: list[dict], tier: int) -> Decision:
@@ -168,57 +180,58 @@ def next_state(history: list[dict], tier: int) -> Decision:
     """
     gap = trailing_gap(history)
 
-    if gap >= 4:
-        # The observed maximum was four weeks, and 2026 as a whole ran at 1.9h/wk. Resuming a
-        # 3.5h week after a month off is what produced the abandonment this design exists to stop.
-        return Decision(FLOOR_TIER, "reentry", "reentry", "restart_rotation",
-                        f"{gap} weeks without a ride — restarting at the floor")
+    if gap:
+        # Proportional de-ramp: one rung per missed week after the first. A single week costs
+        # nothing (CTL decays only ~15% over seven days, and six of eleven dropout runs in the
+        # reference history were exactly one week), and each further week steps down one more.
+        #
+        # This replaces what were three separate branches — hold / tier-1 / flat-drop-to-the-floor
+        # — and in collapsing them removes the bug they contained. Expressed as a floor,
+        # `max(1, tier - 1)` moved an athlete already at T0 *up* to T1: a promotion for not
+        # riding. Clamping at the floor rather than flooring at T1 makes that unrepresentable.
+        #
+        # The gradation also matters more than the old cliff did. A flat drop to T0 meant a
+        # month off and a fortnight off cost the same thing, and climbing back took four met
+        # weeks per rung — which against a gap every 4-8 weeks parked the replay at T0 for 19
+        # consecutive weeks while the athlete was actually riding 3.0-3.5h. A prescription at a
+        # third of what someone is already doing gets ignored exactly like one at triple.
+        #
+        # Deliberately gentler than fitness decay: four weeks off costs ~49% of CTL but only
+        # three rungs (T4 3.92h -> T1 2.92h, about -26%). Tracking CTL exactly would land a
+        # returning athlete well below what they can comfortably ride.
+        # One rung per *evaluation*, not `tier - (gap - 1)`. The gate runs every week, so `tier`
+        # already carries the reductions the earlier weeks of this same gap applied; subtracting
+        # the cumulative gap from it compounds. From T4 that went 4 -> 3 -> 1 -> 0, skipping T2
+        # entirely, which is the opposite of a progressive de-ramp.
+        stepped = tier if gap == 1 else max(FLOOR_TIER, tier - 1)
+        return Decision(
+            stepped,
+            "hold" if stepped == tier else "step_back",
+            "reentry",
+            "continue" if gap == 1 else "restart_block" if gap < 4 else "restart_rotation",
+            ("one week missed — tier holds, week comes back easy" if gap == 1
+             else f"{gap} weeks without a ride — T{tier} -> T{stepped}"),
+        )
 
-    if gap >= 2:
-        # Step down, but never *up*. Written as a bare floor this read `max(1, tier - 1)`, which
-        # moved someone already at T0 up to T1 — a promotion for missing two more weeks. T0 is
-        # reachable here: it is where a 4+ week gap lands you, and missing two of those weeks
-        # produces a fresh 2-week gap from T0.
-        stepped = min(tier, max(SHORT_GAP_FLOOR, tier - 1))
-        return Decision(stepped, "step_back", "reentry", "restart_block",
-                        f"{gap} weeks without a ride — T{tier} -> T{stepped}, block restarts")
+    if not history:
+        return Decision(tier, "hold", "normal", "continue", "no decided weeks yet")
 
-    if gap == 1:
-        # The modal case: six of eleven dropout runs in the reference history were a single week.
-        # It costs nothing — CTL over seven days decays by about 15% — so the tier holds and only
-        # the week itself is softened.
-        return Decision(tier, "hold", "reentry", "continue",
-                        "one week missed — tier holds, week comes back easy")
-
-    window = history[-ADVANCE_WINDOW:]
-    met = sum(1 for row in window if row["outcome"] == "met")
-
-    if len(window) < ADVANCE_WINDOW:
+    recent = history[-ADVANCE_MET_WEEKS:]
+    if len(recent) < ADVANCE_MET_WEEKS or any(row["outcome"] != "met" for row in recent):
         return Decision(tier, "hold", "normal", "continue",
-                        f"only {len(window)} of {ADVANCE_WINDOW} weeks decided so far")
-
-    if met < ADVANCE_MET:
-        return Decision(tier, "hold", "normal", "continue",
-                        f"{met} of {ADVANCE_WINDOW} weeks met, need {ADVANCE_MET}")
-
-    if history[-1]["outcome"] != "met":
-        # 3-of-4 rather than 3-consecutive, because a strict run promotes essentially never
-        # against real data — but the most recent week still has to be a good one, or the gate
-        # would promote on the way down.
-        return Decision(tier, "hold", "normal", "continue",
-                        "3 of 4 met but the most recent week was not")
+                        f"last week was {history[-1]['outcome']}, not met")
 
     if tier >= CAP_TIER:
         return Decision(CAP_TIER, "hold", "normal", "continue",
                         f"already at the T{CAP_TIER} ceiling — going higher is an explicit "
                         f"decision, not a consequence of a good streak")
 
-    allowed, why = _may_enter_tier(tier + 1, window)
+    allowed, why = _may_enter_tier(tier + 1, history[-STRENGTH_WINDOW:])
     if not allowed:
         return Decision(tier, "hold", "normal", "continue", why)
 
     return Decision(tier + 1, "advance", "normal", "continue",
-                    f"{met} of {ADVANCE_WINDOW} weeks met — T{tier} -> T{tier + 1}")
+                    f"met at T{tier} — T{tier} -> T{tier + 1}")
 
 
 def replay(weeks: list[dict], start_tier: int = 1) -> list[dict]:

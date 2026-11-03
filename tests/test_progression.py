@@ -114,20 +114,25 @@ MET, PART, MISS = "met", "partial", "missed"
 
 TRANSITIONS = [
     # (label, outcomes oldest-first, tier in, expected tier out, expected verdict)
-    ("3 of 4 met, most recent met -> advance",   [MET, MISS, MET, MET],   1, 2, "advance"),
-    ("4 of 4 met -> advance",                    [MET, MET, MET, MET],    1, 2, "advance"),
-    ("3 of 4 met but most recent partial",       [MET, MET, MET, PART],   1, 1, "hold"),
-    ("2 of 4 met -> hold",                       [MET, PART, MET, PART],  1, 1, "hold"),
-    ("not enough history yet -> hold",           [MET, MET, MET],         1, 1, "hold"),
+    # One met week climbs one rung: `met` is already a volume gate, so the climb cannot outrun
+    # the riding, and a bad fortnight takes the rung straight back.
+    ("a single met week advances",               [MET],                   1, 2, "advance"),
+    ("a met week after a bad one still advances", [MET, MISS, MET, MET],  1, 2, "advance"),
+    ("most recent partial -> hold",              [MET, MET, MET, PART],   1, 1, "hold"),
+    ("most recent missed is a gap, not a hold",  [MET, MET, MET, MISS],   1, 1, "hold"),
     ("at the ceiling, a good streak holds",      [MET, MET, MET, MET],    CAP_TIER, CAP_TIER, "hold"),
+    # Progressive de-ramp: one rung per evaluation once the gap passes a single week, clamped
+    # at the floor. `tier_in` is the tier already in force, which during a gap is whatever the
+    # earlier weeks of that same gap reduced it to.
     ("one missed week -> tier holds",            [MET, MET, MET, MISS],   2, 2, "hold"),
-    ("two missed -> step down one",              [MET, MET, MISS, MISS],  3, 2, "step_back"),
-    ("three missed -> step down one",            [MET, MISS, MISS, MISS], 3, 2, "step_back"),
-    ("two missed at T1 stays at T1",             [MET, MET, MISS, MISS],  1, 1, "step_back"),
-    # The bug this pins down: written as a bare `max(1, tier-1)` floor, missing two more weeks
-    # at the floor moved the athlete UP to T1 — a promotion for not riding.
-    ("two missed at T0 stays at T0",             [MET, MET, MISS, MISS],  0, 0, "step_back"),
-    ("four missed -> back to the floor",     [MISS, MISS, MISS, MISS], CAP_TIER, FLOOR_TIER, "reentry"),
+    ("two missed -> down one",                   [MET, MET, MISS, MISS],  3, 2, "step_back"),
+    ("still missing -> down one more",           [MET, MISS, MISS, MISS], 2, 1, "step_back"),
+    ("two missed at T1 -> the floor",            [MET, MET, MISS, MISS],  1, 0, "step_back"),
+    # The bug this pins down: expressed as a `max(1, tier-1)` floor, missing two more weeks at
+    # the floor moved the athlete UP to T1 — a promotion for not riding. Clamping instead of
+    # flooring makes it unrepresentable.
+    ("two missed at the floor stays there",      [MET, MET, MISS, MISS],  0, 0, "hold"),
+    ("a long gap at the floor stays there",      [MISS] * 6,              0, 0, "hold"),
     ("a partial week closes a gap",              [MISS, MISS, PART, PART], 3, 3, "hold"),
 ]
 
@@ -139,6 +144,40 @@ def test_transitions(label, outcomes, tier_in, tier_out, verdict):
     decision = next_state(history, tier_in)
     assert decision.tier == tier_out, f"{label}: {decision.reason}"
     assert decision.verdict == verdict, f"{label}: {decision.reason}"
+
+
+def test_the_deramp_steps_one_rung_per_week_and_never_rises():
+    """
+    The shape of a long absence, week by week — the test that catches a cumulative formula.
+    `tier - (gap - 1)` applied against an already-reduced tier compounds, and from the ceiling
+    produced 4 -> 3 -> 1 -> 0, skipping a rung. It also pins the "one week costs nothing" rule:
+    the first missed week holds.
+    """
+    tier = CAP_TIER
+    path = [tier]
+    history: list[dict] = []
+    for _ in range(6):
+        history.append(graded(MISS, tier))
+        tier = next_state(history, tier).tier
+        path.append(tier)
+
+    assert path == [4, 4, 3, 2, 1, 0, 0], path
+    assert path == sorted(path, reverse=True), "a gap must never raise the tier"
+
+
+def test_a_gap_is_gentler_than_fitness_decay():
+    """
+    Deliberate, and worth pinning so nobody 'corrects' it later. Four weeks off costs roughly
+    49% of CTL but only three rungs. Tracking decay exactly would land a returning athlete well
+    below what they can comfortably ride, and an ignored prescription is the failure mode this
+    whole design exists to prevent.
+    """
+    tier, history = CAP_TIER, []
+    for _ in range(4):
+        history.append(graded(MISS, tier))
+        tier = next_state(history, tier).tier
+    volume_kept = TIERS[tier].target_min / TIERS[CAP_TIER].target_min
+    assert volume_kept > 0.51, "a four-week gap should cost less volume than it costs CTL"
 
 
 def test_entering_the_band_requires_the_strength_habit():
@@ -201,9 +240,10 @@ def test_replay_against_a_real_year(history):
     # 1 — structural: the ladder is never left
     assert all(FLOOR_TIER <= t <= CAP_TIER for t in tiers)
 
-    # 2 — never moves more than one rung per week
+    # 2 — never moves more than one rung per week. This held no exception once the flat drop to
+    # the floor became a progressive de-ramp; it previously needed an escape clause for it.
     for before, after in zip([1] + tiers, tiers):
-        assert abs(after - before) <= 1 or after == FLOOR_TIER, (before, after)
+        assert abs(after - before) <= 1, (before, after)
 
     # 3 — a real streak is rewarded. Sep-Nov 2025 ran 12 consecutive weeks at 3.84h/wk.
     streak = [by_week[w]["next_tier"] for w in by_week if w < "2025-11-24"]
@@ -223,6 +263,22 @@ def test_replay_against_a_real_year(history):
 
     # 7 — ends low, because the last nine weeks average ~2.4h with three gaps in them
     assert tiers[-1] <= 2, f"ended at T{tiers[-1]} after a year averaging under 3h/wk"
+
+    # 8 — the gate must not park at the floor while the athlete is riding. Under a trailing
+    # 3-of-4 advance rule this history stalled at T0 for 19 consecutive weeks through a stretch
+    # of 3.0-3.5h weeks, and across three weeks of 6.6h/5.7h/5.1h it asked for 2.0h. A
+    # prescription at a third of what someone is already doing is ignored exactly like one at
+    # triple, so this is the same abandonment risk as an over-ambitious plan, inverted.
+    longest_floor, run = 0, 0
+    for t in tiers:
+        run = run + 1 if t == FLOOR_TIER else 0
+        longest_floor = max(longest_floor, run)
+    assert longest_floor <= 8, f"parked at the floor for {longest_floor} consecutive weeks"
+
+    # 9 — and it must respond quickly to a strong return. The week after 6.6h was ridden off a
+    # 2.0h prescription, the ask has to move.
+    assert by_week["2026-01-05"]["tier"] > FLOOR_TIER, (
+        "still asking for the floor the week after a 6.6h week")
 
 
 def test_replay_is_deterministic(history):
