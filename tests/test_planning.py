@@ -60,11 +60,61 @@ def test_hard_start_opens_above_target_then_settles():
     assert lead.pct > A.HIIT_VARIANTS["hard_start"]["pct"]
 
 
-def test_over_unders_actually_goes_over_and_under():
+def test_over_unders_rolls_without_ever_crossing_threshold():
+    """
+    Was {0.92, 1.03} — a third of its work time above FTP, straight through the one transition
+    the source is emphatic about ("better to hedge low by 10% than overshoot by even 2%",
+    because a qualitatively different metabolic response develops either side of it).
+    It must still roll over and under its own mean without exceeding it.
+    """
     session = A.threshold("over_unders")
     work = [s for s in session.steps if s.label.startswith("effort")]
-    assert {round(s.pct, 2) for s in work} == {0.92, 1.03}
-    assert any(s.pct > 1.0 for s in work), "nothing is actually over threshold"
+    assert len({round(s.pct, 2) for s in work}) == 2, "no longer alternates at all"
+    assert max(s.pct for s in work) <= 1.00, "crosses the threshold transition"
+    lo, hi = min(s.pct for s in work), max(s.pct for s in work)
+    assert lo < A.THRESHOLD_VARIANTS["over_unders"]["pct"] < hi, (
+        "the nominal pct should sit between the two bands, since it is what any single-number "
+        "consumer (plan_build --watts) reads")
+
+
+@pytest.mark.parametrize("variant", sorted(A.THRESHOLD_VARIANTS))
+def test_no_threshold_step_exceeds_ftp(variant):
+    assert max(s.pct for s in A.threshold(variant).steps) <= 1.00, variant
+
+
+@pytest.mark.parametrize("variant", sorted(A.THRESHOLD_VARIANTS))
+def test_threshold_accumulates_at_least_forty_minutes_of_work(variant):
+    """The source's stated target. Easy to break later by trimming reps to shorten a session."""
+    p = A.threshold(variant).params
+    assert p["work_min"] * p["reps"] >= 40, variant
+
+
+@pytest.mark.parametrize("variant", sorted(A.THRESHOLD_VARIANTS))
+def test_threshold_rests_are_near_ten_to_one(variant):
+    """
+    The source asks ~10:1 and these ran 3.0-4.5:1. The rest ratio and the target move together:
+    its own diagnostic is that needing long rests means the intensity is too high, so a short
+    rest is only defensible alongside the hedged target.
+    """
+    p = A.threshold(variant).params
+    if not p["rest_min"]:
+        return                                   # continuous has no rest by definition
+    assert p["work_min"] / p["rest_min"] >= 8, variant
+
+
+def test_prescription_describes_alternation_rather_than_a_flat_target():
+    """
+    summary() printed `@ {pct}%` for every variant, so over_unders advertised "@ 95%" while
+    building 2min/1min alternations and thirty_fifteen advertised "@ 112%" for a 30s-on bout.
+    This string is what the athlete reads and what gets matched to a library workout.
+    """
+    assert "alternating 2min @ 88% / 1min @ 99%" in A.threshold("over_unders").summary()
+    assert "alternating 30s @ 112% / 15s @ 45%" in A.hiit("thirty_fifteen").summary()
+    assert "after a 30s opener at 130%" in A.hiit("hard_start").summary()
+    assert "ramping 55% -> 72% FTP" in A.lit(90, "progressive").summary()
+    assert "sprints every 25min" in A.lit(90, "endurance_sprints").summary()
+    # a plain variant keeps the plain form
+    assert A.threshold("long_reps").summary().startswith("2x 20min @ 90%,")
 
 
 def test_progressive_lit_ramps():

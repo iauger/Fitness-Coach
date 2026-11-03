@@ -8,20 +8,85 @@ the names come off — "Spickard +3/+4/+5" is one workout at three doses.
 
 Everything is expressed as a percentage of FTP, never as watts. Watts are resolved at render
 time from the tracked FTP for that date, so a ramp test re-renders the whole plan instead of
-invalidating it. That matters here: the tracked number is uncertain (TrainerRoad prescribes
-against ~231, athlete_profile says 238, intervals' eFTP says 260) and the plan must not bake
-one in.
+invalidating it. (FTP was settled at 260 effective 2026-10-01 from a maximal ramp; it had been
+uncertain across 231/238/260 for the whole of the preceding block, which is why the indirection
+exists and is worth keeping.)
 
-Two prescriptions carried over from the source and worth not quietly "improving":
+## What comes from the source, and what is ours
 
-- **Threshold hedges low.** Arnold: better to undershoot by 10% than overshoot by 2%, because
-  the metabolic response either side of the threshold transition is qualitatively different.
-  The threshold targets here sit deliberately below a naive "100% of FTP".
-- **HIIT is sub-maximal.** The goal is to extend time in the severe domain, not to maximise any
-  single interval — "half a rep left in the tank". Targets are modest for VO2 work on purpose.
+The source article is prose, not a spec. Read it and you find **six** numeric prescriptions in
+the entire piece. Everything else below is our invention, and the two must not be confused —
+an earlier version of this module read as if derived throughout, which made our own guesses
+look like they carried the source's authority.
+
+**From the source, do not quietly "improve":**
+
+- **At most two hard sessions a week** — "zero to two structured high-intensity sessions each
+  week at most". Enforced in `blocks.py` (`MAX_HARD_PER_WEEK`), not here.
+- **Threshold hedges low.** "Better to hedge low, say by 10%, than to overshoot the target by
+  even 2%", because above and below the transition "a completely different metabolic milieu and
+  different fatigue profile develops". Hence targets at 0.86–0.92 and **nothing above 1.00**.
+- **Threshold is ~10:1 work-to-rest**, in bouts of 10+ minutes, accumulating 40+ minutes of
+  work. The source's own diagnostic: needing rest longer or more often means the intensity is
+  too high. So long rests are a symptom to fix, not a comfort to grant.
+- **HIIT bouts longer than 4 minutes, at 2:1 work-to-rest**, and sub-maximal — the aim is the
+  highest load sustainable for the *whole* session, "half a rep left in the tank".
+- **SIT efforts of 10–40 seconds**, all-out, used to "kick-start the first couple weeks of a
+  plan" and explicitly not repeatable indefinitely.
+- **A sprint every 20–30 minutes** during a long endurance ride.
+
+**Ours, not the source's** — every threshold and LIT percentage, every SIT rep count and
+recovery duration, the warm-up durations, all the variant names, and the specific bout/rep
+arithmetic in each `*_VARIANTS` entry. The source gives no percentages of FTP anywhere.
 """
 
 from dataclasses import dataclass, field
+
+
+def _num(v: float) -> str:
+    """2.0 -> '2', 1.5 -> '1.5'. Keeps rest durations readable now that some are fractional."""
+    return str(int(v)) if float(v).is_integer() else str(v)
+
+
+def _dur(seconds: int) -> str:
+    return f"{seconds}s" if seconds < 60 else f"{_num(seconds / 60)}min"
+
+
+def _work_phrase(p: dict) -> str:
+    """
+    How a work bout is actually ridden.
+
+    `summary()` printed `@ {pct}%` for every variant, which lied about any whose shape is
+    governed by something other than a flat target: `over_unders` printed "@ 95%" while
+    building 2min/1min alternations, and `thirty_fifteen` printed "@ 112%" for a bout that is
+    30s on / 15s off. The prescription string is both what the athlete reads and what gets
+    matched to a library workout, so it has to describe what the steps do.
+    """
+    if "micro" in p:
+        m = p["micro"]
+        return (f"alternating {_dur(m['a_s'])} @ {int(m['a_pct'] * 100)}% / "
+                f"{_dur(m['b_s'])} @ {int(m['b_pct'] * 100)}%")
+    if "lead" in p:
+        lead = p["lead"]
+        return (f"@ {int(p['pct'] * 100)}% after a {_dur(lead['lead_s'])} opener at "
+                f"{int(lead['lead_pct'] * 100)}%")
+    return f"@ {int(p['pct'] * 100)}%"
+
+
+def _lit_phrase(p: dict) -> str:
+    """Same problem on the endurance variants: a ramp, a cadence drill and a sprint set all
+    printed as a single flat percentage."""
+    if "ramp" in p:
+        low, high = p["ramp"]
+        return f"ramping {int(low * 100)}% -> {int(high * 100)}% FTP"
+    base = f"@ {int(p['pct'] * 100)}% FTP"
+    if "cadences" in p:
+        blocks = _dur(p["cadence_block_s"])
+        return f"{base}, {blocks} blocks alternating {'/'.join(str(c) for c in p['cadences'])}rpm"
+    if "sprint_every_s" in p:
+        return (f"{base} + {_dur(p['sprint_s'])} sprints every "
+                f"{_dur(p['sprint_every_s'])}")
+    return base
 
 
 @dataclass
@@ -75,12 +140,12 @@ class Session:
         """The one-line prescription, which is what gets matched to a library workout."""
         p = self.params
         core = {
-            "lit": lambda: f"{int(self.minutes)}min @ {int(p['pct']*100)}% FTP",
+            "lit": lambda: f"{int(self.minutes)}min {_lit_phrase(p)}",
             "sit": lambda: f"{p['reps']}x {p['work_s']}s all-out, {p['rest_min']}min recovery",
-            "hiit": lambda: (f"{p['reps']}x {p['work_min']}min @ {int(p['pct']*100)}%, "
-                             f"{p['rest_min']}min recovery"),
-            "threshold": lambda: (f"{p['reps']}x {p['work_min']}min @ {int(p['pct']*100)}%, "
-                                  f"{p['rest_min']}min recovery"),
+            "hiit": lambda: (f"{p['reps']}x {p['work_min']}min {_work_phrase(p)}, "
+                             f"{_num(p['rest_min'])}min recovery"),
+            "threshold": lambda: (f"{p['reps']}x {p['work_min']}min {_work_phrase(p)}, "
+                                  f"{_num(p['rest_min'])}min recovery"),
             "strength": lambda: f"{int(self.minutes)}min — {p.get('focus', 'full body')}",
         }[self.archetype]()
         return f"{core}  ({int(self.minutes)}min, {self.tss:.0f} TSS, IF {self.intensity_factor})"
@@ -278,15 +343,26 @@ def hiit(variant: str = "straight_5", reps: int | None = None,
 
 
 THRESHOLD_VARIANTS = {
-    # Deliberately hedged low - see the module docstring. These sit under FTP, not on it.
-    "long_reps":    {"work_min": 20, "reps": 2, "pct": 0.92, "rest_min": 5},
-    "medium_reps":  {"work_min": 15, "reps": 3, "pct": 0.93, "rest_min": 4},
-    "short_reps":   {"work_min": 10, "reps": 4, "pct": 0.95, "rest_min": 3},
-    "continuous":   {"work_min": 40, "reps": 1, "pct": 0.88, "rest_min": 0},
-    "sweet_spot":   {"work_min": 18, "reps": 3, "pct": 0.89, "rest_min": 4},
-    "over_unders":  {"work_min": 15, "reps": 3, "pct": 0.95, "rest_min": 5,
-                     "note": "alternate 2min @ 92% / 1min @ 103%",
-                     "micro": {"a_s": 120, "a_pct": 0.92, "b_s": 60, "b_pct": 1.03}},
+    # Hedged the full 10% the source asks for, and rested at ~10:1 rather than the 3-4:1 these
+    # carried until 2026-11-02. The two changes go together and must stay together: the source's
+    # diagnostic is that needing long rests means the intensity is too high, so cutting rests
+    # while leaving 92-95% targets would have made these harder, not more faithful.
+    #
+    # Note this does raise session IF and TSS slightly — 2x20 @90% off 2min rests is a harder
+    # session than 2x20 @92% off 5min. That is expected. The protection against too much
+    # intensity is the tier-gated hard-session *count* in blocks.py, not softened targets.
+    "long_reps":    {"work_min": 20, "reps": 2, "pct": 0.90, "rest_min": 2},
+    "medium_reps":  {"work_min": 15, "reps": 3, "pct": 0.90, "rest_min": 1.5},
+    "short_reps":   {"work_min": 10, "reps": 4, "pct": 0.92, "rest_min": 1},
+    "continuous":   {"work_min": 40, "reps": 1, "pct": 0.86, "rest_min": 0},
+    "sweet_spot":   {"work_min": 18, "reps": 3, "pct": 0.88, "rest_min": 2},
+    # The one rule the source is emphatic about is not crossing the threshold transition, and
+    # this variant used to spend a third of its work time at 103% FTP — straight through it.
+    # It now rolls over and under its own mean (0.92) without ever exceeding 0.99. `pct` is the
+    # true time-weighted mean of the alternation, so anything reading params["pct"] (e.g.
+    # plan_build.py's --watts) gets the least-wrong single number.
+    "over_unders":  {"work_min": 15, "reps": 3, "pct": 0.92, "rest_min": 1.5,
+                     "micro": {"a_s": 120, "a_pct": 0.88, "b_s": 60, "b_pct": 0.99}},
 }
 
 
