@@ -8,11 +8,15 @@ note string, and flattening them here would undo that and produce an unridable f
 
 import re
 import xml.etree.ElementTree as ET
+from datetime import date
+from pathlib import Path
 
 import pytest
 
 from src.planning import archetypes as A
-from src.planning.zwo import safe_filename, session_name, to_zwo
+from src.planning.zwo import (
+    AUTHOR, AUTHOR_TAG, safe_filename, session_name, supersede, to_zwo,
+)
 
 
 def parse(xml: str) -> ET.Element:
@@ -114,3 +118,52 @@ def test_session_names_say_what_the_session_is():
     assert session_name(A.hiit("thirty_fifteen")) == "VO2 63min (thirty fifteen)"
     assert session_name(A.threshold("over_unders")).startswith("Threshold ")
     assert session_name(A.lit(60, "steady"), prefix="2026-11-03") == "2026-11-03 Endurance 60min"
+
+
+# ── superseding ───────────────────────────────────────────────────────────────
+
+def _write(d, name: str, author: str) -> Path:
+    p = d / name
+    p.write_text(f"<workout_file>\n    <author>{author}</author>\n</workout_file>",
+                 encoding="utf-8")
+    return p
+
+
+def test_supersede_removes_only_our_own_file_for_that_date(tmp_path):
+    """
+    The guards on a function that deletes files, in a folder holding the athlete's own workouts.
+
+    `Path.unlink` is not undoable, so the test asserts what *survives* as much as what goes:
+    a same-date file by another author, our own file for another date, and an undated hand-made
+    workout all have to be left alone.
+    """
+    stale = _write(tmp_path, "2026-11-03_Sprints_45min_short.zwo", AUTHOR)
+    fresh = _write(tmp_path, "2026-11-03_Kickstart_8x10s_neuro.zwo", AUTHOR)
+    theirs = _write(tmp_path, "2026-11-03_My_Own_Workout.zwo", "iauge")
+    other_day = _write(tmp_path, "2026-11-05_Endurance_60min.zwo", AUTHOR)
+    handmade = _write(tmp_path, "2x20min.zwo", "iauge")
+
+    removed = supersede(tmp_path, date(2026, 11, 3), {fresh})
+
+    assert removed == [stale]
+    assert not stale.exists()
+    for survivor in (fresh, theirs, other_day, handmade):
+        assert survivor.exists(), f"{survivor.name} should not have been touched"
+
+
+def test_supersede_does_nothing_when_the_name_has_not_changed(tmp_path):
+    """Rewriting the same prescription must not delete the file it just wrote."""
+    same = _write(tmp_path, "2026-11-03_Sprints_45min_short.zwo", AUTHOR)
+    assert supersede(tmp_path, date(2026, 11, 3), {same}) == []
+    assert same.exists()
+
+
+def test_a_generated_file_carries_the_author_tag_supersede_matches_on(tmp_path):
+    """
+    The two halves of the contract, checked against each other.
+
+    `supersede` identifies our files by the author tag that `to_zwo` writes. If those two ever
+    drift apart, nothing fails loudly — the folder just silently stops being cleaned.
+    """
+    session = A.lit(60, "steady")
+    assert AUTHOR_TAG in to_zwo(session, "Endurance 60min")

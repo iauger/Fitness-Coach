@@ -13,6 +13,8 @@ DSL, the `.zwo` `<IntervalsT>` shorthand, or ERG-mode flags — every step is em
 """
 
 import re
+from datetime import date
+from pathlib import Path
 from xml.sax.saxutils import escape
 
 from src.planning.archetypes import Session
@@ -42,7 +44,7 @@ def to_zwo(session: Session, name: str, description: str = "") -> str:
     """
     lines = [
         '<workout_file>',
-        '    <author>Fitness Coach</author>',
+        f'    <author>{AUTHOR}</author>',
         f'    <name>{escape(name)}</name>',
         f'    <description>{escape(description)}</description>',
         '    <sportType>bike</sportType>',
@@ -76,3 +78,39 @@ def session_name(session: Session, prefix: str = "") -> str:
     if session.archetype != "lit" or variant != "steady":
         body += f" ({variant})"
     return f"{prefix} {body}".strip()
+
+
+# Written into every file we generate, and the thing that makes `supersede` safe: it is how a
+# workout of ours is told apart from the 80-odd hand-made ones in the same folder.
+AUTHOR = "Fitness Coach"
+AUTHOR_TAG = f"<author>{AUTHOR}</author>"
+
+
+def supersede(out_dir: Path, on: date, keep: set[Path]) -> list[Path]:
+    """
+    Delete the files we previously wrote for `on`, other than the ones just written.
+
+    A session inside the rolling horizon can change — a tier step, a different variant as the
+    rotation turns — and the new prescription lands under a different filename. Left alone the
+    folder accumulates one stale workout per revision and Zwift lists every one of them, which
+    is worse than listing nothing: the athlete picks from a menu where several entries claim to
+    be today's ride.
+
+    Two guards, because this deletes inside a directory the athlete keeps their own workouts in.
+    The name must start with the ISO date **and** the file must carry our author tag. A date
+    prefix alone is not ours to claim, and `Path.unlink` is not undoable.
+    """
+    removed = []
+    for path in sorted(out_dir.glob(f"{on.isoformat()}_*.zwo")):
+        if path in keep:
+            continue
+        try:
+            if AUTHOR_TAG not in path.read_text(encoding="utf-8", errors="replace"):
+                continue
+        except OSError:
+            # Unreadable is not ours to delete. Being conservative here leaves a stale file at
+            # worst; being permissive removes something we cannot prove we wrote.
+            continue
+        path.unlink()
+        removed.append(path)
+    return removed

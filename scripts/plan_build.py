@@ -112,6 +112,8 @@ def main() -> int:
                    help="write that day's ride to the Zwift workouts folder")
     p.add_argument("--zwo-dir", default=ZWIFT_DIR,
                    help="where .zwo files go (default: the live Zwift folder)")
+    p.add_argument("--zwo-name", default=None, metavar="NAME",
+                   help="override the generated workout name (one ride only)")
     args = p.parse_args()
 
     today = args.as_of or date.today()
@@ -174,7 +176,8 @@ def main() -> int:
           f"{pct['hard']}% hard")
 
     if args.zwo:
-        rc = write_zwo(all_sessions, args.zwo, Path(args.zwo_dir))
+        rc = write_zwo(all_sessions, args.zwo, Path(args.zwo_dir),
+                       name_override=args.zwo_name)
         if rc:
             return rc
     else:
@@ -182,10 +185,11 @@ def main() -> int:
     return 0
 
 
-def write_zwo(sessions: list[dict], on: date, out_dir: Path) -> int:
-    """Write one day's ride to the Zwift workouts folder."""
+def write_zwo(sessions: list[dict], on: date, out_dir: Path,
+              name_override: str | None = None) -> int:
+    """Write one day's ride to the Zwift workouts folder, and clear what it supersedes."""
     from src.planning import archetypes as A
-    from src.planning.zwo import safe_filename, session_name, to_zwo
+    from src.planning.zwo import safe_filename, session_name, supersede, to_zwo
 
     want = [s for s in sessions if s["date"] == on.isoformat()
             and s["archetype"] != "strength"]
@@ -195,21 +199,29 @@ def write_zwo(sessions: list[dict], on: date, out_dir: Path) -> int:
     if not out_dir.is_dir():
         print(f"\n  {out_dir} does not exist — pass --zwo-dir.")
         return 1
+    if name_override and len(want) > 1:
+        print(f"\n  --zwo-name needs exactly one ride on {on}; found {len(want)}.")
+        return 1
 
+    written = set()
     for s in want:
         session = {"lit": lambda: A.lit(int(s["minutes"]), s["variant"]),
                    "sit": lambda: A.sit(s["variant"]),
                    "hiit": lambda: A.hiit(s["variant"]),
                    "threshold": lambda: A.threshold(s["variant"])}[s["archetype"]]()
-        name = session_name(session)
+        name = name_override or session_name(session)
         desc = (f"{s['prescription']}  |  {s['block_name']} wk{s['week_in_block']}, "
                 f"T{s['tier']}  |  {s['plan_name']}")
         path = out_dir / safe_filename(f"{on.isoformat()}_{name}")
         path.write_text(to_zwo(session, name, desc), encoding="utf-8")
+        written.add(path)
         print(f"\n  wrote {path}")
         print(f"    {name} — {s['prescription']}")
-        print(f"    {len(session.steps)} steps. Restart Zwift if it is already running; it "
-              f"reads this folder at launch.")
+        print(f"    {len(session.steps)} steps.")
+
+    for gone in supersede(out_dir, on, written):
+        print(f"  removed superseded {gone.name}")
+    print(f"\n  Restart Zwift if it is already running; it reads this folder at launch.")
     return 0
 
 
