@@ -33,6 +33,22 @@ and no console warning.
 
 Skip this only for non-visual changes (data pipeline, analysis logic, docs).
 
+## Always run Python through the project venv
+
+Use `.venv/Scripts/python.exe` (or activate the venv first). **Bare `python` in a shell here
+resolves to the system interpreter at `C:\Python314\python.exe`, which does not have this
+project's dependencies.**
+
+**Why:** the system interpreter happens to have `pytest`, `fastapi`, `plotly` and `requests`
+installed, so tests and most scripts run under it and appear to pass — but it has no
+`anthropic`, so anything touching `src/coach/` or `src/api/app.py` fails with
+`ModuleNotFoundError`. That reads exactly like a missing dependency and isn't one. On
+2026-11-02 this produced a false diagnosis that the API server and coach were broken and
+needed `pip install -r requirements.txt`; the venv was complete the whole time.
+
+Verify before concluding anything about a missing package:
+`./.venv/Scripts/python.exe -c "import sys; print(sys.executable)"`
+
 ## Chart conventions are already fixed
 
 This project's chart design is settled in `src/visualizations/` — colour palette, layout,
