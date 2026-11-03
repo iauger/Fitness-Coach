@@ -39,7 +39,14 @@ PLAN_NAME = "Sustainable rolling"
 # Weekday roles a slot can take.
 ROLES = ("hard", "long", "lit", "strength")
 
+# How _hard_session resolves a block's hard slot. "base" carries no hard slot at all.
+BLOCK_TYPES = ("sit", "hiit", "threshold", "base")
+
 MAX_HARD_PER_WEEK = 2
+
+# The most ride slots any tier asks for. A block must declare at least this many, since
+# pattern_for only reduces.
+MAX_TIER_RIDES = max(t.rides for t in TIERS.values())
 
 # Ride slots are dropped in this order when a tier asks for fewer rides than the block declares.
 # The long ride is never dropped — it is the session the plan exists to protect — and a hard slot
@@ -70,6 +77,22 @@ class Block:
                 raise ValueError(f"unknown role {role!r} in block {self.name!r}")
         if len({d for d, _ in self.pattern}) != len(self.pattern):
             raise ValueError(f"block {self.name!r} has two sessions on one weekday")
+        if self.block_type not in BLOCK_TYPES:
+            # Unvalidated, a typo fell through _hard_session's if/elif chain to threshold, so a
+            # block labelled "hiit " would silently prescribe threshold work for six weeks.
+            raise ValueError(
+                f"block {self.name!r} has unknown block_type {self.block_type!r}; "
+                f"expected one of {', '.join(sorted(BLOCK_TYPES))}")
+        if not any(r == "long" for _, r in self.pattern):
+            raise ValueError(f"block {self.name!r} declares no long ride")
+        rides = sum(1 for _, r in self.pattern if r != "strength")
+        if rides < MAX_TIER_RIDES:
+            # pattern_for only ever reduces, so a block that declares fewer ride slots than the
+            # top tier asks for would silently hand back a short week at that tier rather than
+            # failing. Caught at construction instead.
+            raise ValueError(
+                f"block {self.name!r} declares {rides} ride slots; the top tier asks for "
+                f"{MAX_TIER_RIDES} and patterns are only ever reduced, never extended")
 
     @property
     def phase(self) -> str:
@@ -349,9 +372,12 @@ def intensity_split(sessions: list[dict]) -> dict:
     power or HR measure while costing real fatigue.
     """
     bands = {"easy": 0.0, "moderate": 0.0, "hard": 0.0}
+    hard_sessions = 0
     for s in sessions:
         if s["archetype"] == "strength":
             continue
+        if s["role"] == "hard":
+            hard_sessions += 1
         intensity = s["intensity_factor"]
         band = ("easy" if intensity < EASY_IF_CEILING
                 else "moderate" if intensity < HARD_IF_FLOOR else "hard")
@@ -360,4 +386,11 @@ def intensity_split(sessions: list[dict]) -> dict:
     return {
         "hours": {k: round(v / 60, 1) for k, v in bands.items()},
         "pct": {k: (round(v / total * 100, 1) if total else None) for k, v in bands.items()},
+        # Reported alongside the time split because the time split alone is actively
+        # misleading for sprint work. A SIT session is 80 seconds of all-out effort inside 45
+        # minutes, so its whole-session IF is 0.59 and it bands as "easy" — a week built around
+        # 8x10s maximal sprints read as "100% easy". The time figure is not wrong, it is just
+        # answering a different question, and the source's own rule is about session *count*
+        # ("zero to two structured high-intensity sessions each week"), not time in zone.
+        "hard_sessions": hard_sessions,
     }

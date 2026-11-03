@@ -30,7 +30,8 @@ from src.analysis.dates import monday_of, mondays_between
 from src.athlete.profile import get_metric
 from src.db.schema import get_connection
 from src.planning.blocks import (
-    PLAN_NAME, ROTATION, expand_week, intensity_split, rotation_after, weekly_rollup,
+    PLAN_NAME, ROTATION, ROTATION_LOOP_FROM, expand_week, intensity_split, rotation_after,
+    weekly_rollup,
 )
 from src.planning.progression import TIERS, classify_week, next_state
 
@@ -68,7 +69,16 @@ def derive_state(today: date, start_tier: int = 1) -> dict:
         decision = next_state(history, tier)
         tier = decision.tier
 
-    return {"tier": tier, "decision": decision, "weeks": weeks,
+    # Where in the rotation to start. The Consistency block is the entry point for a cold start
+    # and where a long absence restarts; it carries no hard session at any tier. An athlete who
+    # has been riding — six of the last eight weeks here — is returning from something rather
+    # than from nothing, and four weeks of pure endurance is its own abandonment risk.
+    # Block position is derived here only because nothing persists it yet; the roller (step 4)
+    # takes this over.
+    block_index = 0 if (decision and decision.rotation == "restart_rotation") \
+        else ROTATION_LOOP_FROM
+
+    return {"tier": tier, "decision": decision, "block_index": block_index, "weeks": weeks,
             "recent": history[-6:] if history else []}
 
 
@@ -132,7 +142,7 @@ def main() -> int:
     today = args.as_of or date.today()
     state = derive_state(today)
     tier = args.tier if args.tier is not None else state["tier"]
-    block_index = args.block if args.block is not None else 0
+    block_index = args.block if args.block is not None else state["block_index"]
 
     print(f"\n  {args.plan_name} — as of {today} ({DAYS[today.weekday()]})")
     if state["recent"]:
@@ -164,8 +174,13 @@ def main() -> int:
         if wib > block.weeks:
             bi, wib = rotation_after(bi), 1
 
-    pct = intensity_split(all_sessions)["pct"]
-    print(f"\n  intensity: {pct['easy']}% easy / {pct['moderate']}% moderate / {pct['hard']}% hard")
+    split = intensity_split(all_sessions)
+    pct, n_hard = split["pct"], split["hard_sessions"]
+    weeks_shown = max(1, args.weeks)
+    print(f"\n  {n_hard} hard session{'' if n_hard == 1 else 's'} across {weeks_shown} week"
+          f"{'' if weeks_shown == 1 else 's'}  (the source caps this at 2 per week)")
+    print(f"  ride time by band: {pct['easy']}% easy / {pct['moderate']}% moderate / "
+          f"{pct['hard']}% hard")
 
     if args.zwo:
         rc = write_zwo(all_sessions, args.zwo, Path(args.zwo_dir))

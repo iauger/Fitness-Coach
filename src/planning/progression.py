@@ -89,12 +89,21 @@ class Tier:
 #
 # The long ride tops out at 2h. Going beyond that is an override on a specific date, which is
 # what "hold the long ride, extend it on demand" means mechanically — not a ramp.
+# The easy ride is 60min from T1 up, because that is what the athlete is already adapted to —
+# every ride in the last eight weeks was 60-65min. An earlier draft had it at 45-55min, which
+# cut duration at the same time as the plan was cutting intensity (habitual rides sat at ~71%
+# moderate, so the easy day drops from roughly 200W to 160W). Two reductions at once leaves a
+# session below the athlete's own baseline on both axes, and the source is explicit that a
+# session shorter than what you are adapted to gives little novel stimulus.
+#
+# T0 keeps a 45min easy ride: it is the minimum viable week, and its job is to be impossible to
+# miss rather than to drive adaptation.
 TIERS: dict[int, Tier] = {
     0: Tier(0, rides=2, long_min=75,  hard=0, hard_min=0,  lit_min=45, strength=2),
-    1: Tier(1, rides=3, long_min=75,  hard=1, hard_min=55, lit_min=45, strength=2),
-    2: Tier(2, rides=3, long_min=90,  hard=1, hard_min=55, lit_min=50, strength=2),
-    3: Tier(3, rides=3, long_min=105, hard=1, hard_min=60, lit_min=50, strength=2),
-    4: Tier(4, rides=3, long_min=120, hard=1, hard_min=60, lit_min=55, strength=2),
+    1: Tier(1, rides=3, long_min=75,  hard=1, hard_min=55, lit_min=60, strength=2),
+    2: Tier(2, rides=3, long_min=90,  hard=1, hard_min=55, lit_min=60, strength=2),
+    3: Tier(3, rides=3, long_min=105, hard=1, hard_min=60, lit_min=60, strength=2),
+    4: Tier(4, rides=3, long_min=120, hard=1, hard_min=60, lit_min=65, strength=2),
 }
 
 FLOOR_TIER = min(TIERS)
