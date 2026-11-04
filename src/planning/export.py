@@ -61,7 +61,7 @@ def event_for(row: dict, zwo: str | None = None) -> dict:
         "category": CATEGORY,
         "type": SPORT_BY_ARCHETYPE.get(row["archetype"], "Ride"),
         "name": row["prescription"].split("  (")[0].strip(),
-        "description": _description(row),
+        "description": _description(row, dose=zwo is None),
         "moving_time": int(round((row["minutes"] or 0) * 60)),
         "icu_training_load": int(round(row["tss"] or 0)),
         "external_id": row["external_id"],
@@ -73,9 +73,25 @@ def event_for(row: dict, zwo: str | None = None) -> dict:
     return event
 
 
-def _description(row: dict) -> str:
-    """What the athlete reads on the calendar: the dose, then where it sits in the plan."""
-    bits = [row["prescription"]]
+def _description(row: dict, dose: bool = True) -> str:
+    """
+    What the athlete reads on the calendar: where the session sits in the plan, and — only when
+    nothing better is attached — the dose.
+
+    **The dose is omitted whenever a .zwo is attached, and this is not cosmetic.** intervals.icu
+    parses `description` as a workout in its own native format. Our prescription strings start
+    with things like "8x 10s all-out, 3min recovery", and the parser read that "8x" as a repeat
+    count over the *entire* attached workout: a 2720-second session came back as 21760 seconds,
+    exactly eight times too long, with a training load of 212 instead of 26. "6x 20s" did the
+    same thing six times over. Observed on the live calendar, not theorised.
+
+    So where there is a `workout_doc` to describe the session, the description carries only
+    prose the parser cannot mistake for a step list. Strength days keep the full text: they have
+    no file attached, their prescription has no leading rep count, and the text is all there is.
+    """
+    bits = []
+    if dose:
+        bits.append(row["prescription"])
     where = f"{row['block_name']} wk{row['week_in_block']}"
     if row["volume_tier"] is not None:
         where += f", T{row['volume_tier']}"
@@ -111,8 +127,14 @@ def build_payload(rows: list[dict]) -> list[dict]:
             params = json.loads(row["params_json"] or "{}")
             session = _session_from(row, params, A)
             if session is not None:
+                # The .zwo's own <description> must be dose-free too, and this is the line
+                # the first fix missed. intervals.icu reads the attached file, lifts its
+                # description verbatim into the event, and *then* parses the result as a
+                # native workout — so the "8x ..." living inside the file repeated the whole
+                # 19-step session eight times even after the event description was cleaned.
+                # The copy Zwift gets keeps the full prescription; only this one is stripped.
                 zwo = to_zwo(session, row["prescription"].split("  (")[0].strip(),
-                             _description(row))
+                             _description(row, dose=False))
         out.append(event_for(row, zwo))
     return out
 

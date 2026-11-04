@@ -18,6 +18,7 @@ No test touches the network: the client is a fake that records calls.
 """
 
 import json
+import re
 import sqlite3
 from datetime import date
 
@@ -250,3 +251,52 @@ def test_a_junk_remote_id_is_skipped_rather_than_crashing_the_push(db):
     result = push(db, client, TODAY, PLAN, dry_run=False)
     assert result["created"] > 0
     assert all(isinstance(i, int) for i in client.deleted_ids[-1])
+
+
+# ── the description must not read as a workout ────────────────────────────────
+
+REP_COUNT = re.compile(r"^\s*\d+\s*x", re.IGNORECASE)
+
+
+def zwo_description(event: dict) -> str:
+    return re.search(r"<description>(.*?)</description>",
+                     event["file_contents"], re.S).group(1)
+
+
+def test_no_attached_workout_carries_a_rep_count_in_its_description(db):
+    """
+    The bug that put a 45-minute session on the calendar as 362 minutes.
+
+    intervals.icu lifts the attached .zwo's own <description> into the event and then parses
+    the result as a workout in its native format. Our prescriptions begin "8x 10s all-out,
+    3min recovery", and that leading "8x" was read as a repeat count over the entire attached
+    workout: 2720 seconds became 21760, exactly eight times too long, with a training load of
+    212 instead of 26. "6x 20s" did it six times over.
+
+    Both descriptions are checked, because fixing only the event's left the one inside the file
+    still doing it — the first fix changed nothing observable.
+    """
+    for event in build_payload(pending(db, TODAY, PLAN)):
+        assert not REP_COUNT.match(event["description"]), event["description"]
+        if "file_contents" in event:
+            assert not REP_COUNT.match(zwo_description(event)), zwo_description(event)
+
+
+def test_an_attached_workout_describes_only_where_it_sits_in_the_plan(db):
+    """Where a workout_doc carries the session, the description carries prose the parser
+    cannot mistake for a step list."""
+    for event in build_payload(pending(db, TODAY, PLAN)):
+        if "file_contents" not in event:
+            continue
+        assert "TSS" not in event["description"]
+        assert "TSS" not in zwo_description(event)
+        assert PLAN in event["description"]
+
+
+def test_strength_days_keep_their_full_text(db):
+    """They have no file attached and no leading rep count, and the text is all there is."""
+    strength = [e for e in build_payload(pending(db, TODAY, PLAN))
+                if "file_contents" not in e]
+    assert strength
+    assert all("min" in e["description"] for e in strength)
+    assert all(not REP_COUNT.match(e["description"]) for e in strength)
