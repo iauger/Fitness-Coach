@@ -21,7 +21,7 @@ but nothing depends on the server matching it.
 """
 
 import json
-from datetime import date
+from datetime import date, timedelta
 
 from src.clock import utc_now_iso
 from src.planning.constants import PLAN_NAME
@@ -157,6 +157,36 @@ def _as_event_id(value) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def reconcile(conn, client, today: date, plan_name: str = PLAN_NAME,
+              horizon_days: int = 60) -> dict:
+    """
+    Re-link local sessions to remote events that already exist, by `external_id`.
+
+    The push deletes by stored id, so a session that has lost its id cannot clean up the event
+    it created — it just creates another one beside it. That is how a scheduled push turns into
+    a duplicating one, and it is not hypothetical: a roll that re-inserted its rows dropped the
+    ids for 13 of 15 live events in exactly this way.
+
+    `external_id` survives on the remote side regardless, which is what makes repair possible
+    without deleting anything. Run before every push: if the local link is intact it changes
+    nothing, and if it is not, it restores it instead of duplicating.
+
+    Only ever *adds* a link. A row that already has an id is left alone, so this can never
+    repoint a session at some other athlete's event.
+    """
+    remote = {e.get("external_id"): e.get("id")
+              for e in client.get_events(today, today + timedelta(days=horizon_days))
+              if e.get("external_id")}
+    relinked = 0
+    for row in pending(conn, today, plan_name):
+        if row["remote_event_id"] or row["external_id"] not in remote:
+            continue
+        conn.execute("UPDATE prescribed_sessions SET remote_event_id = ? WHERE id = ?",
+                     (str(remote[row["external_id"]]), row["id"]))
+        relinked += 1
+    return {"remote_events": len(remote), "relinked": relinked}
 
 
 def push(conn, client, today: date, plan_name: str = PLAN_NAME,

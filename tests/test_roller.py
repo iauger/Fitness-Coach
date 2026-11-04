@@ -73,10 +73,13 @@ def test_storing_the_horizon_twice_changes_nothing(db):
 
     second = store_horizon(db, TODAY, PLAN)
     assert sessions(db) == before
-    # The second run rewrites the future it just deleted, and backfills nothing, because the
-    # frozen rows already exist.
+    # The second run updates the future in place and backfills nothing, because the frozen
+    # rows already exist. It deletes nothing at all: a roll removes only sessions the new
+    # horizon no longer contains, which is what keeps remote_event_id attached to the rows
+    # that survive.
     assert second["backfilled"] == 0
-    assert second["deleted"] == first["written"]
+    assert second["deleted"] == 0
+    assert first["written"] == second["written"]
 
 
 def test_the_horizon_never_duplicates_a_session(db):
@@ -407,3 +410,73 @@ def test_the_mirror_backfills_its_own_frozen_window(db):
     mirrored = {r["date"] for r in planned(db)}
     assert {k[0] for k in sessions(db)} == mirrored, "the frozen window was not backfilled"
     assert any(d < CUTOFF for d in mirrored)
+
+
+# ── the link to the remote calendar ───────────────────────────────────────────
+
+def test_rolling_preserves_the_remote_event_id(db):
+    """
+    The bug that would have duplicated a real calendar on every scheduled sync.
+
+    store_horizon used to delete the whole future and re-insert it. That is correct for the
+    prescription and silently destructive for everything hanging off it: remote_event_id and
+    pushed_at live on these rows, and a re-inserted row is a new row with those columns empty.
+    Observed live — 15 events on the calendar, 13 no longer referenced by anything, and the
+    next push would have created 15 more rather than replacing them.
+    """
+    store_horizon(db, TODAY, PLAN)
+    db.execute("UPDATE prescribed_sessions SET remote_event_id = 'evt-' || id, "
+               "pushed_at = '2026-11-03T12:00:00' WHERE plan_name = ?", (PLAN,))
+    db.commit()
+    before = {(r["date"], r["role"]): r["remote_event_id"] for r in sessions(db).values()
+              if False} or {k: v["remote_event_id"] for k, v in sessions(db).items()}
+
+    store_horizon(db, TODAY, PLAN)
+
+    after = {k: v["remote_event_id"] for k, v in sessions(db).items()}
+    assert after == before, "a roll dropped the link to the remote calendar"
+    assert all(v for v in after.values())
+
+
+def test_a_changed_session_keeps_the_id_of_the_event_it_replaces(db, monkeypatch):
+    """
+    Keeping the id across a *content* change is the point, not an accident.
+
+    The push deletes by stored id and then creates. If a changed prescription arrived with an
+    empty id, the event it supersedes would stay on the calendar forever beside its
+    replacement.
+    """
+    store_horizon(db, TODAY, PLAN)
+    db.execute("UPDATE prescribed_sessions SET remote_event_id = 'evt-1' "
+               "WHERE plan_name = ? AND date = ?", (PLAN, "2026-11-07"))
+    db.commit()
+    was = sessions(db)[("2026-11-07", "long")]["prescription"]
+
+    monkeypatch.setattr(roller, "current_state", force_state(tier=4, block_index=3))
+    store_horizon(db, TODAY, PLAN)
+
+    row = sessions(db).get(("2026-11-07", "long"))
+    assert row is not None
+    assert row["prescription"] != was, "nothing changed, so the test proves nothing"
+    assert row["remote_event_id"] == "evt-1"
+
+
+def test_a_session_that_leaves_the_horizon_is_removed(db, monkeypatch):
+    """
+    The other half: a date/role the new horizon no longer contains must not linger.
+
+    Rich first, then poor. The fixture database has no activity in it, so the gate already
+    sits at the floor — forcing T0 from there changes nothing and the prune is never
+    exercised, which is how the first version of this test passed while asserting nothing.
+    """
+    monkeypatch.setattr(roller, "current_state", force_state(tier=4, block_index=3))
+    store_horizon(db, TODAY, PLAN)
+    before = set(sessions(db))
+
+    monkeypatch.setattr(roller, "current_state", force_state(tier=0, block_index=0))
+    store_horizon(db, TODAY, PLAN)
+    after = set(sessions(db))
+
+    gone = {k for k in before - after if k[0] >= CUTOFF}
+    assert gone, "no session left the horizon, so the prune was never exercised"
+    assert not (gone & after)

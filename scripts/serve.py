@@ -6,7 +6,8 @@ Run the local Fitness Coach app.
     python scripts/serve.py --reload        # auto-restart on code changes (development)
     python scripts/serve.py --open          # open a browser once the server is up
 
-Read-only in this phase (12A) — nothing here writes to the database.
+The server runs a background maintenance loop (pull, roll, push) while it is up —
+see src/api/app.py. Set FITNESS_COACH_NO_SCHEDULER=1 to serve without it.
 
 Binding is deliberately restricted to 127.0.0.1. This process reads `.env`, so it holds the
 intervals.icu and Anthropic keys, and it has no authentication of any kind; on a routable
@@ -40,7 +41,6 @@ def main() -> None:
     args = p.parse_args()
 
     # Cheap and idempotent; means a fresh clone can serve without running a seed script first.
-    migrate_db()
     migrate_db()
 
     if args.host not in ("127.0.0.1", "localhost", "::1"):

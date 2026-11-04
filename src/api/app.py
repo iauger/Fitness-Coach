@@ -17,7 +17,9 @@ is item 16 and is a VPN's job, not this server's.
 """
 
 import sqlite3
-from datetime import date, timedelta
+import os
+from contextlib import asynccontextmanager
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
@@ -42,10 +44,70 @@ from src.db.migrations import status as migration_status
 from src.visualizations.calendar_view import build_calendar_html
 from src.visualizations.dashboard import build_dashboard
 
+# ── the background maintenance loop ───────────────────────────────────────────
+
+# How often the server pulls, rolls and pushes while it is running. Hourly is well inside
+# intervals.icu's limits for an API key (5000 requests a day, 2500 per rolling 15 minutes;
+# a cycle is a handful), and matches how fast the inputs actually move — wellness lands once
+# a morning, an activity within an hour or so of a ride.
+SYNC_INTERVAL_MINUTES = int(os.environ.get("SYNC_INTERVAL_MINUTES", "60"))
+
+# Set FITNESS_COACH_NO_SCHEDULER=1 to serve without it. Wanted while developing, where an
+# unexpected write to the live calendar from a server you forgot was running is a nasty
+# surprise.
+SCHEDULER_ENABLED = os.environ.get("FITNESS_COACH_NO_SCHEDULER", "") != "1"
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """
+    Start the maintenance loop with the server, stop it with the server.
+
+    In the app rather than in scripts/serve.py so it runs however the app is started, including
+    under `uvicorn --reload`, which imports the app by string and never executes serve.py.
+
+    It is deliberately safe for this to overlap the Windows Scheduled Task: `run_cycle` takes a
+    cross-process file lock and the loser records a skip. Both exist because they fail
+    differently — the task runs when the server does not, and the server keeps the dashboard
+    fresh while someone is actually looking at it.
+    """
+    scheduler = None
+    if SCHEDULER_ENABLED:
+        from apscheduler.schedulers.background import BackgroundScheduler
+
+        from src.maintenance import run_cycle, summarise
+
+        def tick():
+            # A scheduled job that raises kills its own schedule in some configurations, and
+            # a maintenance loop that silently stops is the exact failure this replaced.
+            try:
+                print(summarise(run_cycle()))
+            except Exception as exc:
+                print(f"[maintenance] unhandled: {exc}")
+
+        scheduler = BackgroundScheduler(daemon=True)
+        scheduler.add_job(
+            tick, "interval", minutes=SYNC_INTERVAL_MINUTES, id="maintenance",
+            # One at a time, and never a backlog of catch-up runs after the laptop wakes:
+            # each cycle re-derives everything from scratch, so only the latest is useful.
+            max_instances=1, coalesce=True, misfire_grace_time=300,
+            next_run_time=datetime.now() + timedelta(seconds=30),
+        )
+        scheduler.start()
+        print(f"  maintenance loop every {SYNC_INTERVAL_MINUTES}min "
+              f"(first run in 30s; FITNESS_COACH_NO_SCHEDULER=1 to disable)")
+    try:
+        yield
+    finally:
+        if scheduler:
+            scheduler.shutdown(wait=False)
+
+
 app = FastAPI(
     title="Fitness Coach",
-    description="Local read-only API over the training database (phase 12A).",
+    description="Local API over the training database, with a background maintenance loop.",
     version="12C",
+    lifespan=lifespan,
 )
 
 app.include_router(chat_router)

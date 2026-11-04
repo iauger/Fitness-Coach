@@ -121,12 +121,29 @@ def store_horizon(conn, today: date | None = None, plan_name: str = PLAN_NAME,
     built = horizon(conn, today, plan_name, weeks, start_tier)
     cutoff = built["cutoff"]
 
-    # Scoped delete. The unconditional `DELETE FROM prescribed_sessions WHERE plan_name = ?`
-    # this replaces would have wiped the record of every past ask on every sync.
-    deleted = conn.execute(
-        "DELETE FROM prescribed_sessions WHERE plan_name = ? AND date >= ?",
-        (plan_name, cutoff),
-    ).rowcount
+    # Delete only what the new horizon no longer contains, then update the rest in place.
+    #
+    # This used to delete the whole future and re-insert it, which was correct for the
+    # prescription and silently destructive for everything attached to it. `remote_event_id`
+    # and `pushed_at` live on these rows, and a re-inserted row is a new row with those columns
+    # empty — so every sync orphaned the intervals.icu events it had created. Observed live:
+    # 15 events on the calendar, 13 of them no longer referenced by anything, and the next push
+    # would have created 15 more rather than replacing them.
+    #
+    # Updating in place keeps the link. The UPDATE clause deliberately does not list
+    # `remote_event_id` or `pushed_at`, so a changed prescription keeps the id of the remote
+    # event it replaces — which is exactly what lets the push delete that event instead of
+    # leaving it behind.
+    wanted = {(s["date"], s["role"]) for s in built["sessions"] if s["date"] >= cutoff}
+    deleted = 0
+    for row in conn.execute(
+            "SELECT date, role FROM prescribed_sessions WHERE plan_name = ? AND date >= ?",
+            (plan_name, cutoff)).fetchall():
+        if (row["date"], row["role"]) not in wanted:
+            conn.execute(
+                "DELETE FROM prescribed_sessions WHERE plan_name = ? AND date = ? AND role = ?",
+                (plan_name, row["date"], row["role"]))
+            deleted += 1
 
     # Has the frozen window already been prescribed? If so, nothing before the cutoff is
     # written at all.
@@ -180,7 +197,27 @@ def _upsert_session(conn, s: dict, overwrite: bool) -> int:
             variant = excluded.variant, prescription = excluded.prescription,
             minutes = excluded.minutes, tss = excluded.tss,
             intensity_factor = excluded.intensity_factor, params_json = excluded.params_json,
-            volume_tier = excluded.volume_tier, week_type = excluded.week_type
+            volume_tier = excluded.volume_tier, week_type = excluded.week_type,
+            -- Drop the "already pushed" mark when, and only when, something the remote event
+            -- actually shows has changed. `remote_event_id` is deliberately left in place:
+            -- the push needs it to delete the event this one supersedes.
+            --
+            -- Comparing against created_at instead would never fire, because created_at is
+            -- not in this SET list and a changed prescription keeps its original value. And
+            -- clearing unconditionally would mark every roll as dirty, so an hourly job would
+            -- rewrite fifteen unchanged calendar events every hour.
+            --
+            -- `IS NOT` rather than `<>` because these columns are nullable and `<>` against
+            -- NULL is NULL, which reads as false and would silently skip the change.
+            pushed_at = CASE
+                WHEN prescribed_sessions.prescription IS NOT excluded.prescription
+                  OR prescribed_sessions.minutes       IS NOT excluded.minutes
+                  OR prescribed_sessions.tss           IS NOT excluded.tss
+                  OR prescribed_sessions.volume_tier   IS NOT excluded.volume_tier
+                  OR prescribed_sessions.week_type     IS NOT excluded.week_type
+                  OR prescribed_sessions.block_name    IS NOT excluded.block_name
+                  OR prescribed_sessions.week_in_block IS NOT excluded.week_in_block
+                THEN NULL ELSE prescribed_sessions.pushed_at END
     """ if overwrite else "DO NOTHING")
     cur = conn.execute(f"""
         INSERT INTO prescribed_sessions (
