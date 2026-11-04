@@ -119,6 +119,8 @@ def main() -> int:
                    help="where .zwo files go (default: the live Zwift folder)")
     p.add_argument("--zwo-name", default=None, metavar="NAME",
                    help="override the generated workout name (one ride only)")
+    p.add_argument("--zwo-week", action="store_true",
+                   help="write every ride of the current week to Zwift")
     args = p.parse_args()
 
     today = args.as_of or date.today()
@@ -180,12 +182,26 @@ def main() -> int:
     print(f"  ride time by band: {pct['easy']}% easy / {pct['moderate']}% moderate / "
           f"{pct['hard']}% hard")
 
-    if args.zwo:
+    if args.zwo or args.zwo_week:
         out = Path(args.zwo_dir) if args.zwo_dir else zwift_dir()
-        rc = write_zwo(all_sessions, args.zwo, out,
-                       name_override=args.zwo_name)
-        if rc:
-            return rc
+        # One date, or every ride of the first week shown. Deliberately not the whole horizon:
+        # weeks 2 and 3 are still allowed to change, and a folder of workouts that will be
+        # superseded before they are ridden is clutter the athlete has to pick through.
+        if args.zwo_week:
+            monday = monday_of(today)
+            days = sorted({date.fromisoformat(s["date"]) for s in all_sessions
+                           if s["archetype"] != "strength"
+                           and monday.isoformat() <= s["date"]
+                           <= (monday + timedelta(days=6)).isoformat()})
+        else:
+            days = [args.zwo]
+        for day in days:
+            rc = write_zwo(all_sessions, day, out,
+                           name_override=args.zwo_name if args.zwo else None)
+            if rc:
+                return rc
+        print(f"\n  {len(days)} ride{'' if len(days) == 1 else 's'} written to {out}")
+        print("  Restart Zwift if it is already running; it reads this folder at launch.\n")
     else:
         print("\n  preview only — the roller (step 4) is what stores and pushes this.\n")
     return 0
@@ -223,11 +239,12 @@ def write_zwo(sessions: list[dict], on: date, out_dir: Path,
         written.add(path)
         print(f"\n  wrote {path}")
         print(f"    {name} — {s['prescription']}")
-        print(f"    {len(session.steps)} steps.")
+        n = len(session.steps)
+        print(f"    {n} step{'' if n == 1 else 's'}.")
 
     for gone in supersede(out_dir, on, written):
         print(f"  removed superseded {gone.name}")
-    print(f"\n  Restart Zwift if it is already running; it reads this folder at launch.")
+    # The restart note is printed once by the caller, not per ride.
     return 0
 
 
