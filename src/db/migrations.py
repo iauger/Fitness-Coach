@@ -530,6 +530,29 @@ def _m006_retire_the_trainerroad_feed(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM planned_workouts WHERE date >= ?", (TR_RETIRED_ON,))
 
 
+# ── migration 7 ───────────────────────────────────────────────────────────────
+
+def _m007_close_the_cutover_overlap(conn: sqlite3.Connection) -> None:
+    """
+    Remove the one TrainerRoad day that fell inside the rolling plan's own first week.
+
+    Migration 6 cut at TR_RETIRED_ON (2026-11-03, the day it was written). The plan actually
+    starts on PLAN_START_MONDAY (2026-11-02), so Monday the 2nd kept a TrainerRoad row — and
+    it only became visible when the calendar stopped filtering out sessions with no training
+    load, at which point the first week of the new plan rendered with somebody else's mobility
+    session in it.
+
+    Scoped by id so it can only remove rows this project did not write: ours all begin with
+    the plan slug. Both dates stay frozen rather than being derived from
+    planning/constants.py, for the same reason as everywhere else in this module — a migration
+    that reads a code constant stops replaying to the same database once that constant moves.
+    """
+    conn.execute(
+        "DELETE FROM planned_workouts WHERE date >= ? AND id NOT LIKE ?",
+        ("2026-11-02", "sustainable-rolling-%"),
+    )
+
+
 # (version, name, step). Append only — never renumber or edit an applied migration.
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "baseline schema as of phase 12B", _m001_baseline),
@@ -538,6 +561,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (4, "plan_progression, export columns, one plan namespace", _m004_plan_progression),
     (5, "tier and week type on the stored plan", _m005_tier_on_the_stored_plan),
     (6, "retire the TrainerRoad feed", _m006_retire_the_trainerroad_feed),
+    (7, "close the cutover overlap", _m007_close_the_cutover_overlap),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)

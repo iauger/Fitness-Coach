@@ -7,7 +7,10 @@ import json
 from datetime import date, timedelta
 from .fitness import current_fitness, ctl_trend, peak_ctl, ctl_history
 from .activities import recent_activities, sport_distribution, weekly_load_by_sport, yearly_volume
-from src.planning.constants import GOAL_DATE, GRAVEL_DATE
+from src.planning.constants import GOAL_DATE, GRAVEL_DATE, PLAN_NAME
+from src.planning.outline import from_state as plan_outline
+from src.planning.progression import TIERS
+from src.planning.progression_store import current_state
 from .wellness import hrv_summary, sleep_summary, rhr_trend, recovery_flags
 from .compliance import compliance_summary, recent_planned_workouts
 from .training_plan import plan_summary, current_cycle
@@ -16,7 +19,7 @@ from .weekly import summaries_between, summary_lines
 from .load import load_correction_text
 from .derive import derived_text
 from src.athlete.profile import current_profile
-from src.db.schema import get_connection
+from src.db.schema import get_connection, read_connection
 
 
 def _with_weekday(iso_date: str) -> str:
@@ -155,6 +158,40 @@ ATHLETE_PROFILE = {
 }
 
 
+def _rolling_plan(today: date | None = None) -> dict | None:
+    """
+    Where the gate has put the athlete, what it asks for next, and the shape beyond that.
+
+    The coach could see plan *position* and plan *adherence* but had no way to answer "what am
+    I doing this week" — the sessions existed in the database and were read by nothing. That
+    left the model reasoning about compliance against workouts it could not name.
+
+    Read-only: `persist=False`, because building a report must never record a training
+    decision. The gate's own catch-up runs on sync, which is where that belongs.
+    """
+    today = today or date.today()
+    try:
+        with read_connection() as conn:
+            state = current_state(conn, today, persist=False)
+            upcoming = [dict(r) for r in conn.execute(
+                "SELECT date, role, prescription, minutes, tss, volume_tier, week_type "
+                "FROM prescribed_sessions WHERE plan_name = ? AND date >= ? "
+                "ORDER BY date LIMIT 10", (PLAN_NAME, today.isoformat()))]
+        return {
+            "tier": state["tier"],
+            "tier_hours": TIERS[state["tier"]].target_hours,
+            "week_type": state["week_type"],
+            "reason": state["reason"],
+            "decided_through": state["decided_through"],
+            "upcoming": upcoming,
+            "outline": plan_outline(state, today),
+        }
+    except Exception:
+        # Advisory context. A failure here must not take down the whole snapshot, which the
+        # coach needs for everything else it reasons about.
+        return None
+
+
 def build_coaching_context(
     recent_days: int = 28,
     trend_weeks: int = 8,
@@ -234,6 +271,7 @@ def build_coaching_context(
             "recent_planned_workouts": recent_planned,
             # None when today falls outside any seeded plan — see seed_training_plan.py.
             "plan_position": plan_summary(),
+            "rolling_plan": _rolling_plan(),
             "earlier_week_summaries": _earlier_week_summaries(),
         },
         "memory": {
@@ -362,6 +400,26 @@ def coaching_context_text(ctx: dict | None = None) -> str:
         if not pos["cycle_data_complete"]:
             lines.append("  (Rest weeks are not fully seeded for this plan, so cycle boundaries "
                          "and next-rest-week are unknown — don't infer them.)")
+
+    plan = ctx["training"].get("rolling_plan")
+    if plan:
+        lines += ["", "THE ROLLING PLAN"]
+        lines.append(f"  Tier {plan['tier']} — {plan['tier_hours']}h/wk asked for"
+                     f"{'  (re-entry week)' if plan['week_type'] == 'reentry' else ''}")
+        lines.append(f"  Why: {plan['reason']}")
+        if plan["decided_through"]:
+            lines.append(f"  Decided through {plan['decided_through']}")
+        lines.append("  Volume is earned, not scheduled: the tier moves only when a completed"
+                     " week meets what was asked,")
+        lines.append("  so there is no such thing as being behind schedule on this plan.")
+        if plan["upcoming"]:
+            lines.append("  Next sessions:")
+            for s_ in plan["upcoming"][:7]:
+                lines.append(f"    {_with_weekday(s_['date'])}  {s_['role']:<9} "
+                             f"{s_['prescription']}")
+        lines.append("  Outline:")
+        for ln in plan["outline"]["summary"].splitlines():
+            lines.append(f"    {ln}")
 
     adherence = ctx["training"].get("plan_adherence_8w") or {}
     if adherence.get("total_planned"):

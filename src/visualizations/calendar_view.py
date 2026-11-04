@@ -77,8 +77,9 @@ def _load_data(start: date, end: date) -> dict[str, dict]:
 
     planned = defaultdict(list)
     for r in conn.execute("""
-        SELECT date, name, planned_tss, planned_duration_min, compliance_status, compliance_pct
-        FROM planned_workouts WHERE date BETWEEN ? AND ? AND planned_tss IS NOT NULL
+        SELECT date, name, planned_tss, planned_duration_min, workout_type,
+               compliance_status, compliance_pct
+        FROM planned_workouts WHERE date BETWEEN ? AND ?
         ORDER BY date
     """, (start.isoformat(), end.isoformat())).fetchall():
         planned[r["date"]].append(dict(r))
@@ -153,11 +154,30 @@ def _activity_html(a: dict) -> str:
 
 
 def _planned_html(p: dict) -> str:
+    """
+    One planned session on a day cell.
+
+    The `planned_tss IS NOT NULL` filter this used to carry made strength days invisible. That
+    was harmless while the table held TrainerRoad's feed, where a null meant mobility; it is
+    not harmless now, because the rolling plan writes strength with a null load *on purpose*
+    (`compliance.match_planned_workouts` reads a non-null as "bike workout with power targets",
+    and a zero would score every strength day as skipped). Two strength sessions a week at
+    every tier is the habit the whole plan is anchored on, and the calendar was showing the
+    week as two rides and five blanks.
+
+    So load is rendered when there is one and the duration stands in when there is not.
+    """
     color = COMPLIANCE_COLORS.get(p["compliance_status"])
     pct = f' &middot; {p["compliance_pct"]:.0f}%' if p.get("compliance_pct") is not None else ""
+    if p.get("planned_tss") is not None:
+        detail = f'{round(p["planned_tss"])} TSS'
+    elif p.get("planned_duration_min"):
+        detail = f'{round(p["planned_duration_min"])}min'
+    else:
+        detail = "planned"
     return f"""
         <div class="planned" style="border-color:{color}; color:{color}">
-          Plan: {p["name"]} ({round(p["planned_tss"])} TSS){pct}
+          Plan: {p["name"]} ({detail}){pct}
         </div>"""
 
 

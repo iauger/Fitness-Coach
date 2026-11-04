@@ -300,3 +300,21 @@ def test_strength_days_keep_their_full_text(db):
     assert strength
     assert all("min" in e["description"] for e in strength)
     assert all(not REP_COUNT.match(e["description"]) for e in strength)
+
+
+# ── the read path must never write ────────────────────────────────────────────
+
+def test_reading_the_plan_state_records_no_decision(db):
+    """
+    A GET must not file a training decision.
+
+    `current_state` runs the gate's catch-up, which normally persists — a report or an API
+    call that triggered that would write a permanent, unique-constrained row for a week, from
+    a code path nobody thinks of as a writer. Every read-side caller passes persist=False.
+    """
+    from src.planning.progression_store import current_state, rows as progression_rows
+
+    before = len(progression_rows(db, PLAN))
+    for _ in range(3):
+        current_state(db, date(2026, 12, 14), PLAN, persist=False)
+    assert len(progression_rows(db, PLAN)) == before

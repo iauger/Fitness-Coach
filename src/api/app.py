@@ -17,7 +17,7 @@ is item 16 and is a VPN's job, not this server's.
 """
 
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
@@ -32,8 +32,12 @@ from src.analysis.fitness import current_fitness, ctl_trend, peak_ctl
 from src.analysis.load import ctl_correction, corrected_activities
 from src.analysis.report import build_coaching_context, coaching_context_text
 from src.analysis.training_plan import plan_summary, current_week
+from src.planning.constants import PLAN_NAME
+from src.planning.outline import from_state as plan_outline
+from src.planning.progression import TIERS
+from src.planning.progression_store import current_state
 from src.analysis.weekly import summaries_between
-from src.db.schema import get_connection
+from src.db.schema import get_connection, read_connection
 from src.db.migrations import status as migration_status
 from src.visualizations.calendar_view import build_calendar_html
 from src.visualizations.dashboard import build_dashboard
@@ -143,6 +147,75 @@ def plan_week(on: date | None = None) -> dict:
     if week is None:
         raise HTTPException(404, f"{on or date.today()} falls outside any seeded plan")
     return week
+
+
+@app.get("/api/plan/state", tags=["plan"])
+def plan_state(on: date | None = None) -> dict:
+    """
+    Where the gate has put the athlete, and why.
+
+    Read-only: the catch-up runs with `persist=False`, because a GET must never record a
+    training decision. Writing happens on sync, which is where it belongs.
+    """
+    today = on or date.today()
+    with read_connection() as conn:
+        state = current_state(conn, today, persist=False)
+    return {
+        "plan_name": PLAN_NAME,
+        "tier": state["tier"],
+        "tier_hours": TIERS[state["tier"]].target_hours,
+        "week_type": state["week_type"],
+        "block_index": state["block_index"],
+        "week_in_block": state["week_in_block"],
+        "reason": state["reason"],
+        "decided_through": state["decided_through"],
+        "decided_weeks": state["decided_weeks"],
+        "seeded_from": state["seeded_from"],
+    }
+
+
+@app.get("/api/plan/sessions", tags=["plan"])
+def plan_sessions(start: date | None = None, days: int = 21) -> dict:
+    """The committed horizon: dated sessions as prescribed, newest-first by date."""
+    first = start or date.today()
+    last = first + timedelta(days=days)
+    with read_connection() as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT date, weekday, role, archetype, variant, prescription, minutes, tss, "
+            "intensity_factor, volume_tier, week_type, block_name, week_in_block, "
+            "external_id, remote_event_id, pushed_at "
+            "FROM prescribed_sessions WHERE plan_name = ? AND date BETWEEN ? AND ? "
+            "ORDER BY date, role", (PLAN_NAME, first.isoformat(), last.isoformat()))]
+    return {"plan_name": PLAN_NAME, "start": first.isoformat(), "end": last.isoformat(),
+            "sessions": rows}
+
+
+@app.get("/api/plan/outline", tags=["plan"])
+def plan_outline_route(on: date | None = None, weeks: int = 12,
+                       met_in_four: int = 3) -> dict:
+    """
+    Shape beyond the horizon, never stored.
+
+    A dated twelve-week plan is what this rebuild removed, so every week past the horizon is
+    marked `projected` and the assumption it rests on is returned alongside it rather than
+    buried.
+    """
+    today = on or date.today()
+    with read_connection() as conn:
+        state = current_state(conn, today, persist=False)
+    return plan_outline(state, today, weeks=weeks, met_in_four=met_in_four)
+
+
+@app.get("/api/plan/progression", tags=["plan"])
+def plan_progression(limit: int = 26) -> dict:
+    """The decision log: one row per closed week, and why the tier moved."""
+    with read_connection() as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT week_start, ride_minutes, ride_days, strength_logged, outcome, "
+            "tier_applied, verdict, tier_next, week_type_next, rotation, reason "
+            "FROM plan_progression WHERE plan_name = ? ORDER BY week_start DESC LIMIT ?",
+            (PLAN_NAME, limit))]
+    return {"plan_name": PLAN_NAME, "weeks": rows}
 
 
 @app.get("/api/cycles/{start_date}", tags=["plan"])
