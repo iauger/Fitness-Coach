@@ -10,7 +10,7 @@ looks up the value effective on that date, not the latest one.
 """
 
 from datetime import date, datetime
-from src.db.schema import get_connection, write_connection
+from src.db.schema import get_connection, read_connection, write_connection
 from src.clock import utc_now_iso
 
 METRICS = ("height_in", "weight_lbs", "ftp")
@@ -41,19 +41,18 @@ def get_metric(metric: str, as_of: str = None) -> float | None:
     point we happened to start tracking them.
     """
     as_of = as_of or date.today().isoformat()
-    conn = get_connection()
-    row = conn.execute("""
-        SELECT value FROM athlete_profile
-        WHERE metric = ? AND effective_date <= ?
-        ORDER BY effective_date DESC, id DESC LIMIT 1
-    """, (metric, as_of)).fetchone()
-    if row is None:
+    with read_connection() as conn:
         row = conn.execute("""
             SELECT value FROM athlete_profile
-            WHERE metric = ?
-            ORDER BY effective_date ASC, id ASC LIMIT 1
-        """, (metric,)).fetchone()
-    conn.close()
+            WHERE metric = ? AND effective_date <= ?
+            ORDER BY effective_date DESC, id DESC LIMIT 1
+        """, (metric, as_of)).fetchone()
+        if row is None:
+            row = conn.execute("""
+                SELECT value FROM athlete_profile
+                WHERE metric = ?
+                ORDER BY effective_date ASC, id ASC LIMIT 1
+            """, (metric,)).fetchone()
     return row["value"] if row else None
 
 
@@ -63,10 +62,9 @@ def current_profile() -> dict:
 
 
 def metric_history(metric: str) -> list[dict]:
-    conn = get_connection()
-    rows = conn.execute("""
-        SELECT value, effective_date, note FROM athlete_profile
-        WHERE metric = ? ORDER BY effective_date
-    """, (metric,)).fetchall()
-    conn.close()
+    with read_connection() as conn:
+        rows = conn.execute("""
+            SELECT value, effective_date, note FROM athlete_profile
+            WHERE metric = ? ORDER BY effective_date
+        """, (metric,)).fetchall()
     return [dict(r) for r in rows]

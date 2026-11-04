@@ -5,7 +5,7 @@ Activity breakdown — sport distribution, recent training, load patterns.
 import json
 from datetime import date, timedelta
 from collections import defaultdict
-from src.db.schema import get_connection
+from src.db.schema import get_connection, read_connection
 from src.analysis.dates import monday_of
 from src.analysis.load import effective_tss
 
@@ -27,15 +27,14 @@ def _sport_group(activity_type: str) -> str:
 def recent_activities(days: int = 28) -> list[dict]:
     """Last N days of activities with key fields extracted."""
     since = (date.today() - timedelta(days=days)).isoformat()
-    conn = get_connection()
-    rows = conn.execute("""
-        SELECT id, date, name, type, moving_time, distance, avg_hr, tss, calories, feel,
-               athlete_note, raw_json
-        FROM activities
-        WHERE date >= ? AND moving_time IS NOT NULL
-        ORDER BY date DESC
-    """, (since,)).fetchall()
-    conn.close()
+    with read_connection() as conn:
+        rows = conn.execute("""
+            SELECT id, date, name, type, moving_time, distance, avg_hr, tss, calories, feel,
+                   athlete_note, raw_json
+            FROM activities
+            WHERE date >= ? AND moving_time IS NOT NULL
+            ORDER BY date DESC
+        """, (since,)).fetchall()
 
     results = []
     for r in rows:
@@ -66,17 +65,16 @@ def recent_activities(days: int = 28) -> list[dict]:
 
 def weekly_load_by_sport(weeks: int | None = 12) -> list[dict]:
     """Weekly training load broken out by sport group. weeks=None pulls full history."""
-    conn = get_connection()
-    if weeks is None:
-        rows = conn.execute("""
-            SELECT date, type, raw_json FROM activities ORDER BY date ASC
-        """).fetchall()
-    else:
-        since = (date.today() - timedelta(days=weeks * 7)).isoformat()
-        rows = conn.execute("""
-            SELECT date, type, raw_json FROM activities WHERE date >= ? ORDER BY date ASC
-        """, (since,)).fetchall()
-    conn.close()
+    with read_connection() as conn:
+        if weeks is None:
+            rows = conn.execute("""
+                SELECT date, type, raw_json FROM activities ORDER BY date ASC
+            """).fetchall()
+        else:
+            since = (date.today() - timedelta(days=weeks * 7)).isoformat()
+            rows = conn.execute("""
+                SELECT date, type, raw_json FROM activities WHERE date >= ? ORDER BY date ASC
+            """, (since,)).fetchall()
 
     weekly: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     for r in rows:
@@ -151,11 +149,10 @@ def week_volume(conn, monday: date) -> dict:
 def sport_distribution(days: int = 90) -> dict:
     """Sport group breakdown by activity count and time for recent period."""
     since = (date.today() - timedelta(days=days)).isoformat()
-    conn = get_connection()
-    rows = conn.execute("""
-        SELECT type, moving_time FROM activities WHERE date >= ?
-    """, (since,)).fetchall()
-    conn.close()
+    with read_connection() as conn:
+        rows = conn.execute("""
+            SELECT type, moving_time FROM activities WHERE date >= ?
+        """, (since,)).fetchall()
 
     counts: dict[str, int] = defaultdict(int)
     minutes: dict[str, float] = defaultdict(float)
@@ -184,11 +181,10 @@ def yearly_volume() -> list[dict]:
     table is incomplete because Strava-sourced activities are not exposed via the API.
     """
     import json as _json
-    conn = get_connection()
-    rows = conn.execute(
-        "SELECT date, raw_json FROM wellness ORDER BY date"
-    ).fetchall()
-    conn.close()
+    with read_connection() as conn:
+        rows = conn.execute(
+            "SELECT date, raw_json FROM wellness ORDER BY date"
+        ).fetchall()
 
     by_year: dict[str, float] = {}
     for r in rows:

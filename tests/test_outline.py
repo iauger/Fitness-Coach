@@ -26,6 +26,24 @@ from src.planning.progression import CAP_TIER, STRENGTH_GATED_TIER, TIERS
 MONDAY = date(2026, 11, 2)
 
 
+def shared_conn(conn):
+    """
+    A `read_connection`-shaped context manager that yields a connection it does not own.
+
+    Tests hand the code a connection they keep using afterwards. The real
+    `read_connection` closes on exit — correctly, that is the whole point of it — so
+    patching it with the real thing would close the test's own handle mid-test. Patching
+    `get_connection` instead no longer works: the readers were converted to the context
+    manager, so that seam is not on the path any more.
+    """
+    from contextlib import contextmanager
+
+    @contextmanager
+    def opener(*a, **k):
+        yield conn
+    return opener
+
+
 def build(**kw):
     args = {"start_monday": MONDAY, "tier": 2, "block_index": 1, "week_in_block": 1}
     args.update(kw)
@@ -245,7 +263,7 @@ def test_the_calendar_query_loads_sessions_that_have_no_training_load(tmp_path, 
                  "planned_duration_min, workout_type) VALUES (?,?,?,?,?,?)",
                  ("r1", "2026-11-05", "60min @ 62% FTP", 38.0, 60.0, "lit"))
     conn.commit()
-    monkeypatch.setattr(CV, "get_connection", lambda *a, **k: conn)
+    monkeypatch.setattr(CV, "read_connection", shared_conn(conn))
 
     days = CV._load_data(date(2026, 11, 2), date(2026, 11, 8))
     names = [p["name"] for d in days.values() for p in d.get("planned", [])]

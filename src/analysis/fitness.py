@@ -6,33 +6,31 @@ Reads from the wellness table where CTL/ATL are stored per day.
 import json
 from datetime import date, timedelta
 from statistics import mean, stdev
-from src.db.schema import get_connection
+from src.db.schema import get_connection, read_connection
 
 
 def _wellness_rows(days: int = 365) -> list[dict]:
     end = date.today()
     start = end - timedelta(days=days)
-    conn = get_connection()
-    rows = conn.execute("""
-        SELECT date, ctl, atl, rhr, hrv, sleep_hrs, sleep_score, steps, raw_json
-        FROM wellness
-        WHERE date >= ? AND date <= ? AND ctl IS NOT NULL
-        ORDER BY date ASC
-    """, (start.isoformat(), end.isoformat())).fetchall()
-    conn.close()
+    with read_connection() as conn:
+        rows = conn.execute("""
+            SELECT date, ctl, atl, rhr, hrv, sleep_hrs, sleep_score, steps, raw_json
+            FROM wellness
+            WHERE date >= ? AND date <= ? AND ctl IS NOT NULL
+            ORDER BY date ASC
+        """, (start.isoformat(), end.isoformat())).fetchall()
     return [dict(r) for r in rows]
 
 
 def current_fitness() -> dict:
     """Latest CTL/ATL/TSB and ramp rate."""
-    conn = get_connection()
-    row = conn.execute("""
-        SELECT date, ctl, atl, raw_json
-        FROM wellness
-        WHERE ctl IS NOT NULL
-        ORDER BY date DESC LIMIT 1
-    """).fetchone()
-    conn.close()
+    with read_connection() as conn:
+        row = conn.execute("""
+            SELECT date, ctl, atl, raw_json
+            FROM wellness
+            WHERE ctl IS NOT NULL
+            ORDER BY date DESC LIMIT 1
+        """).fetchone()
     if not row:
         return {}
     r = dict(row)
@@ -70,13 +68,12 @@ def ctl_history(weeks: int = 52) -> list[dict]:
 
 def peak_ctl(years: int = 9) -> dict:
     """Historical CTL peak — baseline for what this athlete can reach."""
-    conn = get_connection()
-    row = conn.execute("""
-        SELECT date, ctl FROM wellness
-        WHERE ctl IS NOT NULL AND date >= ?
-        ORDER BY ctl DESC LIMIT 1
-    """, ((date.today() - timedelta(days=years * 365)).isoformat(),)).fetchone()
-    conn.close()
+    with read_connection() as conn:
+        row = conn.execute("""
+            SELECT date, ctl FROM wellness
+            WHERE ctl IS NOT NULL AND date >= ?
+            ORDER BY ctl DESC LIMIT 1
+        """, ((date.today() - timedelta(days=years * 365)).isoformat(),)).fetchone()
     if not row:
         return {}
     return {"date": row["date"], "ctl": round(row["ctl"], 1)}

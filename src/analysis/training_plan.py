@@ -9,21 +9,20 @@ blocks almost immediately.
 """
 
 from datetime import date, timedelta
-from src.db.schema import get_connection
+from src.db.schema import get_connection, read_connection
 
 
 def _rows(plan_name: str | None = None) -> list[dict]:
-    conn = get_connection()
-    if plan_name:
-        rows = conn.execute(
-            "SELECT * FROM training_plan_weeks WHERE plan_name = ? ORDER BY week_start_date",
-            (plan_name,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM training_plan_weeks ORDER BY week_start_date"
-        ).fetchall()
-    conn.close()
+    with read_connection() as conn:
+        if plan_name:
+            rows = conn.execute(
+                "SELECT * FROM training_plan_weeks WHERE plan_name = ? ORDER BY week_start_date",
+                (plan_name,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM training_plan_weeks ORDER BY week_start_date"
+            ).fetchall()
     return [dict(r) for r in rows]
 
 

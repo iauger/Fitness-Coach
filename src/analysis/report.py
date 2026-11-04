@@ -77,17 +77,16 @@ def _recent_coaching_memory(limit: int = MEMORY_PER_TYPE) -> list[str]:
     a trimmed entry is cut at a paragraph boundary with an explicit marker rather than
     silently mid-word.
     """
-    conn = get_connection()
-    rows = conn.execute("""
-        SELECT date, type, content FROM coaching_log
-        WHERE id IN (
-            SELECT id FROM coaching_log c2
-            WHERE c2.type = coaching_log.type
-            ORDER BY created_at DESC LIMIT ?
-        )
-        ORDER BY created_at
-    """, (limit,)).fetchall()
-    conn.close()
+    with read_connection() as conn:
+        rows = conn.execute("""
+            SELECT date, type, content FROM coaching_log
+            WHERE id IN (
+                SELECT id FROM coaching_log c2
+                WHERE c2.type = coaching_log.type
+                ORDER BY created_at DESC LIMIT ?
+            )
+            ORDER BY created_at
+        """, (limit,)).fetchall()
 
     entries = [(r["date"], r["type"], r["content"] or "") for r in rows]
     total = sum(len(c) for _, _, c in entries)
@@ -109,35 +108,32 @@ def _recent_coaching_memory(limit: int = MEMORY_PER_TYPE) -> list[str]:
 def _recent_life_events(days: int = 90) -> list[dict]:
     """Life events from the last N days."""
     since = (date.today() - timedelta(days=days)).isoformat()
-    conn = get_connection()
-    rows = conn.execute("""
-        SELECT start_date, end_date, type, severity, note
-        FROM life_events WHERE start_date >= ? ORDER BY start_date DESC
-    """, (since,)).fetchall()
-    conn.close()
+    with read_connection() as conn:
+        rows = conn.execute("""
+            SELECT start_date, end_date, type, severity, note
+            FROM life_events WHERE start_date >= ? ORDER BY start_date DESC
+        """, (since,)).fetchall()
     return [dict(r) for r in rows]
 
 
 def _recent_subjective_feel(days: int = 14) -> list[dict]:
     """Recent subjective feel entries."""
     since = (date.today() - timedelta(days=days)).isoformat()
-    conn = get_connection()
-    rows = conn.execute("""
-        SELECT date, feel_score, energy, motivation, legs, tr_compliance, notes
-        FROM subjective_feel WHERE date >= ? ORDER BY date DESC
-    """, (since,)).fetchall()
-    conn.close()
+    with read_connection() as conn:
+        rows = conn.execute("""
+            SELECT date, feel_score, energy, motivation, legs, tr_compliance, notes
+            FROM subjective_feel WHERE date >= ? ORDER BY date DESC
+        """, (since,)).fetchall()
     return [dict(r) for r in rows]
 
 
 def _active_goals() -> list[dict]:
     """Goals from the goals table (falls back to profile defaults if empty)."""
-    conn = get_connection()
-    rows = conn.execute("""
-        SELECT description, target_date, priority FROM goals
-        WHERE status = 'active' ORDER BY priority, target_date
-    """).fetchall()
-    conn.close()
+    with read_connection() as conn:
+        rows = conn.execute("""
+            SELECT description, target_date, priority FROM goals
+            WHERE status = 'active' ORDER BY priority, target_date
+        """).fetchall()
     return [dict(r) for r in rows]
 
 

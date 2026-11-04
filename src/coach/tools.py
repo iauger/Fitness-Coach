@@ -5,7 +5,7 @@ Each tool has a schema (sent to Claude) and an execute function (called locally)
 
 import json
 from datetime import datetime, date
-from src.db.schema import get_connection, write_connection
+from src.db.schema import get_connection, read_connection, write_connection
 from src.clock import today_local_iso, utc_now_iso
 
 NOW = utc_now_iso
@@ -220,87 +220,85 @@ def log_subjective_feel(feel_score: int, energy: int = None, motivation: int = N
 
 def query_history(query_type: str, start_date: str = None, end_date: str = None,
                   limit: int = 20) -> dict:
-    conn = get_connection()
-    end = end_date or date.today().isoformat()
-    start = start_date or "2017-01-01"
+    with read_connection() as conn:
+        end = end_date or date.today().isoformat()
+        start = start_date or "2017-01-01"
 
-    if query_type == "ctl_range":
-        rows = conn.execute("""
-            SELECT date, ctl, atl, round(ctl-atl,1) as tsb
-            FROM wellness WHERE date BETWEEN ? AND ? AND ctl IS NOT NULL
-            ORDER BY date
-        """, (start, end)).fetchmany(limit)
-        result = [dict(r) for r in rows]
+        if query_type == "ctl_range":
+            rows = conn.execute("""
+                SELECT date, ctl, atl, round(ctl-atl,1) as tsb
+                FROM wellness WHERE date BETWEEN ? AND ? AND ctl IS NOT NULL
+                ORDER BY date
+            """, (start, end)).fetchmany(limit)
+            result = [dict(r) for r in rows]
 
-    elif query_type == "activities_in_period":
-        rows = conn.execute("""
-            SELECT date, name, type, round(moving_time/60.0,0) as duration_min,
-                   round(distance/1000.0,1) as distance_km, avg_hr
-            FROM activities WHERE date BETWEEN ? AND ?
-            ORDER BY date
-        """, (start, end)).fetchmany(limit)
-        result = [dict(r) for r in rows]
+        elif query_type == "activities_in_period":
+            rows = conn.execute("""
+                SELECT date, name, type, round(moving_time/60.0,0) as duration_min,
+                       round(distance/1000.0,1) as distance_km, avg_hr
+                FROM activities WHERE date BETWEEN ? AND ?
+                ORDER BY date
+            """, (start, end)).fetchmany(limit)
+            result = [dict(r) for r in rows]
 
-    elif query_type == "wellness_in_period":
-        rows = conn.execute("""
-            SELECT date, ctl, atl, rhr, hrv, sleep_hrs, sleep_score
-            FROM wellness WHERE date BETWEEN ? AND ?
-            ORDER BY date
-        """, (start, end)).fetchmany(limit)
-        result = [dict(r) for r in rows]
+        elif query_type == "wellness_in_period":
+            rows = conn.execute("""
+                SELECT date, ctl, atl, rhr, hrv, sleep_hrs, sleep_score
+                FROM wellness WHERE date BETWEEN ? AND ?
+                ORDER BY date
+            """, (start, end)).fetchmany(limit)
+            result = [dict(r) for r in rows]
 
-    elif query_type == "peak_ctl_periods":
-        rows = conn.execute("""
-            SELECT date, ctl, atl, round(ctl-atl,1) as tsb
-            FROM wellness WHERE ctl IS NOT NULL
-            ORDER BY ctl DESC LIMIT ?
-        """, (limit,)).fetchall()
-        result = [dict(r) for r in rows]
+        elif query_type == "peak_ctl_periods":
+            rows = conn.execute("""
+                SELECT date, ctl, atl, round(ctl-atl,1) as tsb
+                FROM wellness WHERE ctl IS NOT NULL
+                ORDER BY ctl DESC LIMIT ?
+            """, (limit,)).fetchall()
+            result = [dict(r) for r in rows]
 
-    elif query_type == "life_events":
-        rows = conn.execute("""
-            SELECT start_date, end_date, type, severity, note, logged_via
-            FROM life_events ORDER BY start_date DESC LIMIT ?
-        """, (limit,)).fetchall()
-        result = [dict(r) for r in rows]
+        elif query_type == "life_events":
+            rows = conn.execute("""
+                SELECT start_date, end_date, type, severity, note, logged_via
+                FROM life_events ORDER BY start_date DESC LIMIT ?
+            """, (limit,)).fetchall()
+            result = [dict(r) for r in rows]
 
-    elif query_type == "subjective_feel":
-        rows = conn.execute("""
-            SELECT date, feel_score, energy, motivation, legs, notes
-            FROM subjective_feel WHERE date BETWEEN ? AND ?
-            ORDER BY date DESC LIMIT ?
-        """, (start, end, limit)).fetchall()
-        result = [dict(r) for r in rows]
+        elif query_type == "subjective_feel":
+            rows = conn.execute("""
+                SELECT date, feel_score, energy, motivation, legs, notes
+                FROM subjective_feel WHERE date BETWEEN ? AND ?
+                ORDER BY date DESC LIMIT ?
+            """, (start, end, limit)).fetchall()
+            result = [dict(r) for r in rows]
 
-    elif query_type == "goals":
-        rows = conn.execute("""
-            SELECT id, description, target_date, priority, status
-            FROM goals ORDER BY priority, target_date
-        """).fetchall()
-        result = [dict(r) for r in rows]
+        elif query_type == "goals":
+            rows = conn.execute("""
+                SELECT id, description, target_date, priority, status
+                FROM goals ORDER BY priority, target_date
+            """).fetchall()
+            result = [dict(r) for r in rows]
 
-    elif query_type == "plan_compliance":
-        rows = conn.execute("""
-            SELECT date, name, planned_tss, planned_duration_min,
-                   compliance_status, compliance_pct
-            FROM planned_workouts WHERE date BETWEEN ? AND ?
-            ORDER BY date DESC LIMIT ?
-        """, (start, end, limit)).fetchall()
-        result = [dict(r) for r in rows]
+        elif query_type == "plan_compliance":
+            rows = conn.execute("""
+                SELECT date, name, planned_tss, planned_duration_min,
+                       compliance_status, compliance_pct
+                FROM planned_workouts WHERE date BETWEEN ? AND ?
+                ORDER BY date DESC LIMIT ?
+            """, (start, end, limit)).fetchall()
+            result = [dict(r) for r in rows]
 
-    else:
-        result = []
+        else:
+            result = []
 
-    conn.close()
     return {"query_type": query_type, "rows": result, "count": len(result)}
 
 
 def calculate_ramp_target(target_ctl: float, target_date: str) -> dict:
-    conn = get_connection()
-    row = conn.execute("""
-        SELECT ctl FROM wellness WHERE ctl IS NOT NULL ORDER BY date DESC LIMIT 1
-    """).fetchone()
-    conn.close()
+    with read_connection() as conn:
+        row = conn.execute("""
+            SELECT ctl FROM wellness WHERE ctl IS NOT NULL ORDER BY date DESC LIMIT 1
+        """).fetchone()
 
     current_ctl = row["ctl"] if row else 0
     today = date.today()

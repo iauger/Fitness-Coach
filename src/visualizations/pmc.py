@@ -13,7 +13,7 @@ import json
 from datetime import date, timedelta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from src.db.schema import get_connection
+from src.db.schema import get_connection, read_connection
 from src.athlete.profile import metric_history
 from src.analysis.forecast import project_fitness
 from src.visualizations.theme import COLORS, LAYOUT, AXIS
@@ -43,30 +43,29 @@ def _zone(tsb: float) -> str:
 def _load_data(weeks: int | None):
     """weeks=None pulls full history — used to bake in enough data for the dashboard's
     client-side date-range filter to zoom within, rather than re-fetching per range."""
-    conn = get_connection()
-    if weeks is None:
-        rows = conn.execute("""
-            SELECT date, ctl, atl, round(ctl - atl, 1) as tsb, raw_json
-            FROM wellness WHERE ctl IS NOT NULL ORDER BY date
-        """).fetchall()
-        events = conn.execute("""
-            SELECT date, name, category FROM events
-            WHERE category IN ('A', 'B', 'C') ORDER BY date
-        """).fetchall()
-    else:
-        since = (date.today() - timedelta(weeks=weeks)).isoformat()
-        rows = conn.execute("""
-            SELECT date, ctl, atl, round(ctl - atl, 1) as tsb, raw_json
-            FROM wellness
-            WHERE date >= ? AND ctl IS NOT NULL
-            ORDER BY date
-        """, (since,)).fetchall()
-        events = conn.execute("""
-            SELECT date, name, category FROM events
-            WHERE date >= ? AND category IN ('A', 'B', 'C')
-            ORDER BY date
-        """, (since,)).fetchall()
-    conn.close()
+    with read_connection() as conn:
+        if weeks is None:
+            rows = conn.execute("""
+                SELECT date, ctl, atl, round(ctl - atl, 1) as tsb, raw_json
+                FROM wellness WHERE ctl IS NOT NULL ORDER BY date
+            """).fetchall()
+            events = conn.execute("""
+                SELECT date, name, category FROM events
+                WHERE category IN ('A', 'B', 'C') ORDER BY date
+            """).fetchall()
+        else:
+            since = (date.today() - timedelta(weeks=weeks)).isoformat()
+            rows = conn.execute("""
+                SELECT date, ctl, atl, round(ctl - atl, 1) as tsb, raw_json
+                FROM wellness
+                WHERE date >= ? AND ctl IS NOT NULL
+                ORDER BY date
+            """, (since,)).fetchall()
+            events = conn.execute("""
+                SELECT date, name, category FROM events
+                WHERE date >= ? AND category IN ('A', 'B', 'C')
+                ORDER BY date
+            """, (since,)).fetchall()
     return [dict(r) for r in rows], [dict(e) for e in events]
 
 

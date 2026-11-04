@@ -13,7 +13,7 @@ derive.py's metrics fail — see the "what gets computed, what gets stored" rule
 
 import json
 from datetime import date, datetime, timedelta
-from src.db.schema import get_connection, write_connection
+from src.db.schema import get_connection, read_connection, write_connection
 from src.analysis.cycle import _load_for_range, _recovery_for_range
 
 # Re-exported so `from src.analysis.weekly import monday_of, last_completed_week` keeps working
@@ -126,18 +126,16 @@ def save_summary(m: dict, narrative: str | None, model: str | None) -> None:
 
 
 def summaries_between(start: str, end: str) -> list[dict]:
-    conn = get_connection()
-    rows = conn.execute(
-        "SELECT * FROM weekly_summaries WHERE week_start BETWEEN ? AND ? ORDER BY week_start",
-        (start, end)).fetchall()
-    conn.close()
+    with read_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM weekly_summaries WHERE week_start BETWEEN ? AND ? ORDER BY week_start",
+            (start, end)).fetchall()
     return [dict(r) for r in rows]
 
 
 def summarized_weeks() -> set[str]:
-    conn = get_connection()
-    rows = conn.execute("SELECT week_start FROM weekly_summaries").fetchall()
-    conn.close()
+    with read_connection() as conn:
+        rows = conn.execute("SELECT week_start FROM weekly_summaries").fetchall()
     return {r["week_start"] for r in rows}
 
 

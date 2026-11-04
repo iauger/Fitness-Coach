@@ -36,6 +36,24 @@ from src.planning.progression_store import (
 PLAN = "test plan"
 
 
+def shared_conn(conn):
+    """
+    A `read_connection`-shaped context manager that yields a connection it does not own.
+
+    Tests hand the code a connection they keep using afterwards. The real
+    `read_connection` closes on exit — correctly, that is the whole point of it — so
+    patching it with the real thing would close the test's own handle mid-test. Patching
+    `get_connection` instead no longer works: the readers were converted to the context
+    manager, so that seam is not on the path any more.
+    """
+    from contextlib import contextmanager
+
+    @contextmanager
+    def opener(*a, **k):
+        yield conn
+    return opener
+
+
 @pytest.fixture
 def db(tmp_path):
     path = tmp_path / "t.db"
@@ -336,7 +354,7 @@ def test_a_cycle_never_straddles_two_plans(db, monkeypatch):
     week("new plan", "2026-11-02", "2026-11-08", "base", 1)
     week("new plan", "2026-11-09", "2026-11-15", "rest", 2)
     db.commit()
-    monkeypatch.setattr(tp, "get_connection", lambda *a, **k: db)
+    monkeypatch.setattr(tp, "read_connection", shared_conn(db))
 
     cycles = tp.cycles()
     assert len(cycles) == 2

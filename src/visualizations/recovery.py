@@ -5,7 +5,7 @@ Recovery dashboard — HRV trend + sleep hours, dual panel, 30 days.
 from datetime import date, timedelta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from src.db.schema import get_connection
+from src.db.schema import get_connection, read_connection
 from src.visualizations.theme import COLORS, LAYOUT, AXIS
 
 
@@ -19,18 +19,17 @@ def _rolling_avg(values: list, window: int = 7) -> list:
 
 def _load_data(days: int | None):
     """days=None pulls full history — see pmc.py's _load_data for why."""
-    conn = get_connection()
-    if days is None:
-        rows = conn.execute("""
-            SELECT date, hrv, sleep_hrs, sleep_score FROM wellness ORDER BY date
-        """).fetchall()
-    else:
-        since = (date.today() - timedelta(days=days)).isoformat()
-        rows = conn.execute("""
-            SELECT date, hrv, sleep_hrs, sleep_score
-            FROM wellness WHERE date >= ? ORDER BY date
-        """, (since,)).fetchall()
-    conn.close()
+    with read_connection() as conn:
+        if days is None:
+            rows = conn.execute("""
+                SELECT date, hrv, sleep_hrs, sleep_score FROM wellness ORDER BY date
+            """).fetchall()
+        else:
+            since = (date.today() - timedelta(days=days)).isoformat()
+            rows = conn.execute("""
+                SELECT date, hrv, sleep_hrs, sleep_score
+                FROM wellness WHERE date >= ? ORDER BY date
+            """, (since,)).fetchall()
     return [dict(r) for r in rows]
 
 

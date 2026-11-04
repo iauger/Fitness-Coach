@@ -2,7 +2,7 @@ import json
 import sqlite3
 from datetime import date
 from pathlib import Path
-from .schema import get_connection, DB_PATH
+from .schema import DB_PATH, get_connection, write_connection
 from src.clock import utc_now_iso
 
 
@@ -32,9 +32,8 @@ def _has_near_duplicate(conn, date: str, moving_time: int, activity_type: str,
 
 
 def upsert_activities(activities: list[dict], db_path: Path = DB_PATH) -> int:
-    conn = get_connection(db_path)
-    inserted = 0
-    with conn:
+    with write_connection(db_path) as conn:
+        inserted = 0
         for a in activities:
             act_id = str(a.get("id", ""))
             act_date = a.get("start_date_local", a.get("date", ""))[:10]
@@ -103,7 +102,6 @@ def upsert_activities(activities: list[dict], db_path: Path = DB_PATH) -> int:
                 json.dumps(a),
             ))
             inserted += 1
-    conn.close()
     return inserted
 
 
@@ -117,22 +115,19 @@ def update_activity_notes(notes: dict[str, str | None], db_path: Path = DB_PATH)
     """
     if not notes:
         return 0
-    conn = get_connection(db_path)
-    updated = 0
-    with conn:
+    with write_connection(db_path) as conn:
+        updated = 0
         for act_id, text in notes.items():
             cur = conn.execute(
                 "UPDATE activities SET athlete_note = ? WHERE id = ?", (text, act_id)
             )
             updated += cur.rowcount
-    conn.close()
     return updated
 
 
 def upsert_wellness(wellness: list[dict], db_path: Path = DB_PATH) -> int:
-    conn = get_connection(db_path)
-    inserted = 0
-    with conn:
+    with write_connection(db_path) as conn:
+        inserted = 0
         for w in wellness:
             conn.execute("""
                 INSERT OR REPLACE INTO wellness (
@@ -156,14 +151,12 @@ def upsert_wellness(wellness: list[dict], db_path: Path = DB_PATH) -> int:
                 json.dumps(w),
             ))
             inserted += 1
-    conn.close()
     return inserted
 
 
 def upsert_events(events: list[dict], db_path: Path = DB_PATH) -> int:
-    conn = get_connection(db_path)
-    inserted = 0
-    with conn:
+    with write_connection(db_path) as conn:
+        inserted = 0
         for e in events:
             conn.execute("""
                 INSERT OR REPLACE INTO events (id, date, name, category, type, distance_km, raw_json)
@@ -178,7 +171,6 @@ def upsert_events(events: list[dict], db_path: Path = DB_PATH) -> int:
                 json.dumps(e),
             ))
             inserted += 1
-    conn.close()
     return inserted
 
 

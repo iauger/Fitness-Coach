@@ -13,7 +13,7 @@ deliberately easy week doesn't dilute the read on the hard ones.
 
 import json
 from datetime import date, datetime
-from src.db.schema import get_connection, write_connection
+from src.db.schema import get_connection, read_connection, write_connection
 from src.analysis.training_plan import cycles
 from src.analysis.load import sum_effective_tss
 from src.clock import utc_now_iso
@@ -66,113 +66,112 @@ def _recovery_for_range(conn, start: str, end: str) -> dict:
 
 def cycle_metrics(cycle: dict) -> dict:
     """Full deterministic rollup for one cycle from training_plan.cycles()."""
-    conn = get_connection()
-    start, end = cycle["start_date"], cycle["end_date"]
-    weeks = _weeks_in_cycle(conn, cycle)
-    build = [w for w in weeks if w["week_type"] != "rest"]
-    rest = [w for w in weeks if w["week_type"] == "rest"]
+    with read_connection() as conn:
+        start, end = cycle["start_date"], cycle["end_date"]
+        weeks = _weeks_in_cycle(conn, cycle)
+        build = [w for w in weeks if w["week_type"] != "rest"]
+        rest = [w for w in weeks if w["week_type"] == "rest"]
 
-    # ── per-week breakdown
-    per_week = []
-    for w in weeks:
-        load = _load_for_range(conn, w["week_start_date"], w["week_end_date"])
-        rec = _recovery_for_range(conn, w["week_start_date"], w["week_end_date"])
-        ctl_end = conn.execute(
-            # wellness.tsb is null on every row — intervals.icu sends ctl and atl but never
-            # tsb, so it's derived here exactly as fitness.py does.
+        # ── per-week breakdown
+        per_week = []
+        for w in weeks:
+            load = _load_for_range(conn, w["week_start_date"], w["week_end_date"])
+            rec = _recovery_for_range(conn, w["week_start_date"], w["week_end_date"])
+            ctl_end = conn.execute(
+                # wellness.tsb is null on every row — intervals.icu sends ctl and atl but never
+                # tsb, so it's derived here exactly as fitness.py does.
+                "SELECT ctl, atl, ctl - atl AS tsb FROM wellness "
+                "WHERE date <= ? AND ctl IS NOT NULL AND atl IS NOT NULL ORDER BY date DESC LIMIT 1",
+                (w["week_end_date"],)
+            ).fetchone()
+            per_week.append({
+                "week_start": w["week_start_date"],
+                "plan_week": w["plan_week_number"],
+                "week_type": w["week_type"],
+                **load,
+                "hrv": rec["hrv"], "rhr": rec["rhr"], "sleep_hrs": rec["sleep_hrs"],
+                "ctl_end": round(ctl_end["ctl"], 1) if ctl_end and ctl_end["ctl"] else None,
+                "tsb_end": round(ctl_end["tsb"], 1) if ctl_end and ctl_end["tsb"] is not None else None,
+            })
+
+        # ── fitness movement across the block
+        first = conn.execute(
             "SELECT ctl, atl, ctl - atl AS tsb FROM wellness "
             "WHERE date <= ? AND ctl IS NOT NULL AND atl IS NOT NULL ORDER BY date DESC LIMIT 1",
-            (w["week_end_date"],)
+            (start,)
         ).fetchone()
-        per_week.append({
-            "week_start": w["week_start_date"],
-            "plan_week": w["plan_week_number"],
-            "week_type": w["week_type"],
-            **load,
-            "hrv": rec["hrv"], "rhr": rec["rhr"], "sleep_hrs": rec["sleep_hrs"],
-            "ctl_end": round(ctl_end["ctl"], 1) if ctl_end and ctl_end["ctl"] else None,
-            "tsb_end": round(ctl_end["tsb"], 1) if ctl_end and ctl_end["tsb"] is not None else None,
-        })
-
-    # ── fitness movement across the block
-    first = conn.execute(
-        "SELECT ctl, atl, ctl - atl AS tsb FROM wellness "
-        "WHERE date <= ? AND ctl IS NOT NULL AND atl IS NOT NULL ORDER BY date DESC LIMIT 1",
-        (start,)
-    ).fetchone()
-    last = conn.execute(
-        "SELECT ctl, atl, ctl - atl AS tsb FROM wellness "
-        "WHERE date <= ? AND ctl IS NOT NULL AND atl IS NOT NULL ORDER BY date DESC LIMIT 1",
-        (end,)
-    ).fetchone()
-    ctl_start = round(first["ctl"], 1) if first and first["ctl"] is not None else None
-    ctl_end = round(last["ctl"], 1) if last and last["ctl"] is not None else None
-    n_weeks = len(weeks) or 1
-    fitness = {
-        "ctl_start": ctl_start,
-        "ctl_end": ctl_end,
-        "ctl_delta": round(ctl_end - ctl_start, 1) if None not in (ctl_start, ctl_end) else None,
-        "ctl_ramp_per_week": (round((ctl_end - ctl_start) / n_weeks, 2)
-                              if None not in (ctl_start, ctl_end) else None),
-        "tsb_start": round(first["tsb"], 1) if first and first["tsb"] is not None else None,
-        "tsb_end": round(last["tsb"], 1) if last and last["tsb"] is not None else None,
-    }
-
-    # ── compliance, overall and by workout type
-    comp = conn.execute("""
-        SELECT compliance_status s, COUNT(*) n FROM planned_workouts
-        WHERE date BETWEEN ? AND ? AND planned_tss IS NOT NULL
-        GROUP BY compliance_status
-    """, (start, end)).fetchall()
-    counts = {r["s"] or "unscored": r["n"] for r in comp}
-    scored = sum(v for k, v in counts.items() if k != "unscored")
-    compliance = {
-        **counts,
-        "scored": scored,
-        "adherence_pct": (round(counts.get("completed", 0) / scored * 100, 1)
-                          if scored else None),
-    }
-    by_type = [
-        {"workout_type": r["workout_type"] or "unclassified", "planned": r["n"],
-         "completed": r["done"], "avg_pct": round(r["pct"], 1) if r["pct"] else None}
-        for r in conn.execute("""
-            SELECT workout_type, COUNT(*) n,
-                   SUM(CASE WHEN compliance_status='completed' THEN 1 ELSE 0 END) done,
-                   AVG(compliance_pct) pct
-            FROM planned_workouts
-            WHERE date BETWEEN ? AND ? AND planned_tss IS NOT NULL
-            GROUP BY workout_type ORDER BY n DESC
-        """, (start, end)).fetchall()
-    ]
-
-    # ── recovery: build weeks vs the rest week. This comparison is the whole reason the
-    # rest week is inside the cycle rather than reported on its own.
-    def span(ws):
-        return (ws[0]["week_start_date"], ws[-1]["week_end_date"]) if ws else None
-    build_span, rest_span = span(build), span(rest)
-    recovery = {
-        "build_weeks": _recovery_for_range(conn, *build_span) if build_span else None,
-        "rest_week": _recovery_for_range(conn, *rest_span) if rest_span else None,
-    }
-    if recovery["build_weeks"] and recovery["rest_week"]:
-        b, r = recovery["build_weeks"], recovery["rest_week"]
-        recovery["rest_week_delta"] = {
-            k: (round(r[k] - b[k], 1) if None not in (r[k], b[k]) else None)
-            for k in ("hrv", "rhr", "sleep_hrs")
+        last = conn.execute(
+            "SELECT ctl, atl, ctl - atl AS tsb FROM wellness "
+            "WHERE date <= ? AND ctl IS NOT NULL AND atl IS NOT NULL ORDER BY date DESC LIMIT 1",
+            (end,)
+        ).fetchone()
+        ctl_start = round(first["ctl"], 1) if first and first["ctl"] is not None else None
+        ctl_end = round(last["ctl"], 1) if last and last["ctl"] is not None else None
+        n_weeks = len(weeks) or 1
+        fitness = {
+            "ctl_start": ctl_start,
+            "ctl_end": ctl_end,
+            "ctl_delta": round(ctl_end - ctl_start, 1) if None not in (ctl_start, ctl_end) else None,
+            "ctl_ramp_per_week": (round((ctl_end - ctl_start) / n_weeks, 2)
+                                  if None not in (ctl_start, ctl_end) else None),
+            "tsb_start": round(first["tsb"], 1) if first and first["tsb"] is not None else None,
+            "tsb_end": round(last["tsb"], 1) if last and last["tsb"] is not None else None,
         }
 
-    # ── every session with subjective data attached
-    sessions = [
-        {"date": r["date"], "name": r["name"], "type": r["type"],
-         "tss": r["tss"], "rpe": r["feel"], "note": r["athlete_note"]}
-        for r in conn.execute("""
-            SELECT date, name, type, tss, feel, athlete_note FROM activities
-            WHERE date BETWEEN ? AND ? AND moving_time IS NOT NULL
-            ORDER BY date
+        # ── compliance, overall and by workout type
+        comp = conn.execute("""
+            SELECT compliance_status s, COUNT(*) n FROM planned_workouts
+            WHERE date BETWEEN ? AND ? AND planned_tss IS NOT NULL
+            GROUP BY compliance_status
         """, (start, end)).fetchall()
-    ]
+        counts = {r["s"] or "unscored": r["n"] for r in comp}
+        scored = sum(v for k, v in counts.items() if k != "unscored")
+        compliance = {
+            **counts,
+            "scored": scored,
+            "adherence_pct": (round(counts.get("completed", 0) / scored * 100, 1)
+                              if scored else None),
+        }
+        by_type = [
+            {"workout_type": r["workout_type"] or "unclassified", "planned": r["n"],
+             "completed": r["done"], "avg_pct": round(r["pct"], 1) if r["pct"] else None}
+            for r in conn.execute("""
+                SELECT workout_type, COUNT(*) n,
+                       SUM(CASE WHEN compliance_status='completed' THEN 1 ELSE 0 END) done,
+                       AVG(compliance_pct) pct
+                FROM planned_workouts
+                WHERE date BETWEEN ? AND ? AND planned_tss IS NOT NULL
+                GROUP BY workout_type ORDER BY n DESC
+            """, (start, end)).fetchall()
+        ]
 
-    conn.close()
+        # ── recovery: build weeks vs the rest week. This comparison is the whole reason the
+        # rest week is inside the cycle rather than reported on its own.
+        def span(ws):
+            return (ws[0]["week_start_date"], ws[-1]["week_end_date"]) if ws else None
+        build_span, rest_span = span(build), span(rest)
+        recovery = {
+            "build_weeks": _recovery_for_range(conn, *build_span) if build_span else None,
+            "rest_week": _recovery_for_range(conn, *rest_span) if rest_span else None,
+        }
+        if recovery["build_weeks"] and recovery["rest_week"]:
+            b, r = recovery["build_weeks"], recovery["rest_week"]
+            recovery["rest_week_delta"] = {
+                k: (round(r[k] - b[k], 1) if None not in (r[k], b[k]) else None)
+                for k in ("hrv", "rhr", "sleep_hrs")
+            }
+
+        # ── every session with subjective data attached
+        sessions = [
+            {"date": r["date"], "name": r["name"], "type": r["type"],
+             "tss": r["tss"], "rpe": r["feel"], "note": r["athlete_note"]}
+            for r in conn.execute("""
+                SELECT date, name, type, tss, feel, athlete_note FROM activities
+                WHERE date BETWEEN ? AND ? AND moving_time IS NOT NULL
+                ORDER BY date
+            """, (start, end)).fetchall()
+        ]
+
     totals = {
         "planned_tss": round(sum(w["planned_tss"] for w in per_week), 1),
         "actual_tss": round(sum(w["actual_tss"] for w in per_week), 1),
@@ -200,20 +199,18 @@ def previous_review(before_start: str) -> dict | None:
     Cycle-over-cycle comparison is the highest-value thing a review can offer, and doing it
     from stored numbers rather than from the model's recall is why reviews are structured rows.
     """
-    conn = get_connection()
-    row = conn.execute("""
-        SELECT * FROM cycle_reviews WHERE cycle_start < ? ORDER BY cycle_start DESC LIMIT 1
-    """, (before_start,)).fetchone()
-    conn.close()
+    with read_connection() as conn:
+        row = conn.execute("""
+            SELECT * FROM cycle_reviews WHERE cycle_start < ? ORDER BY cycle_start DESC LIMIT 1
+        """, (before_start,)).fetchone()
     return dict(row) if row else None
 
 
 def latest_review() -> dict | None:
-    conn = get_connection()
-    row = conn.execute(
-        "SELECT * FROM cycle_reviews ORDER BY cycle_start DESC LIMIT 1"
-    ).fetchone()
-    conn.close()
+    with read_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM cycle_reviews ORDER BY cycle_start DESC LIMIT 1"
+        ).fetchone()
     return dict(row) if row else None
 
 

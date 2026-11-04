@@ -7,7 +7,7 @@ typically only publishes the near-term block, not the full season) — this is a
 """
 
 from datetime import date, timedelta
-from src.db.schema import get_connection
+from src.db.schema import get_connection, read_connection
 
 CTL_DAYS = 42
 ATL_DAYS = 7
@@ -18,18 +18,17 @@ def project_fitness() -> list[dict]:
     date with planned TSS data. Non-power planned sessions (planned_tss IS NULL — strength,
     mobility) contribute 0 load, consistent with how the rest of the system already treats
     them. Returns [] if there's no actual baseline or no future planned data to project from."""
-    conn = get_connection()
-    latest = conn.execute("""
-        SELECT date, ctl, atl FROM wellness WHERE ctl IS NOT NULL ORDER BY date DESC LIMIT 1
-    """).fetchone()
-    if not latest:
-        conn.close()
-        return []
+    with read_connection() as conn:
+        latest = conn.execute("""
+            SELECT date, ctl, atl FROM wellness WHERE ctl IS NOT NULL ORDER BY date DESC LIMIT 1
+        """).fetchone()
+        if not latest:
+            conn.close()
+            return []
 
-    planned = conn.execute("""
-        SELECT date, planned_tss FROM planned_workouts WHERE date > ? ORDER BY date
-    """, (latest["date"],)).fetchall()
-    conn.close()
+        planned = conn.execute("""
+            SELECT date, planned_tss FROM planned_workouts WHERE date > ? ORDER BY date
+        """, (latest["date"],)).fetchall()
     if not planned:
         return []
 

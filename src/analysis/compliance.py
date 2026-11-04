@@ -7,7 +7,7 @@ import json
 from collections import defaultdict
 from datetime import date, timedelta
 from src.athlete.profile import get_metric
-from src.db.schema import get_connection
+from src.db.schema import get_connection, read_connection
 
 CYCLING_TYPES = ("Ride", "VirtualRide", "GravelRide", "MountainBikeRide", "EBikeRide")
 
@@ -123,13 +123,12 @@ def match_planned_workouts(start: str, end: str) -> dict:
 def compliance_summary(weeks: int = 8) -> dict:
     """Adherence rate over the trailing N weeks (only dates already matched)."""
     since = (date.today() - timedelta(weeks=weeks)).isoformat()
-    conn = get_connection()
-    rows = conn.execute("""
-        SELECT compliance_status, COUNT(*) as n FROM planned_workouts
-        WHERE date >= ? AND date <= ? AND compliance_status IS NOT NULL
-        GROUP BY compliance_status
-    """, (since, date.today().isoformat())).fetchall()
-    conn.close()
+    with read_connection() as conn:
+        rows = conn.execute("""
+            SELECT compliance_status, COUNT(*) as n FROM planned_workouts
+            WHERE date >= ? AND date <= ? AND compliance_status IS NOT NULL
+            GROUP BY compliance_status
+        """, (since, date.today().isoformat())).fetchall()
 
     counts = {r["compliance_status"]: r["n"] for r in rows}
     total = sum(counts.values())
@@ -147,10 +146,9 @@ def compliance_summary(weeks: int = 8) -> dict:
 def recent_planned_workouts(days: int = 14) -> list[dict]:
     """Recent planned workouts with their compliance outcome, most recent first."""
     since = (date.today() - timedelta(days=days)).isoformat()
-    conn = get_connection()
-    rows = conn.execute("""
-        SELECT date, name, planned_tss, planned_duration_min, compliance_status, compliance_pct
-        FROM planned_workouts WHERE date >= ? ORDER BY date DESC
-    """, (since,)).fetchall()
-    conn.close()
+    with read_connection() as conn:
+        rows = conn.execute("""
+            SELECT date, name, planned_tss, planned_duration_min, compliance_status, compliance_pct
+            FROM planned_workouts WHERE date >= ? ORDER BY date DESC
+        """, (since,)).fetchall()
     return [dict(r) for r in rows]

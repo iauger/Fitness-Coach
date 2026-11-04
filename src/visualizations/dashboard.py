@@ -7,7 +7,7 @@ import json
 from datetime import date
 from pathlib import Path
 from src.visualizations import pmc, load, recovery
-from src.db.schema import get_connection
+from src.db.schema import get_connection, read_connection
 
 CHARTS_DIR = Path(__file__).parent.parent.parent / "data" / "charts"
 
@@ -26,15 +26,14 @@ DEFAULT_PRESET = "3mo"
 
 def _earliest_data_date() -> str:
     """Earliest date across wellness/activities — bounds the filter's "All" / slider max."""
-    conn = get_connection()
-    row = conn.execute("""
-        SELECT MIN(d) FROM (
-            SELECT MIN(date) as d FROM wellness
-            UNION ALL
-            SELECT MIN(date) as d FROM activities
-        )
-    """).fetchone()
-    conn.close()
+    with read_connection() as conn:
+        row = conn.execute("""
+            SELECT MIN(d) FROM (
+                SELECT MIN(date) as d FROM wellness
+                UNION ALL
+                SELECT MIN(date) as d FROM activities
+            )
+        """).fetchone()
     return row[0] or date.today().isoformat()
 
 
@@ -42,9 +41,8 @@ def _latest_data_date() -> str:
     """Latest date to show — today, or later if the PMC chart's forecast (planned_workouts'
     future TSS) extends past it. Keeps the projected days visible under every preset by default
     instead of sitting outside the filtered range."""
-    conn = get_connection()
-    row = conn.execute("SELECT MAX(date) FROM planned_workouts").fetchone()
-    conn.close()
+    with read_connection() as conn:
+        row = conn.execute("SELECT MAX(date) FROM planned_workouts").fetchone()
     latest_planned = row[0] if row and row[0] else None
     today_iso = date.today().isoformat()
     return max(latest_planned, today_iso) if latest_planned else today_iso

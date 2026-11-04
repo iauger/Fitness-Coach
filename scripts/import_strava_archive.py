@@ -24,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.db.schema import get_connection
+from src.db.schema import get_connection, read_connection
 
 # Map Strava sport types → our SPORT_GROUPS keys (matching activities.py)
 STRAVA_TYPE_MAP = {
@@ -201,42 +201,41 @@ def run(source_path: Path, dry_run: bool = False):
 
     print(f"  CSV rows: {len(rows)}")
 
-    conn = get_connection()
-    covered = existing_dates(conn)
-    print(f"  Dates already covered by Garmin/intervals data: {len(covered)}")
+    with read_connection() as conn:
+        covered = existing_dates(conn)
+        print(f"  Dates already covered by Garmin/intervals data: {len(covered)}")
 
-    records = []
-    skipped_existing = 0
-    skipped_no_date = 0
-    skipped_no_duration = 0
+        records = []
+        skipped_existing = 0
+        skipped_no_date = 0
+        skipped_no_duration = 0
 
-    for row in rows:
-        rec = build_record(row)
-        if rec is None:
-            skipped_no_date += 1
-            continue
-        if rec["moving_time"] is None:
-            skipped_no_duration += 1
-            continue
-        if rec["date"] in covered:
-            skipped_existing += 1
-            continue
-        records.append(rec)
+        for row in rows:
+            rec = build_record(row)
+            if rec is None:
+                skipped_no_date += 1
+                continue
+            if rec["moving_time"] is None:
+                skipped_no_duration += 1
+                continue
+            if rec["date"] in covered:
+                skipped_existing += 1
+                continue
+            records.append(rec)
 
-    print(f"\n  To import:      {len(records)}")
-    print(f"  Skipped (already have Garmin data for that date): {skipped_existing}")
-    print(f"  Skipped (no duration):  {skipped_no_duration}")
-    print(f"  Skipped (no date):      {skipped_no_date}")
+        print(f"\n  To import:      {len(records)}")
+        print(f"  Skipped (already have Garmin data for that date): {skipped_existing}")
+        print(f"  Skipped (no duration):  {skipped_no_duration}")
+        print(f"  Skipped (no date):      {skipped_no_date}")
 
-    if dry_run:
-        print("\n  [dry-run] no changes written")
-        if records:
-            sample = records[0]
-            print(f"  Sample record: {sample['date']} | {sample['type']} | {sample['name'][:40]} | {(sample['moving_time'] or 0)/3600:.2f}h")
-        return
+        if dry_run:
+            print("\n  [dry-run] no changes written")
+            if records:
+                sample = records[0]
+                print(f"  Sample record: {sample['date']} | {sample['type']} | {sample['name'][:40]} | {(sample['moving_time'] or 0)/3600:.2f}h")
+            return
 
-    n = upsert_strava_activities(conn, records)
-    conn.close()
+        n = upsert_strava_activities(conn, records)
 
     print(f"\n  Done — {n} activities imported.")
     print("  Re-run  scripts/generate_charts.py  to refresh the dashboard.")

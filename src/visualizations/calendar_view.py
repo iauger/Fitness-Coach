@@ -10,7 +10,7 @@ import json
 from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
-from src.db.schema import get_connection
+from src.db.schema import get_connection, read_connection
 from src.analysis.load import effective_tss
 from src.visualizations.theme import COLORS
 
@@ -49,42 +49,41 @@ def _week_bounds(weeks: int) -> tuple[date, date]:
 
 
 def _load_data(start: date, end: date) -> dict[str, dict]:
-    conn = get_connection()
+    with read_connection() as conn:
 
-    wellness = {
-        r["date"]: dict(r)
+        wellness = {
+            r["date"]: dict(r)
+            for r in conn.execute("""
+                SELECT date, sleep_hrs, sleep_score, rhr, hrv, weight_kg, steps
+                FROM wellness WHERE date BETWEEN ? AND ?
+            """, (start.isoformat(), end.isoformat())).fetchall()
+        }
+
+        activities = defaultdict(list)
         for r in conn.execute("""
-            SELECT date, sleep_hrs, sleep_score, rhr, hrv, weight_kg, steps
-            FROM wellness WHERE date BETWEEN ? AND ?
-        """, (start.isoformat(), end.isoformat())).fetchall()
-    }
+            SELECT date, name, type, moving_time, avg_hr, avg_power, np, tss, raw_json
+            FROM activities
+            WHERE date BETWEEN ? AND ? AND moving_time IS NOT NULL
+            ORDER BY date, moving_time DESC
+        """, (start.isoformat(), end.isoformat())).fetchall():
+            row = dict(r)
+            # Same correction the coaching context applies (see analysis/load.py), so the calendar
+            # and the coach never quote different loads for the same ride.
+            load, corrected = effective_tss(r)
+            row.pop("raw_json")
+            row["load"] = round(load) if load else None
+            row["load_corrected"] = corrected
+            activities[row["date"]].append(row)
 
-    activities = defaultdict(list)
-    for r in conn.execute("""
-        SELECT date, name, type, moving_time, avg_hr, avg_power, np, tss, raw_json
-        FROM activities
-        WHERE date BETWEEN ? AND ? AND moving_time IS NOT NULL
-        ORDER BY date, moving_time DESC
-    """, (start.isoformat(), end.isoformat())).fetchall():
-        row = dict(r)
-        # Same correction the coaching context applies (see analysis/load.py), so the calendar
-        # and the coach never quote different loads for the same ride.
-        load, corrected = effective_tss(r)
-        row.pop("raw_json")
-        row["load"] = round(load) if load else None
-        row["load_corrected"] = corrected
-        activities[row["date"]].append(row)
+        planned = defaultdict(list)
+        for r in conn.execute("""
+            SELECT date, name, planned_tss, planned_duration_min, workout_type,
+                   compliance_status, compliance_pct
+            FROM planned_workouts WHERE date BETWEEN ? AND ?
+            ORDER BY date
+        """, (start.isoformat(), end.isoformat())).fetchall():
+            planned[r["date"]].append(dict(r))
 
-    planned = defaultdict(list)
-    for r in conn.execute("""
-        SELECT date, name, planned_tss, planned_duration_min, workout_type,
-               compliance_status, compliance_pct
-        FROM planned_workouts WHERE date BETWEEN ? AND ?
-        ORDER BY date
-    """, (start.isoformat(), end.isoformat())).fetchall():
-        planned[r["date"]].append(dict(r))
-
-    conn.close()
 
     days = {}
     cur = start
