@@ -62,7 +62,19 @@ def test_the_ladder_is_internally_consistent():
         # one long ride + one easy ride, plus the hard session when the tier has one
         assert tier.rides == 2 + tier.hard, f"T{index} rides vs slots"
         assert tier.target_min == tier.long_min + tier.lit_min + tier.hard_min * tier.hard
-        assert tier.strength == 2, "strength is never trimmed, at any tier"
+
+
+def test_strength_is_not_a_per_tier_dose():
+    """
+    There is no `Tier.strength`, on purpose.
+
+    It used to exist, read like a knob, and was consulted by nothing: the slots come from the
+    block's pattern and `pattern_for` passes them through untouched. Setting it to 1 changed
+    no prescription, which a mutation test caught. The rule is enforced in `blocks.pattern_for`
+    and asserted in tests/test_invariants.py against generated weeks, which is where a claim
+    about what gets prescribed belongs.
+    """
+    assert not hasattr(TIERS[0], "strength")
 
 
 def test_the_ladder_climbs_and_stays_inside_the_agreed_band():

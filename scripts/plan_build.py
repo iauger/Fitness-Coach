@@ -47,6 +47,15 @@ def zwift_dir() -> Path:
     return zwift_workouts_dir(ZWIFT_ID)
 
 
+def _strength_slots(block_index: int) -> int:
+    """How many strength days the block actually schedules.
+
+    Counted from the pattern rather than read off the tier: strength is not a per-tier dose,
+    and a tier field claiming otherwise was removed for saying something the code did not do.
+    """
+    return sum(1 for _, role in ROTATION[block_index].pattern if role == "strength")
+
+
 def derive_state(today: date, start_tier: int = 1, persist: bool = True) -> dict:
     """
     Where the athlete actually is: tier, rotation position and week type.
@@ -160,7 +169,7 @@ def main() -> int:
         print(f"  (overridden to T{tier})")
     spec = TIERS[tier]
     print(f"  T{tier}: {spec.rides} rides, {spec.target_hours}h, long {spec.long_min}min, "
-          f"{spec.hard} hard, strength {spec.strength}")
+          f"{spec.hard} hard, strength {_strength_slots(block_index)}")
 
     week_type = state["week_type"]
     all_sessions = []

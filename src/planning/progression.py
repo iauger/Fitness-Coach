@@ -64,6 +64,14 @@ class Tier:
     `hard_min` is a nominal planning duration, because the actual hard session is 52-82min
     depending on which variant the emphasis block rotates to. `target_min` is therefore
     approximate by a few minutes, which is exactly what MET_FRACTION's slack is for.
+
+    There is deliberately **no strength field**. Strength is not a per-tier dose: the slots
+    come from the block's own pattern and `pattern_for` passes them through untouched at
+    every tier, in recovery weeks and on re-entry. A `strength: int` here read as a knob and
+    was not one — a mutation test set it to 1 and no prescription changed, because nothing
+    consulted it. A field stating an intent the code does not implement is worse than no
+    field, so the rule lives in `blocks.pattern_for`, where it is enforced, and is asserted
+    against generated weeks in tests/test_invariants.py.
     """
     index: int
     rides: int
@@ -71,7 +79,6 @@ class Tier:
     hard: int
     hard_min: int
     lit_min: int
-    strength: int
 
     @property
     def target_min(self) -> int:
@@ -99,11 +106,11 @@ class Tier:
 # T0 keeps a 45min easy ride: it is the minimum viable week, and its job is to be impossible to
 # miss rather than to drive adaptation.
 TIERS: dict[int, Tier] = {
-    0: Tier(0, rides=2, long_min=75,  hard=0, hard_min=0,  lit_min=45, strength=2),
-    1: Tier(1, rides=3, long_min=75,  hard=1, hard_min=55, lit_min=60, strength=2),
-    2: Tier(2, rides=3, long_min=90,  hard=1, hard_min=55, lit_min=60, strength=2),
-    3: Tier(3, rides=3, long_min=105, hard=1, hard_min=60, lit_min=60, strength=2),
-    4: Tier(4, rides=3, long_min=120, hard=1, hard_min=60, lit_min=65, strength=2),
+    0: Tier(0, rides=2, long_min=75,  hard=0, hard_min=0,  lit_min=45),
+    1: Tier(1, rides=3, long_min=75,  hard=1, hard_min=55, lit_min=60),
+    2: Tier(2, rides=3, long_min=90,  hard=1, hard_min=55, lit_min=60),
+    3: Tier(3, rides=3, long_min=105, hard=1, hard_min=60, lit_min=60),
+    4: Tier(4, rides=3, long_min=120, hard=1, hard_min=60, lit_min=65),
 }
 
 FLOOR_TIER = min(TIERS)

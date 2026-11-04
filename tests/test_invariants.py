@@ -71,7 +71,10 @@ def assert_invariants(conn, today):
     for wk, ss in weeks.items():
         hard = [s for s in ss if s["role"] == "hard"]
         strength = [s for s in ss if s["role"] == "strength"]
-        assert len(hard) <= MAX_HARD_PER_WEEK, f"{wk}: {len(hard)} hard sessions"
+        # The literal, not MAX_HARD_PER_WEEK. Comparing against the constant made this
+        # tautological: raising the constant to 9 raised the bar and the assertion still
+        # passed. Two is the source's own ceiling, so it is the number worth pinning.
+        assert len(hard) <= 2, f"{wk}: {len(hard)} hard sessions"
         assert len(strength) == 2, f"{wk}: {len(strength)} strength sessions"
 
         for side, sel in (("future", [x for x in ss if x["date"] >= cut]),
