@@ -19,6 +19,7 @@ Nothing here touches the network.
 
 import os
 import sqlite3
+import sys
 import time
 from datetime import date, timedelta
 
@@ -271,3 +272,55 @@ def _const_conn(conn):
     def opener(*a, **k):
         yield conn
     return opener
+
+
+# ── running with no console ───────────────────────────────────────────────────
+
+def _sync_now_module():
+    """Load scripts/sync_now.py as a module, without running main()."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).parent.parent / "scripts" / "sync_now.py"
+    spec = importlib.util.spec_from_file_location("sync_now_under_test", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_the_entry_point_survives_having_no_stdout_or_stderr(monkeypatch):
+    """
+    Under pythonw.exe with no console — which is how the Scheduled Task runs it — Windows
+    gives Python None for both streams.
+
+    Measured, not assumed: with stdout=None alone the cycle completed and logged; adding
+    stderr=None made it exit 1 in total silence, because something further down wrote a
+    warning to a stream that was not there. Guarding only this file's own prints would not
+    have caught it. An hourly job that dies before its first line of work, with nothing
+    written anywhere, is the exact failure the scheduler exists to prevent.
+    """
+    mod = _sync_now_module()
+    monkeypatch.setattr("sys.stdout", None)
+    monkeypatch.setattr("sys.stderr", None)
+
+    mod._init_console()
+
+    assert sys.stdout is not None and sys.stderr is not None
+    sys.stdout.write("this must not raise")
+    sys.stderr.write("nor this")
+
+
+def test_reporting_never_raises_even_with_nowhere_to_write(monkeypatch, tmp_path):
+    """A log that cannot be written must not crash a cycle that has already done its work."""
+    mod = _sync_now_module()
+    monkeypatch.setattr(mod, "LOG_PATH", tmp_path / "nope" / "deep" / "x.log")
+
+    class Hostile:
+        def write(self, *a):
+            raise OSError("no")
+
+        def flush(self):
+            raise OSError("no")
+
+    monkeypatch.setattr("sys.stdout", Hostile())
+    mod._say("a line that has nowhere to go")       # must not raise

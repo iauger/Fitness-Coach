@@ -58,15 +58,23 @@ if (-not (Test-Path $script)) {
 
 $action = New-ScheduledTaskAction -Execute $python -Argument "`"$script`"" -WorkingDirectory $repo
 
-# At logon and then every N minutes. RepetitionDuration of [TimeSpan]::MaxValue means "keep
-# repeating indefinitely" rather than stopping after a day, which is the default and is the
-# quiet way this kind of task dies after 24 hours.
-$trigger = New-ScheduledTaskTrigger -AtLogOn
-$trigger.Delay = "PT2M"
-$repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
-    -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) `
-    -RepetitionDuration ([TimeSpan]::MaxValue)).Repetition
-$trigger.Repetition = $repetition
+# Two separate triggers rather than one logon trigger with a repetition grafted onto it.
+#
+# Leaving -RepetitionDuration unset is what means "repeat indefinitely": it serialises to an
+# empty Duration in the task XML. Passing [TimeSpan]::MaxValue looks like it should say the
+# same thing and does not -- it serialises to P99999999DT23H59M59S, which Task Scheduler
+# rejects outright with "a value which is incorrectly formatted or out of range".
+#
+# StopAtDurationEnd defaults to True, which is harmless against an empty duration but says
+# the opposite of what is meant, so it is set explicitly.
+$logonTrigger = New-ScheduledTaskTrigger -AtLogOn
+$logonTrigger.Delay = "PT2M"
+
+$repeatTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date `
+    -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes)
+$repeatTrigger.Repetition.StopAtDurationEnd = $false
+
+$trigger = @($logonTrigger, $repeatTrigger)
 
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
