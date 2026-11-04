@@ -46,6 +46,16 @@ HORIZON_WEEKS = 3
 FREEZE_DAYS = 2
 
 
+def external_id_prefix(plan_name: str) -> str:
+    """The leading text every external id for this plan shares.
+
+    Used to scope deletes in `planned_workouts`, a table this plan now shares with 84 elapsed
+    TrainerRoad rows that migration 6 deliberately kept. A prefixed delete cannot reach them.
+    """
+    slug = "".join(c if c.isalnum() else "-" for c in plan_name.lower()).strip("-")
+    return f"{slug}-"
+
+
 def external_id(plan_name: str, on: str, role: str) -> str:
     """
     A stable id for the remote calendar event this session will become.
@@ -55,8 +65,7 @@ def external_id(plan_name: str, on: str, role: str) -> str:
     duplicating them — which is the one thing an export has to get right. Deliberately readable:
     when something goes wrong on intervals.icu, the id should say which session it is.
     """
-    slug = "".join(c if c.isalnum() else "-" for c in plan_name.lower()).strip("-")
-    return f"{slug}-{on}-{role}"
+    return f"{external_id_prefix(plan_name)}{on}-{role}"
 
 
 def horizon(conn, today: date | None = None, plan_name: str = PLAN_NAME,
@@ -153,8 +162,11 @@ def store_horizon(conn, today: date | None = None, plan_name: str = PLAN_NAME,
         for row in built["week_rows"]
     )
 
+    planned = _mirror_to_planned_workouts(
+        conn, built["sessions"], plan_name, cutoff, window_start)
+
     return {"cutoff": cutoff, "deleted": deleted, "written": future,
-            "backfilled": frozen, "weeks": weeks_written,
+            "backfilled": frozen, "weeks": weeks_written, "planned": planned,
             "tier": built["state"]["tier"], "week_type": built["state"]["week_type"],
             "sessions": built["sessions"]}
 
@@ -204,3 +216,64 @@ def _upsert_week(conn, row: dict, overwrite: bool) -> int:
           row["phase_number"], row["phase_week_number"], row["plan_week_number"],
           row["volume_tier"]))
     return cur.rowcount
+
+
+def _mirror_to_planned_workouts(conn, sessions: list[dict], plan_name: str,
+                                cutoff: str, monday: str) -> int:
+    """
+    Write the horizon into `planned_workouts` as well, under the same freeze.
+
+    `planned_workouts` is read by sixteen places — compliance matching, the PMC forecast, the
+    calendar view, the dashboard, the coach's tools, the API. It used to be owned by the
+    TrainerRoad iCal feed, which re-upserted it wholesale on every sync, so writing there was
+    not possible: our rows would have double-counted beside TrainerRoad's and any delete came
+    back on the next run. With the feed retired the table is ours, and filling it is far less
+    churn than repointing every reader at `prescribed_sessions`.
+
+    **Strength sessions get `planned_tss = NULL`, not 0.** `compliance.match_planned_workouts`
+    selects `WHERE planned_tss IS NOT NULL` as its "this is a bike workout with power targets"
+    test. A zero would pass that test, and every strength day would then be scored `skipped`
+    for having no cycling activity against it — turning the habit the plan is anchored on into
+    a weekly adherence penalty.
+
+    The delete is prefixed on our own external ids so it can never touch a TrainerRoad row that
+    migration 6 deliberately kept, or anything else living in this table.
+    """
+    prefix = external_id_prefix(plan_name)
+    conn.execute("DELETE FROM planned_workouts WHERE id LIKE ? AND date >= ?",
+                 (f"{prefix}%", cutoff))
+
+    # Whether *this* table's frozen window is already filled, asked of this table.
+    #
+    # It originally reused the answer computed for prescribed_sessions, which was wrong the
+    # moment the two could differ — and they differed immediately, because prescribed_sessions
+    # had been written by earlier runs before this mirror existed. The frozen side was treated
+    # as already present and never backfilled, so today's and tomorrow's sessions were missing
+    # from every reader that keys on planned_workouts: adherence, the calendar view, the
+    # forecast. Each table answers the question about itself.
+    already = conn.execute(
+        "SELECT 1 FROM planned_workouts WHERE id LIKE ? AND date >= ? AND date < ? LIMIT 1",
+        (f"{prefix}%", monday, cutoff)).fetchone() is not None
+
+    written = 0
+    for s in sessions:
+        if s["date"] < cutoff and already:
+            continue
+        rideable = s["archetype"] != "strength"
+        conn.execute("""
+            INSERT INTO planned_workouts (
+                id, date, name, planned_tss, planned_duration_min, planned_if,
+                description, workout_type
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                date=excluded.date, name=excluded.name, planned_tss=excluded.planned_tss,
+                planned_duration_min=excluded.planned_duration_min,
+                planned_if=excluded.planned_if, description=excluded.description,
+                workout_type=excluded.workout_type
+        """, (external_id(plan_name, s["date"], s["role"]), s["date"],
+              s["prescription"].split("  (")[0].strip(),
+              s["tss"] if rideable else None,
+              s["minutes"], s["intensity_factor"] if rideable else None,
+              s["prescription"], s["archetype"]))
+        written += 1
+    return written

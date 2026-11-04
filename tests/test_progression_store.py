@@ -20,7 +20,7 @@ These need a database, so they migrate a temp file rather than touching data/fit
 """
 
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -344,3 +344,35 @@ def test_a_cycle_never_straddles_two_plans(db, monkeypatch):
     for c in cycles:
         lo, hi = c["plan_week_range"]
         assert lo <= hi, f"{c['plan_name']} cycle runs backwards: {c['plan_week_range']}"
+
+
+def test_retiring_trainerroad_drops_its_future_and_keeps_its_past(tmp_path):
+    """
+    Migration 6, and the same rule as the other two plan tables.
+
+    The elapsed rows carry `compliance_status`, which is the adherence record the stored cycle
+    reviews were written against — deleting them would leave reviews quoting figures that can
+    no longer be reproduced. The future rows describe a plan abandoned in September and, with
+    nothing refetching them, would sit there forever scoring the athlete against workouts
+    nobody intends them to do.
+    """
+    from src.db.migrations import TR_RETIRED_ON
+
+    path = tmp_path / "tr.db"
+    migrate(path)
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA user_version = 5")
+    past = (date.fromisoformat(TR_RETIRED_ON) - timedelta(days=7)).isoformat()
+    for ident, day in [("old", past), ("new", TR_RETIRED_ON)]:
+        conn.execute("INSERT INTO planned_workouts (id, date, name, planned_tss, "
+                     "compliance_status) VALUES (?,?,?,?,?)",
+                     (ident, day, "TrainerRoad thing", 55, "completed"))
+    conn.commit()
+    conn.close()
+
+    migrate(path)
+
+    conn = sqlite3.connect(path)
+    left = [r[0] for r in conn.execute("SELECT id FROM planned_workouts ORDER BY id")]
+    conn.close()
+    assert left == ["old"]

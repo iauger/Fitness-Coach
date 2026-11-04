@@ -1,5 +1,5 @@
 """
-Plan adherence — matches Google Calendar planned workouts (synced from TrainerRoad)
+Plan adherence — matches rows in planned_workouts, written by the rolling plan
 against actual activities and reports compliance.
 """
 

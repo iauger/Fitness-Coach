@@ -367,7 +367,7 @@ def coaching_context_text(ctx: dict | None = None) -> str:
     if adherence.get("total_planned"):
         lines += [
             "",
-            "TRAINERROAD PLAN ADHERENCE (last 8 weeks)",
+            "PLAN ADHERENCE (last 8 weeks)",
             f"  {adherence['completed']}/{adherence['total_planned']} completed "
             f"({adherence['adherence_pct']}%)  |  {adherence['partial']} partial  |  {adherence['skipped']} skipped",
         ]

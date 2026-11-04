@@ -502,6 +502,34 @@ def _m005_tier_on_the_stored_plan(conn: sqlite3.Connection) -> None:
     add_column(conn, "training_plan_weeks", "volume_tier", "INTEGER")
 
 
+# ── migration 6 ───────────────────────────────────────────────────────────────
+
+# Frozen, like every other literal in this module. The day the TrainerRoad iCal feed was
+# retired and the rolling plan became the only source of planned workouts.
+TR_RETIRED_ON = "2026-11-03"
+
+
+def _m006_retire_the_trainerroad_feed(conn: sqlite3.Connection) -> None:
+    """
+    Drop the future half of the TrainerRoad calendar now that nothing refetches it.
+
+    `planned_workouts` was owned by integrations/tr_calendar.py, which re-upserted the whole
+    iCal feed on every sync. That is why the rebuild could not simply write there: any row we
+    added sat beside TrainerRoad's and double-counted `planned_tss` in `derive.weekly_load`,
+    `cycle._load_for_range` and `forecast.project_fitness`, and any row we deleted came back on
+    the next run. With the feed gone the table becomes ours, and keeping it as the interface
+    means sixteen readers — compliance, the charts, the API, the coach's tools — keep working
+    untouched instead of being repointed.
+
+    Same rule as the other two plan tables: **a superseded plan keeps its past and loses its
+    future.** The 84 elapsed rows stay, because `compliance_status` on them is the adherence
+    record the cycle reviews were written against. The 235 future ones go — they describe a
+    plan that was abandoned in September and would otherwise sit there forever, scoring the
+    athlete against workouts nobody intends them to do.
+    """
+    conn.execute("DELETE FROM planned_workouts WHERE date >= ?", (TR_RETIRED_ON,))
+
+
 # (version, name, step). Append only — never renumber or edit an applied migration.
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "baseline schema as of phase 12B", _m001_baseline),
@@ -509,6 +537,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (3, "prescribed_sessions for the plan builder", _m003_prescribed_sessions),
     (4, "plan_progression, export columns, one plan namespace", _m004_plan_progression),
     (5, "tier and week type on the stored plan", _m005_tier_on_the_stored_plan),
+    (6, "retire the TrainerRoad feed", _m006_retire_the_trainerroad_feed),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)

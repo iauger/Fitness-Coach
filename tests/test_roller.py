@@ -308,3 +308,102 @@ def test_a_changed_block_cannot_add_a_session_to_a_frozen_day(db, monkeypatch):
 
     after = {k for k in sessions(db) if k[0] < CUTOFF}
     assert after == before, f"frozen window gained or lost sessions: {after ^ before}"
+
+
+# ── the planned_workouts mirror ───────────────────────────────────────────────
+
+def planned(conn) -> list[dict]:
+    return [dict(r) for r in conn.execute("SELECT * FROM planned_workouts ORDER BY date, id")]
+
+
+def test_the_horizon_is_mirrored_into_planned_workouts(db):
+    """
+    Sixteen readers key on this table — compliance, the PMC forecast, the calendar view, the
+    dashboard, the coach's tools, the API. Filling it is far less churn than repointing them
+    all at prescribed_sessions, and it only became possible once the TrainerRoad feed that
+    re-upserted the table wholesale on every sync was retired.
+    """
+    store_horizon(db, TODAY, PLAN)
+    rows = planned(db)
+    assert rows
+    assert {r["date"] for r in rows} == {s[0] for s in sessions(db)}
+
+
+def test_strength_days_are_mirrored_with_a_null_load_not_zero(db):
+    """
+    `compliance.match_planned_workouts` selects `WHERE planned_tss IS NOT NULL` as its "this is
+    a bike workout with power targets" test. A zero passes that test, so every strength day
+    would be scored `skipped` for having no cycling activity against it — turning the habit the
+    plan is anchored on into a weekly adherence penalty.
+    """
+    store_horizon(db, TODAY, PLAN)
+    strength = [r for r in planned(db) if r["workout_type"] == "strength"]
+    assert strength
+    assert all(r["planned_tss"] is None for r in strength)
+    rides = [r for r in planned(db) if r["workout_type"] != "strength"]
+    assert rides and all(r["planned_tss"] is not None for r in rides)
+
+
+def test_the_mirror_only_deletes_rows_it_owns(db):
+    """
+    The delete is prefixed on our own external ids, so it cannot reach anything else in a table
+    we now share — a kept TrainerRoad row, or a workout the athlete added by hand.
+
+    Both planted rows sit **inside the rewrite window**. An earlier version of this test put
+    the foreign row in the past, where an unprefixed `DELETE ... WHERE date >= cutoff` would
+    not have reached it either, so it passed with the guard removed and proved nothing.
+    """
+    future = (date.fromisoformat(CUTOFF) + timedelta(days=1)).isoformat()
+    db.execute("INSERT INTO planned_workouts (id, date, name, planned_tss) VALUES (?,?,?,?)",
+               ("tr-uid-123", future, "Lazy Mountain -2", 55))
+    db.execute("INSERT INTO planned_workouts (id, date, name, planned_tss) VALUES (?,?,?,?)",
+               ("hand-added", future, "A ride I planned myself", 40))
+    db.commit()
+
+    store_horizon(db, TODAY, PLAN)
+
+    kept = {r["id"]: r["name"] for r in planned(db)}
+    assert kept.get("tr-uid-123") == "Lazy Mountain -2"
+    assert kept.get("hand-added") == "A ride I planned myself"
+
+
+def test_re_rolling_does_not_duplicate_planned_workouts(db):
+    store_horizon(db, TODAY, PLAN)
+    first = len(planned(db))
+    for _ in range(3):
+        store_horizon(db, TODAY, PLAN)
+    assert len(planned(db)) == first
+
+
+def test_the_mirror_respects_the_freeze(db, monkeypatch):
+    """Same rule as prescribed_sessions: today and tomorrow do not move."""
+    store_horizon(db, TODAY, PLAN)
+    before = {r["id"]: r["name"] for r in planned(db) if r["date"] < CUTOFF}
+    assert before
+
+    monkeypatch.setattr(roller, "current_state", force_state(tier=4, block_index=3))
+    store_horizon(db, TODAY, PLAN)
+    after = {r["id"]: r["name"] for r in planned(db) if r["date"] < CUTOFF}
+
+    assert after == before
+
+
+def test_the_mirror_backfills_its_own_frozen_window(db):
+    """
+    Each table answers the freeze question about itself.
+
+    The mirror originally reused the answer computed for prescribed_sessions, which was wrong
+    the moment the two could differ — and they differed immediately in practice, because
+    prescribed_sessions had been filled by earlier runs before this mirror existed. The frozen
+    side was treated as already present and never backfilled, so today's and tomorrow's
+    sessions were missing from adherence, the calendar view and the forecast.
+    """
+    store_horizon(db, TODAY, PLAN)
+    db.execute("DELETE FROM planned_workouts")      # prescribed_sessions stays populated
+    db.commit()
+
+    store_horizon(db, TODAY, PLAN)
+
+    mirrored = {r["date"] for r in planned(db)}
+    assert {k[0] for k in sessions(db)} == mirrored, "the frozen window was not backfilled"
+    assert any(d < CUTOFF for d in mirrored)
