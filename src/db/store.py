@@ -182,38 +182,6 @@ def upsert_events(events: list[dict], db_path: Path = DB_PATH) -> int:
     return inserted
 
 
-def upsert_planned_workouts(workouts: list[dict], db_path: Path = DB_PATH) -> int:
-    conn = get_connection(db_path)
-    inserted = 0
-    with conn:
-        for w in workouts:
-            conn.execute("""
-                INSERT INTO planned_workouts (
-                    id, date, name, planned_tss, planned_duration_min, planned_if,
-                    planned_kj, description, workout_type, workout_url, gcal_updated
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    date=excluded.date,
-                    name=excluded.name,
-                    planned_tss=excluded.planned_tss,
-                    planned_duration_min=excluded.planned_duration_min,
-                    planned_if=excluded.planned_if,
-                    planned_kj=excluded.planned_kj,
-                    description=excluded.description,
-                    workout_type=excluded.workout_type,
-                    workout_url=excluded.workout_url,
-                    gcal_updated=excluded.gcal_updated
-            """, (
-                w["id"], w["date"], w["name"], w.get("planned_tss"),
-                w.get("planned_duration_min"), w.get("planned_if"),
-                w.get("planned_kj"), w.get("description"), w.get("workout_type"),
-                w.get("workout_url"), w.get("gcal_updated"),
-            ))
-            inserted += 1
-    conn.close()
-    return inserted
-
-
 def log_sync(conn: sqlite3.Connection, data_type: str, start: date, end: date,
              records: int, status: str = "ok") -> None:
     from datetime import datetime
