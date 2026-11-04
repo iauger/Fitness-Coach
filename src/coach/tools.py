@@ -54,7 +54,7 @@ TOOL_SCHEMAS = [
         "name": "log_subjective_feel",
         "description": (
             "Log how the athlete is feeling right now — energy, motivation, leg freshness, "
-            "and TrainerRoad workout compliance. Call this when the athlete describes their "
+            "and how the planned sessions went. Call this when the athlete describes their "
             "current physical or mental state, or reports on their training week."
         ),
         "input_schema": {
@@ -79,7 +79,7 @@ TOOL_SCHEMAS = [
                 "tr_compliance": {
                     "type": "string",
                     "enum": ["completed_all", "skipped_some", "modified", "rest_week", "not_on_plan"],
-                    "description": "TrainerRoad workout compliance for the week",
+                    "description": "How the planned sessions went that week",
                 },
                 "notes": {
                     "type": "string",
@@ -220,34 +220,59 @@ def log_subjective_feel(feel_score: int, energy: int = None, motivation: int = N
 
 def query_history(query_type: str, start_date: str = None, end_date: str = None,
                   limit: int = 20) -> dict:
+    """
+    Answer a question about a past window, and say so when the answer is incomplete.
+
+    The three period queries used `.fetchmany(limit)` over a query ordered oldest-first, so
+    they returned the *beginning* of the window rather than a representative sample, and
+    reported `count` as though that were all there was. Asking about the last three months
+    returned 20 of 32 activities spanning 2026-08-04 to 2026-09-08 — the first five weeks of
+    thirteen, stopping immediately before the September dropout. The model had no way to tell,
+    so it would have concluded training was consistent and never seen the gap it was asked
+    about.
+
+    Now the limit is applied in SQL against the newest rows, the result is handed back
+    oldest-first for readability, and `total` plus `truncated` say what was left out.
+    """
     with read_connection() as conn:
         end = end_date or date.today().isoformat()
         start = start_date or "2017-01-01"
 
+        total = None
+
         if query_type == "ctl_range":
+            total = conn.execute(
+                "SELECT COUNT(*) n FROM wellness WHERE date BETWEEN ? AND ? "
+                "AND ctl IS NOT NULL", (start, end)).fetchone()["n"]
             rows = conn.execute("""
                 SELECT date, ctl, atl, round(ctl-atl,1) as tsb
                 FROM wellness WHERE date BETWEEN ? AND ? AND ctl IS NOT NULL
-                ORDER BY date
-            """, (start, end)).fetchmany(limit)
-            result = [dict(r) for r in rows]
+                ORDER BY date DESC LIMIT ?
+            """, (start, end, limit)).fetchall()
+            result = [dict(r) for r in reversed(rows)]
 
         elif query_type == "activities_in_period":
+            total = conn.execute(
+                "SELECT COUNT(*) n FROM activities WHERE date BETWEEN ? AND ?",
+                (start, end)).fetchone()["n"]
             rows = conn.execute("""
                 SELECT date, name, type, round(moving_time/60.0,0) as duration_min,
                        round(distance/1000.0,1) as distance_km, avg_hr
                 FROM activities WHERE date BETWEEN ? AND ?
-                ORDER BY date
-            """, (start, end)).fetchmany(limit)
-            result = [dict(r) for r in rows]
+                ORDER BY date DESC LIMIT ?
+            """, (start, end, limit)).fetchall()
+            result = [dict(r) for r in reversed(rows)]
 
         elif query_type == "wellness_in_period":
+            total = conn.execute(
+                "SELECT COUNT(*) n FROM wellness WHERE date BETWEEN ? AND ?",
+                (start, end)).fetchone()["n"]
             rows = conn.execute("""
                 SELECT date, ctl, atl, rhr, hrv, sleep_hrs, sleep_score
                 FROM wellness WHERE date BETWEEN ? AND ?
-                ORDER BY date
-            """, (start, end)).fetchmany(limit)
-            result = [dict(r) for r in rows]
+                ORDER BY date DESC LIMIT ?
+            """, (start, end, limit)).fetchall()
+            result = [dict(r) for r in reversed(rows)]
 
         elif query_type == "peak_ctl_periods":
             rows = conn.execute("""
@@ -291,7 +316,15 @@ def query_history(query_type: str, start_date: str = None, end_date: str = None,
         else:
             result = []
 
-    return {"query_type": query_type, "rows": result, "count": len(result)}
+    out = {"query_type": query_type, "rows": result, "count": len(result)}
+    if total is not None and total > len(result):
+        # Stated in the payload the model reads, not only in a log. A silently truncated
+        # window is the one failure here that produces confident wrong answers.
+        out["total"] = total
+        out["truncated"] = True
+        out["note"] = (f"showing the {len(result)} most recent of {total}; "
+                       f"raise limit or narrow the dates for the rest")
+    return out
 
 
 def calculate_ramp_target(target_ctl: float, target_date: str) -> dict:
@@ -346,12 +379,14 @@ def update_goal(action: str, description: str = None, target_date: str = None,
             return {"status": "updated", "goal_id": goal_id}
 
         elif action in ("achieve", "drop") and goal_id:
+            # Spelled out rather than `action + "d"`, which produced "dropd" and put a typo
+            # in the status column for anything later filtering on it.
+            status = {"achieve": "achieved", "drop": "dropped"}[action]
             conn.execute("""
                 UPDATE goals SET status=?, updated_at=? WHERE id=?
-            """, (action + "d", now, goal_id))
-            return {"status": action + "d", "goal_id": goal_id}
+            """, (status, now, goal_id))
+            return {"status": status, "goal_id": goal_id}
 
-    conn.close()
     return {"status": "no_op"}
 
 

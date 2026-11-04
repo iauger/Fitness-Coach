@@ -161,7 +161,21 @@ def test_an_empty_outline_does_not_crash_the_summary():
 
 # ── read-side callers must not write ──────────────────────────────────────────
 
-def test_the_report_asks_the_gate_not_to_persist(monkeypatch):
+@pytest.fixture
+def temp_db(tmp_path):
+    """A migrated, empty database, so these tests do not read the athlete's real one."""
+    import sqlite3
+    from src.db.migrations import migrate
+
+    path = tmp_path / "o.db"
+    migrate(path)
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    yield conn
+    conn.close()
+
+
+def test_the_report_asks_the_gate_not_to_persist(monkeypatch, temp_db):
     """
     Asserted on the call, not on the database.
 
@@ -181,11 +195,12 @@ def test_the_report_asks_the_gate_not_to_persist(monkeypatch):
                 "seeded_from": "spy", "recent": []}
 
     monkeypatch.setattr(R, "current_state", spy)
+    monkeypatch.setattr(R, "read_connection", shared_conn(temp_db))
     R._rolling_plan(date(2026, 11, 3))
     assert seen.get("persist") is False
 
 
-def test_the_plan_api_asks_the_gate_not_to_persist(monkeypatch):
+def test_the_plan_api_asks_the_gate_not_to_persist(monkeypatch, temp_db):
     """Same contract, the other read-side caller. A GET must never record a decision."""
     import src.api.app as A
 
@@ -198,6 +213,7 @@ def test_the_plan_api_asks_the_gate_not_to_persist(monkeypatch):
                 "seeded_from": "spy", "recent": []}
 
     monkeypatch.setattr(A, "current_state", spy)
+    monkeypatch.setattr(A, "read_connection", shared_conn(temp_db))
     A.plan_state(date(2026, 11, 3))
     A.plan_outline_route(date(2026, 11, 3), weeks=4)
     assert calls and all(p is False for p in calls)
