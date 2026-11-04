@@ -33,7 +33,7 @@ from src.planning.blocks import (
 )
 from src.planning.progression import TIERS
 from src.planning.roller import plan_week_number
-from src.planning.zwo import plan_dir, prune_week_dirs, supersede, week_dir
+from src.planning.zwo import prune_week_dirs, supersede, week_dir
 from src.planning.progression_store import current_state
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -217,8 +217,9 @@ def main() -> int:
             for gone in supersede(out, day, set()):
                 print(f"  removed flat leftover {gone.name}")
 
-        print(f"\n  {len(days)} ride{'' if len(days) == 1 else 's'} written to "
-              f"{plan_dir(out, args.plan_name)}")
+        for folder in sorted(written_dirs):
+            print(f"\n  {len(days)} ride{'' if len(days) == 1 else 's'} written to "
+                  f"{folder}")
         print("  Restart Zwift if it is already running; it reads this folder at launch.\n")
     else:
         print("\n  preview only — the roller (step 4) is what stores and pushes this.\n")

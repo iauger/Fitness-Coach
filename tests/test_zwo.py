@@ -15,7 +15,7 @@ import pytest
 
 from src.planning import archetypes as A
 from src.planning.zwo import (
-    AUTHOR, AUTHOR_TAG, display_name, plan_dir, prune_week_dirs, safe_filename,
+    AUTHOR, AUTHOR_TAG, display_name, prune_week_dirs, safe_filename,
     session_name, supersede, to_zwo, week_dir, zwift_workouts_dir,
 )
 
@@ -205,47 +205,68 @@ def test_with_no_folder_at_all_the_newest_location_is_returned(tmp_path):
 
 # ── folder layout ─────────────────────────────────────────────────────────────
 
-def test_the_week_folder_names_both_the_plan_week_and_the_date():
+def test_the_week_folder_is_a_single_layer_carrying_the_plan_and_the_week():
     """
-    The picker shows only this string, so it has to carry both.
-
-    The week number alone does not say when; the date alone does not say where in the plan you
-    are. Underscores rather than spaces because every workout Zwift itself writes to this folder
-    uses them, which is the only evidence available about what it will sync.
+    Zwift flattens nesting. Verified in the app on 2026-11-03: a
+    `Sustainable_rolling/W1_Nov_02/` tree rendered as one `Sustainable_rolling` tile whose
+    contents were the three workouts, with the week folder gone. Community guides claiming
+    nested folders show in the picker are wrong for this build, so the week has to live in the
+    one folder name we get.
     """
     got = week_dir(Path("root"), "Sustainable rolling", 1, date(2026, 11, 2))
-    assert got == Path("root") / "Sustainable_rolling" / "W1_Nov_02"
+    assert got == Path("root") / "Sustainable_rolling_W1_Nov_02"
+    assert got.parent == Path("root"), "a nested folder would be flattened away by Zwift"
     assert " " not in str(got)
 
 
-def test_the_display_name_leads_with_the_day():
-    """Inside a week folder a workout only has to answer "is this today's"."""
-    assert display_name(A.lit(60, "steady"), 3) == "Thu - Endurance 60min"
-    assert display_name(A.lit(90, "steady"), 5).startswith("Sat - ")
+def test_display_names_sort_chronologically_under_an_alphabetical_sort():
+    """
+    The picker sorts alphabetically. Verified in the app: workouts named "Tue -", "Thu -",
+    "Sat -" listed as Sat, Thu, Tue. The weekday index leads so a plain string sort puts the
+    week in order.
+    """
+    week = [(1, A.sit("short")), (3, A.lit(60, "steady")), (5, A.lit(90, "steady"))]
+    names = [display_name(s, w) for w, s in week]
+    assert sorted(names) == names
+
+
+def test_the_day_index_is_used_rather_than_the_date():
+    """A week can straddle a month end: Mon Oct 30 would sort after Sat Nov 04 on "30" vs
+    "04", putting the long ride before the week it belongs to."""
+    assert display_name(A.lit(60, "steady"), 0).startswith("1 Mon - ")
+    assert display_name(A.lit(60, "steady"), 6).startswith("7 Sun - ")
 
 
 def test_display_names_stay_ascii():
     """A middot would read better, but filenames with special characters are reported to break
     Zwift's cloud sync and that is not worth risking for punctuation."""
     for weekday in range(7):
-        name = display_name(A.sit("short"), weekday)
-        assert name.isascii(), name
+        assert display_name(A.sit("short"), weekday).isascii()
 
 
 def test_pruning_removes_a_past_week_of_ours(tmp_path):
-    base = plan_dir(tmp_path, "P")
-    old = base / "W0_Oct_26"
-    old.mkdir(parents=True)
-    _write(old, "2026-10-27_Tue_-_Old.zwo", AUTHOR)
-    current = base / "W1_Nov_02"
+    old = tmp_path / "P_W0_Oct_26"
+    old.mkdir()
+    _write(old, "2026-10-27_Old.zwo", AUTHOR)
+    current = tmp_path / "P_W1_Nov_02"
     current.mkdir()
-    _write(current, "2026-11-03_Tue_-_New.zwo", AUTHOR)
+    _write(current, "2026-11-03_New.zwo", AUTHOR)
 
     removed = prune_week_dirs(tmp_path, "P", {current})
 
-    assert [p.name for p in removed] == ["W0_Oct_26"]
-    assert not old.exists()
-    assert current.exists()
+    assert [p.name for p in removed] == ["P_W0_Oct_26"]
+    assert not old.exists() and current.exists()
+
+
+def test_pruning_ignores_folders_that_are_not_this_plans(tmp_path):
+    """The week folders now sit at the top level beside the athlete's own files, so the name
+    prefix is load-bearing rather than cosmetic."""
+    other = tmp_path / "My_Own_Folder"
+    other.mkdir()
+    _write(other, "mine.zwo", AUTHOR)
+
+    assert prune_week_dirs(tmp_path, "P", set()) == []
+    assert other.exists()
 
 
 def test_pruning_leaves_a_folder_holding_anything_that_is_not_ours(tmp_path):
@@ -255,27 +276,25 @@ def test_pruning_leaves_a_folder_holding_anything_that_is_not_ours(tmp_path):
     A folder with one hand-made workout in it must stay whole, and so must a mixed folder — we
     do not get to remove someone else's file because it shares a directory with ours.
     """
-    base = plan_dir(tmp_path, "P")
-    theirs = base / "W0_My_Own"
-    theirs.mkdir(parents=True)
+    theirs = tmp_path / "P_W0_Theirs"
+    theirs.mkdir()
     _write(theirs, "handmade.zwo", "iauge")
-    mixed = base / "W0_Mixed"
+    mixed = tmp_path / "P_W0_Mixed"
     mixed.mkdir()
     _write(mixed, "ours.zwo", AUTHOR)
     _write(mixed, "theirs.zwo", "iauge")
 
     assert prune_week_dirs(tmp_path, "P", set()) == []
-    assert theirs.exists() and mixed.exists()
-    assert (mixed / "ours.zwo").exists()
+    assert theirs.exists() and (mixed / "ours.zwo").exists()
 
 
 def test_pruning_leaves_an_empty_folder_alone(tmp_path):
     """An empty directory is not evidence we created it."""
-    empty = plan_dir(tmp_path, "P") / "W0_Empty"
-    empty.mkdir(parents=True)
+    empty = tmp_path / "P_W0_Empty"
+    empty.mkdir()
     assert prune_week_dirs(tmp_path, "P", set()) == []
     assert empty.exists()
 
 
-def test_pruning_a_plan_with_no_folder_yet_is_not_an_error(tmp_path):
-    assert prune_week_dirs(tmp_path, "never written", set()) == []
+def test_pruning_a_root_that_does_not_exist_is_not_an_error(tmp_path):
+    assert prune_week_dirs(tmp_path / "nope", "P", set()) == []

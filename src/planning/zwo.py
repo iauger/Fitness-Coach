@@ -156,40 +156,48 @@ def zwift_workouts_dir(athlete_id: str, home: Path | None = None,
 DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 
-def plan_dir(root: Path, plan_name: str) -> Path:
-    """The folder holding everything the generator writes, kept apart from hand-made workouts.
-
-    Zwift mirrors the directory structure under the athlete-id folder into its workout picker,
-    and nesting works, so the layout on disk *is* the navigation. Community-documented rather
-    than in Zwift's own help, and unverified on this build — see `prune_week_dirs` for the
-    consequence if it turns out not to recurse.
-    """
-    return root / safe_component(plan_name)
+def plan_prefix(plan_name: str) -> str:
+    """The leading component every folder this generator creates shares."""
+    return safe_component(plan_name)
 
 
 def week_dir(root: Path, plan_name: str, plan_week: int, monday: date) -> Path:
     """
-    One folder per plan week: `W1_Nov_02`.
+    One folder per plan week, directly under the athlete-id folder.
 
-    The week number alone would not say *when*, and the date alone would not say where in the
-    plan you are; the picker shows only this string, so it carries both. Underscores rather than
-    spaces because every workout Zwift itself writes to this folder uses them, which is the only
-    evidence available about what it is happy to sync.
+    **Zwift flattens nesting.** Verified in the app on 2026-11-03: a
+    `Sustainable_rolling/W1_Nov_02/` tree showed a single `Sustainable_rolling` tile whose
+    contents were the three workouts, with the week folder gone. Community guides claiming
+    nested folders appear in the picker are wrong, at least for this build. So the week has to
+    live in the one folder name we get:
+
+        Sustainable_rolling_W1_Nov_02/
+
+    Underscores rather than spaces because every workout Zwift itself writes to this folder uses
+    them, which is the only evidence available about what it will sync.
     """
-    return plan_dir(root, plan_name) / safe_component(
-        f"W{plan_week} {monday.strftime('%b')} {monday.day:02d}")
+    return root / safe_component(
+        f"{plan_name} W{plan_week} {monday.strftime('%b')} {monday.day:02d}")
 
 
 def display_name(session: Session, weekday: int) -> str:
     """
-    What Zwift shows in the picker, prefixed with the day it is planned for.
+    What Zwift shows in the picker, ordered and labelled by day.
 
-    The day is the thing being navigated by: the folder already says which week, so inside it a
-    workout only has to answer "is this today's". ASCII only — the separator is a plain hyphen
-    rather than a middot because filenames with special characters are reported to break Zwift's
-    cloud sync, and this is not worth risking for punctuation.
+    **The picker sorts alphabetically, not chronologically.** Verified in the app: three
+    workouts named "Tue -", "Thu -", "Sat -" listed as Sat, Thu, Tue, and the athlete's 91
+    hand-made workouts list as 10x..., 15x..., 1x10..., which is a plain string sort. A bare day
+    name therefore never orders correctly, so the weekday index leads.
+
+    The index rather than the date, because a week can straddle a month end — Mon Oct 30 would
+    sort after Sat Nov 04 on "30" vs "04", putting the long ride before the week it belongs to.
+
+    ASCII only: the separator is a plain hyphen rather than a middot because filenames with
+    special characters are reported to break Zwift's cloud sync, and that is not worth risking
+    for punctuation.
     """
-    return session_name(session, prefix=f"{DAY_NAMES[weekday % 7]} -")
+    day = weekday % 7
+    return session_name(session, prefix=f"{day + 1} {DAY_NAMES[day]} -")
 
 
 def prune_week_dirs(root: Path, plan_name: str, keep: set[Path]) -> list[Path]:
@@ -200,16 +208,19 @@ def prune_week_dirs(root: Path, plan_name: str, keep: set[Path]) -> list[Path]:
     organising it at all. The .zwo is only a rideable artifact — `prescribed_sessions` holds the
     record of what was asked — so a past week's folder is safe to drop.
 
-    Only ever removes a directory whose every file is one of ours (the author tag) and which
-    sits inside this plan's own folder. A folder holding anything else is left in place, empty
-    directories included, because an empty directory is not evidence we created it.
+    Now that the week folders sit at the top level beside the athlete's own files, the match is
+    on this plan's name prefix *and* on every file inside carrying our author tag. A folder
+    holding anything else is left in place, empty directories included, because an empty
+    directory is not evidence we created it.
     """
-    base = plan_dir(root, plan_name)
-    if not base.is_dir():
+    if not root.is_dir():
         return []
+    prefix = plan_prefix(plan_name)
     removed = []
-    for candidate in sorted(base.iterdir()):
+    for candidate in sorted(root.iterdir()):
         if not candidate.is_dir() or candidate in keep:
+            continue
+        if not candidate.name.startswith(prefix):
             continue
         files = list(candidate.glob("*"))
         if not files or not all(_is_ours(f) for f in files):
