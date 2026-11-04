@@ -132,16 +132,28 @@ try {
         -Description "Fitness Coach: pull intervals.icu data, roll the plan, push the horizon." `
         -Force | Out-Null
 } catch {
-    Write-Warning "Could not register the scheduled task: $($_.Exception.Message)"
-    Write-Output ""
-    Write-Output "This account is not an administrator, so if the Task Scheduler service is"
-    Write-Output "refusing task creation outright there is no way around it from here."
-    Write-Output ""
-    Write-Output "Admin-free alternative -- run the app at logon and let its own loop do the work:"
-    Write-Output "    powershell -ExecutionPolicy Bypass -File scripts\install_task.ps1 -StartupShortcut"
-    Write-Output ""
-    Write-Output "It syncs on the same interval, but only while you are logged on."
-    exit 1
+    Write-Warning "Register-ScheduledTask failed: $($_.Exception.Message)"
+    Write-Output "Retrying through schtasks.exe, which reaches the Task Scheduler by a"
+    Write-Output "different route (the COM API rather than the CIM provider) and is"
+    Write-Output "sometimes permitted where the cmdlet is not."
+
+    # One argument, quoted as the scheduler will re-parse it: both paths contain spaces.
+    $run = '"{0}" "{1}"' -f $python, $script
+    $out = & schtasks.exe /Create /TN $TaskName /TR $run /SC MINUTE /MO $IntervalMinutes /F 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Output ""
+        Write-Warning ("schtasks.exe also refused: {0}" -f ($out -join " "))
+        Write-Output ""
+        Write-Output "This account is not an administrator and the Task Scheduler service is"
+        Write-Output "refusing task creation, so there is no way to register one from here."
+        Write-Output ""
+        Write-Output "Admin-free alternative -- run the app at logon and let its own loop work:"
+        Write-Output "    powershell -ExecutionPolicy Bypass -File `"$PSCommandPath`" -StartupShortcut"
+        Write-Output ""
+        Write-Output "It syncs on the same interval, but only while you are logged on."
+        exit 1
+    }
+    Write-Output "Registered via schtasks.exe."
 }
 
 Write-Output "Registered '$TaskName': every $IntervalMinutes minutes, and ~2 minutes after logon."
