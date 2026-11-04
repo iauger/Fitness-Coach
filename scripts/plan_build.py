@@ -32,6 +32,8 @@ from src.planning.blocks import (
     PLAN_NAME, ROTATION, expand_week, intensity_split, rotation_after, weekly_rollup,
 )
 from src.planning.progression import TIERS
+from src.planning.roller import plan_week_number
+from src.planning.zwo import plan_dir, prune_week_dirs, supersede, week_dir
 from src.planning.progression_store import current_state
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -195,12 +197,28 @@ def main() -> int:
                            <= (monday + timedelta(days=6)).isoformat()})
         else:
             days = [args.zwo]
+
+        written_dirs = set()
         for day in days:
-            rc = write_zwo(all_sessions, day, out,
+            week_out = week_dir(out, args.plan_name, plan_week_number(monday_of(day)),
+                                monday_of(day))
+            week_out.mkdir(parents=True, exist_ok=True)
+            written_dirs.add(week_out)
+            rc = write_zwo(all_sessions, day, week_out,
                            name_override=args.zwo_name if args.zwo else None)
             if rc:
                 return rc
-        print(f"\n  {len(days)} ride{'' if len(days) == 1 else 's'} written to {out}")
+
+        # Week folders that have rolled out of the horizon, and anything we left behind flat in
+        # the athlete-id folder from before the layout changed.
+        for gone in prune_week_dirs(out, args.plan_name, written_dirs):
+            print(f"  removed stale folder {gone.name}")
+        for day in days:
+            for gone in supersede(out, day, set()):
+                print(f"  removed flat leftover {gone.name}")
+
+        print(f"\n  {len(days)} ride{'' if len(days) == 1 else 's'} written to "
+              f"{plan_dir(out, args.plan_name)}")
         print("  Restart Zwift if it is already running; it reads this folder at launch.\n")
     else:
         print("\n  preview only — the roller (step 4) is what stores and pushes this.\n")
@@ -211,7 +229,7 @@ def write_zwo(sessions: list[dict], on: date, out_dir: Path,
               name_override: str | None = None) -> int:
     """Write one day's ride to the Zwift workouts folder, and clear what it supersedes."""
     from src.planning import archetypes as A
-    from src.planning.zwo import safe_filename, session_name, supersede, to_zwo
+    from src.planning.zwo import display_name, safe_filename, to_zwo
 
     want = [s for s in sessions if s["date"] == on.isoformat()
             and s["archetype"] != "strength"]
@@ -231,7 +249,7 @@ def write_zwo(sessions: list[dict], on: date, out_dir: Path,
                    "sit": lambda: A.sit(s["variant"]),
                    "hiit": lambda: A.hiit(s["variant"]),
                    "threshold": lambda: A.threshold(s["variant"])}[s["archetype"]]()
-        name = name_override or session_name(session)
+        name = name_override or display_name(session, on.weekday())
         desc = (f"{s['prescription']}  |  {s['block_name']} wk{s['week_in_block']}, "
                 f"T{s['tier']}  |  {s['plan_name']}")
         path = out_dir / safe_filename(f"{on.isoformat()}_{name}")

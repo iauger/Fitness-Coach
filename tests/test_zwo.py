@@ -15,8 +15,8 @@ import pytest
 
 from src.planning import archetypes as A
 from src.planning.zwo import (
-    AUTHOR, AUTHOR_TAG, safe_filename, session_name, supersede, to_zwo,
-    zwift_workouts_dir,
+    AUTHOR, AUTHOR_TAG, display_name, plan_dir, prune_week_dirs, safe_filename,
+    session_name, supersede, to_zwo, week_dir, zwift_workouts_dir,
 )
 
 
@@ -201,3 +201,81 @@ def test_with_no_folder_at_all_the_newest_location_is_returned(tmp_path):
     """A fresh install should be pointed at where Zwift reads now, not where it used to."""
     got = zwift_workouts_dir("393440", home=tmp_path, roots=ROOTS)
     assert got == tmp_path / "AppData" / "Local" / "Zwift" / "Workouts" / "393440"
+
+
+# ── folder layout ─────────────────────────────────────────────────────────────
+
+def test_the_week_folder_names_both_the_plan_week_and_the_date():
+    """
+    The picker shows only this string, so it has to carry both.
+
+    The week number alone does not say when; the date alone does not say where in the plan you
+    are. Underscores rather than spaces because every workout Zwift itself writes to this folder
+    uses them, which is the only evidence available about what it will sync.
+    """
+    got = week_dir(Path("root"), "Sustainable rolling", 1, date(2026, 11, 2))
+    assert got == Path("root") / "Sustainable_rolling" / "W1_Nov_02"
+    assert " " not in str(got)
+
+
+def test_the_display_name_leads_with_the_day():
+    """Inside a week folder a workout only has to answer "is this today's"."""
+    assert display_name(A.lit(60, "steady"), 3) == "Thu - Endurance 60min"
+    assert display_name(A.lit(90, "steady"), 5).startswith("Sat - ")
+
+
+def test_display_names_stay_ascii():
+    """A middot would read better, but filenames with special characters are reported to break
+    Zwift's cloud sync and that is not worth risking for punctuation."""
+    for weekday in range(7):
+        name = display_name(A.sit("short"), weekday)
+        assert name.isascii(), name
+
+
+def test_pruning_removes_a_past_week_of_ours(tmp_path):
+    base = plan_dir(tmp_path, "P")
+    old = base / "W0_Oct_26"
+    old.mkdir(parents=True)
+    _write(old, "2026-10-27_Tue_-_Old.zwo", AUTHOR)
+    current = base / "W1_Nov_02"
+    current.mkdir()
+    _write(current, "2026-11-03_Tue_-_New.zwo", AUTHOR)
+
+    removed = prune_week_dirs(tmp_path, "P", {current})
+
+    assert [p.name for p in removed] == ["W0_Oct_26"]
+    assert not old.exists()
+    assert current.exists()
+
+
+def test_pruning_leaves_a_folder_holding_anything_that_is_not_ours(tmp_path):
+    """
+    This deletes directories, so the guard is asserted from the surviving side.
+
+    A folder with one hand-made workout in it must stay whole, and so must a mixed folder — we
+    do not get to remove someone else's file because it shares a directory with ours.
+    """
+    base = plan_dir(tmp_path, "P")
+    theirs = base / "W0_My_Own"
+    theirs.mkdir(parents=True)
+    _write(theirs, "handmade.zwo", "iauge")
+    mixed = base / "W0_Mixed"
+    mixed.mkdir()
+    _write(mixed, "ours.zwo", AUTHOR)
+    _write(mixed, "theirs.zwo", "iauge")
+
+    assert prune_week_dirs(tmp_path, "P", set()) == []
+    assert theirs.exists() and mixed.exists()
+    assert (mixed / "ours.zwo").exists()
+
+
+def test_pruning_leaves_an_empty_folder_alone(tmp_path):
+    """An empty directory is not evidence we created it."""
+    empty = plan_dir(tmp_path, "P") / "W0_Empty"
+    empty.mkdir(parents=True)
+    assert prune_week_dirs(tmp_path, "P", set()) == []
+    assert empty.exists()
+
+
+def test_pruning_a_plan_with_no_folder_yet_is_not_an_error(tmp_path):
+    assert prune_week_dirs(tmp_path, "never written", set()) == []

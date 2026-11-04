@@ -87,7 +87,7 @@ def horizon(conn, today: date | None = None, plan_name: str = PLAN_NAME,
                                 block_index, week_type)
         week_rows.append(plan_week_row(
             monday, block, block_index, week_in_block,
-            plan_week_number=_plan_week_number(monday), tier=tier, week_type=week_type,
+            plan_week_number=plan_week_number(monday), tier=tier, week_type=week_type,
             plan_name=plan_name, goal_date=GOAL_DATE, plan_start=PLAN_START_MONDAY))
         block_index, week_in_block = advance_position(block_index, week_in_block, "continue")
 
@@ -95,7 +95,7 @@ def horizon(conn, today: date | None = None, plan_name: str = PLAN_NAME,
             "cutoff": (today + timedelta(days=FREEZE_DAYS)).isoformat()}
 
 
-def _plan_week_number(monday: date) -> int:
+def plan_week_number(monday: date) -> int:
     """Weeks since the plan started, 1-based. Replaces a hand-maintained counter."""
     start = monday_of(date.fromisoformat(PLAN_START_MONDAY))
     return ((monday - start).days // 7) + 1
