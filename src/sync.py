@@ -10,13 +10,14 @@ Window logic:
 
 from datetime import date, timedelta
 from src.intervals.client import IntervalsClient
-from src.db.schema import get_connection
+from src.db.schema import get_connection, read_connection, write_connection
 from src.db.store import (
     upsert_activities, upsert_wellness, upsert_events, upsert_planned_workouts,
     update_activity_notes, log_sync,
 )
 from src.analysis.compliance import match_planned_workouts
 from src.integrations.tr_calendar import sync_planned_workouts
+from src.planning.roller import store_horizon
 
 OVERLAP_DAYS = 2
 MAX_INCREMENTAL_DAYS = 30
@@ -204,5 +205,24 @@ def incremental_sync(silent: bool = False) -> dict:
     except Exception as e:
         results["errors"].append(f"calendar: {e}")
         log(f"[sync] calendar    ERROR: {e}")
+
+    # Roll the plan forward. This runs *after* activities are in, because the gate grades
+    # measured weekly volume — rolling first would decide a closed week from data this sync was
+    # about to fetch, and that decision is then permanent.
+    #
+    # Best-effort for the same reason the calendar block is: a generator failure must not cost
+    # us the activity and wellness rows already written above. Unlike the calendar it writes
+    # through its own connection, so a failure here cannot leave a half-written horizon —
+    # write_connection rolls back.
+    try:
+        with write_connection() as plan_conn:
+            rolled = store_horizon(plan_conn, today)
+        results["plan"] = {k: v for k, v in rolled.items() if k != "sessions"}
+        log(f"[sync] plan        T{rolled['tier']} {rolled['week_type']}, "
+            f"{rolled['written']} sessions from {rolled['cutoff']}, "
+            f"{rolled['weeks']} week rows  (backfilled {rolled['backfilled']})")
+    except Exception as e:
+        results["errors"].append(f"plan: {e}")
+        log(f"[sync] plan        ERROR: {e}")
 
     return results

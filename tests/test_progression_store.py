@@ -310,3 +310,37 @@ def test_week_metrics_reads_the_week_type_of_one_plan_only(db, monkeypatch):
 
     m = W.week_metrics(date(2026, 11, 2), plan_name="plan A")
     assert (m["week_type"], m["phase"], m["plan_week_number"]) == ("base", "base", 1)
+
+
+def test_a_cycle_never_straddles_two_plans(db, monkeypatch):
+    """
+    The fourth reader, found only once a second plan actually had rows.
+
+    `cycles()` split on rest weeks in one pass over every plan in the table, so the end of a
+    superseded plan joined the start of its replacement into a single cycle. The report rendered
+    it as "Current cycle: plan weeks 9-3 - week -7 of 6" - a negative week number, from a cycle
+    that began in TrainerRoad week 9 and ended in rolling week 3.
+    """
+    import src.analysis.training_plan as tp
+
+    def week(plan, monday, end, kind, n):
+        db.execute(
+            "INSERT INTO training_plan_weeks (plan_name, plan_start_date, plan_end_date, "
+            "week_start_date, week_end_date, week_type, phase, phase_number, "
+            "phase_week_number, plan_week_number) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (plan, monday, end, monday, end, kind, "base", 1, n, n))
+
+    # An old plan whose final week is NOT a rest week, then a new plan right after it.
+    week("old plan", "2026-10-19", "2026-10-25", "base", 9)
+    week("old plan", "2026-10-26", "2026-11-01", "base", 10)
+    week("new plan", "2026-11-02", "2026-11-08", "base", 1)
+    week("new plan", "2026-11-09", "2026-11-15", "rest", 2)
+    db.commit()
+    monkeypatch.setattr(tp, "get_connection", lambda *a, **k: db)
+
+    cycles = tp.cycles()
+    assert len(cycles) == 2
+    assert {c["plan_name"] for c in cycles} == {"old plan", "new plan"}
+    for c in cycles:
+        lo, hi = c["plan_week_range"]
+        assert lo <= hi, f"{c['plan_name']} cycle runs backwards: {c['plan_week_range']}"

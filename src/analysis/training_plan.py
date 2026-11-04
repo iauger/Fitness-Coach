@@ -44,17 +44,28 @@ def cycles(plan_name: str | None = None) -> list[dict]:
     normal state for a plan in progress, not an error. A phase with no rest week seeded
     produces no boundary at all, so its weeks fold into the next cycle; seed_training_plan.py
     warns when that's the case.
+
+    A cycle never straddles two plans. With `plan_name=None` the rows are grouped by plan first
+    and each plan is split on its own rest weeks, because the table holds more than one plan and
+    a single pass over all of them joins the end of a superseded plan to the start of its
+    replacement. Live symptom, the day the second plan got rows: "Current cycle: plan weeks 9-3
+    — week -7 of 6", from a cycle running from TrainerRoad week 9 into rolling week 3.
     """
-    out: list[dict] = []
-    current: list[dict] = []
+    by_plan: dict[str, list[dict]] = {}
     for r in _rows(plan_name):
-        current.append(r)
-        if r["week_type"] == "rest":
-            out.append(_cycle(current, closed=True))
-            current = []
-    if current:
-        out.append(_cycle(current, closed=False))
-    return out
+        by_plan.setdefault(r["plan_name"], []).append(r)
+
+    out: list[dict] = []
+    for rows in by_plan.values():
+        current: list[dict] = []
+        for r in rows:
+            current.append(r)
+            if r["week_type"] == "rest":
+                out.append(_cycle(current, closed=True))
+                current = []
+        if current:
+            out.append(_cycle(current, closed=False))
+    return sorted(out, key=lambda c: c["start_date"])
 
 
 def _cycle(weeks: list[dict], closed: bool) -> dict:

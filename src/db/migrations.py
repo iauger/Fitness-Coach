@@ -481,12 +481,34 @@ def _m004_plan_progression(conn: sqlite3.Connection) -> None:
     )
 
 
+# ── migration 5 ───────────────────────────────────────────────────────────────
+
+def _m005_tier_on_the_stored_plan(conn: sqlite3.Connection) -> None:
+    """
+    Record the tier and week type a prescription was built at.
+
+    Both generators already produce these — `blocks.expand_week` returns `tier` and `week_type`,
+    `blocks.plan_week_row` returns `volume_tier` — and neither table could hold them, so
+    inserting a generated row raised on the week table and silently dropped the tier on the
+    session table. Found by trying to store a horizon rather than by reading the schema.
+
+    They matter beyond completeness: the whole point of keeping past prescriptions is to be able
+    to say "you were asked for 3 rides and 205 minutes at T2; you rode 2 and 124". Without the
+    tier on the row, the ask is only recoverable by replaying the gate, and a replay after a
+    later promotion would reconstruct the wrong ask.
+    """
+    add_column(conn, "prescribed_sessions", "volume_tier", "INTEGER")
+    add_column(conn, "prescribed_sessions", "week_type", "TEXT")
+    add_column(conn, "training_plan_weeks", "volume_tier", "INTEGER")
+
+
 # (version, name, step). Append only — never renumber or edit an applied migration.
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "baseline schema as of phase 12B", _m001_baseline),
     (2, "chat sessions and messages for resumable conversations", _m002_chat_sessions),
     (3, "prescribed_sessions for the plan builder", _m003_prescribed_sessions),
     (4, "plan_progression, export columns, one plan namespace", _m004_plan_progression),
+    (5, "tier and week type on the stored plan", _m005_tier_on_the_stored_plan),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)
