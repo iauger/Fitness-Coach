@@ -1097,17 +1097,150 @@ The point of this section is to check the shape holds, not to schedule work.
 Nothing on that list requires moving a boundary. The two that would have — multi-tenancy and
 rescheduling missed work — are the two explicitly ruled out.
 
-## Sequencing
+## Device delivery: what we learned, 2026-11-04
 
-1. `src/config.py` + `athlete.example.yaml`, with the 12 personal constants reading from it.
-   No behaviour change; the committed config reproduces today's values exactly.
-2. Deduplicate `SPORT_GROUPS`.
-3. Tier bootstrap from synced history, with `start_from: explicit` as the escape hatch.
-4. Archetype overrides, validated against the safety rules.
-5. Auth, then network binding.
-6. Features, in the order above.
+Investigated whether we need to build Garmin and Karoo push. **We do not** — intervals.icu
+already owns that path, and we already produce the `workout_doc` it needs. What follows is
+account configuration and verification, not code.
 
-Steps 1–2 are mechanical and verifiable by the existing suite: if the committed config
-reproduces today's prescriptions byte-for-byte, nothing regressed. Step 3 is where the real
-design risk is, and it deserves the same treatment the progression gate got — replay against
-the frozen history fixture and check the derived ladder against the one we chose by hand.
+Read from the athlete object on the live account:
+
+| Device | Reads our data | Pushes workouts | Field |
+|---|---|---|---|
+| Garmin | yes (activities + wellness) | **off** | `icu_garmin_upload_workouts = False` |
+| Zwift | yes | **on** | `zwift_upload_workouts = True` |
+| Karoo | not connected | — | no fields present |
+
+**Garmin — deferred, no code needed.** The upload flag is off and `icu_garmin_training = False`
+with `icu_garmin_last_upload = None`, which suggests the Garmin *Training API* scope was never
+granted; flipping the flag may not be enough and a reconnect may be required. Two constraints
+to design around when it is switched on:
+
+- Garmin accepts roughly **7 days** of planned workouts, while our horizon is 3 weeks. The
+  device window and the plan horizon are different things and should not be conflated.
+- **Strength arrives as unstructured text.** Two of five weekly sessions are strength, so a
+  third of the calendar lands without structure. Not a bug to fix, a limitation to state.
+- A 2026 forum report says workouts **with text in the description** failed to sync via the
+  API while empty ones succeeded. We put text in every description, and intervals.icu appends
+  its own parsed step list to it. If Garmin sync misbehaves, the description is the first
+  suspect — the same field that swallowed a workout on 2026-11-03.
+
+**Zwift — open question, possible duplication.** `zwift_upload_workouts = True` means
+intervals.icu is already pushing planned workouts to Zwift, and we also write `.zwo` files
+directly into the Zwift folder. Those are two delivery paths to one destination. If Zwift is
+showing each session twice, the file-writing is redundant and should be dropped rather than
+reconciled. **Needs a human to look at Zwift and say.**
+
+**Karoo — backlog, not for this athlete.** Wanted for a friend, no device here to test against.
+Official intervals.icu sync exists (January 2025) but the connection is created *from the
+Karoo*, not from intervals.icu's settings, so it cannot be set up or tested remotely. An
+unresolved bug report (~75 days old) says planned workouts stopped reaching Hammerhead while
+completed rides still uploaded. Revisit only with a device in hand.
+
+`push_errors` exists on every event and is currently `null`. That is the hook for detecting
+delivery failures programmatically, whenever device push is turned on.
+
+---
+
+## The refactor, chunked
+
+Each step independently verifiable, smallest first, same discipline as the rolling-plan
+rebuild. Steps 0–2 are mechanical; step 3 is where the design risk is.
+
+### Decisions locked
+
+- **YAML, via PyYAML.** Already installed transitively; it gets pinned explicitly rather than
+  relied on by accident. `tomllib` would be zero-dependency and is the honest alternative, but
+  the config carries nested lists of dicts (goals, rotation) and YAML reads better for those.
+- **Config is loaded once, at import.** Editing the file while the server runs does nothing.
+  Mitigated by exposing the loaded values at `/api/config` so the running state is inspectable
+  rather than guessed at.
+- **A missing config is generated from the example on first run**, with a message saying so.
+  Refusing to start is clearer but makes the first run a wall for someone who just cloned.
+- **Secrets stay in `.env`.** The split: `.env` is what must never be shared,
+  `config/athlete.yaml` is what someone *would* paste when asking for help.
+
+### Step 0 — the loader, with no consumers
+
+`src/config.py` as a leaf module (no imports from this project), `config/athlete.example.yaml`
+committed, `config/athlete.yaml` gitignored. A frozen dataclass per section, so a typo in the
+file is an error at load rather than an `AttributeError` three modules away.
+
+*Verify:* the example loads; an unknown key raises with the key named; a missing required
+field raises with the field named; `python -c "import src.config"` costs nothing at import.
+
+### Step 1 — the 12 personal constants read from it
+
+`ATHLETE_PROFILE`, the four in `planning/constants.py`, `ZWIFT_ID`, the two seed scripts, the
+server host/port, and the three page titles.
+
+*Verify, and this is the whole point of the step:* generate the horizon before and after, and
+diff `prescribed_sessions`. **Byte-identical, or the step is wrong.** The committed config must
+reproduce today's plan exactly. 469 tests still green.
+
+### Step 2 — deduplicate `SPORT_GROUPS`
+
+One definition, imported by `analysis/activities.py`, `db/store.py`,
+`visualizations/calendar_view.py`, `scripts/dedupe_activities.py`. Kept separate from step 1 so
+that step's diff stays clean.
+
+*Verify:* the four copies are identical today, so the merge is provably safe; tests green.
+
+### Step 3 — derive the tier ladder from synced history
+
+The design risk lives here. `scripts/bootstrap_plan.py` walks synced weeks with the existing
+`analysis.activities.week_volume`, finds the athlete's own sustained volume, and writes a
+ladder. Config states intent (`sustainable_band_hours`, `long_ride_ceiling_min`), not numbers.
+
+*Verify the way the progression gate was verified:* replay against the frozen
+`tests/fixtures/history_2025-09_2026-11.json` and compare the derived ladder to the one chosen
+by hand. They will not match exactly — the question is whether the differences are defensible.
+A derived T1 wildly above measured practice means the derivation is wrong, not the fixture.
+
+Also: the roller must refuse to run before a bootstrap has happened, rather than silently
+generating a floor ladder and never revisiting it.
+
+### Step 4 — archetype overrides
+
+Ours stay as the default library. A config may override a named variant. Every override is
+validated against the safety rules that are **not** configurable: never above FTP, work:rest
+floors, at most two hard sessions a week, strength never trimmed.
+
+*Verify:* an override that breaks a safety rule is refused with a message naming the rule;
+`tests/test_invariants.py` passes against a config that overrides every variant.
+
+### Step 5 — first-run experience
+
+`README` for a stranger, config generated on first run, bootstrap wired in, and the empty
+database path (already covered by `tests/test_empty_database.py`) exercised end to end from a
+fresh clone.
+
+*Verify:* clone into a clean directory, follow the README, reach a generated plan. That is the
+test — not a unit test, a walkthrough.
+
+### Step 6 — auth, then network binding
+
+Not a config change: `serve.py` binds loopback because the process holds both API keys and has
+no authentication, and `/api/chat/ask` spends money per call. A long random token in `.env`,
+checked by FastAPI middleware, is proportionate for one user. `--host 0.0.0.0` already warns;
+it should refuse unless a token is configured.
+
+*Verify:* every route 401s without the token; the chat endpoint rate-limits; binding non-loopback
+without a token exits rather than warning.
+
+### Then: features
+
+In the order argued above — eFTP tracking first (four disagreeing FTP numbers today), then
+execution scoring, power curve, workout alternates. Garmin verification slots in whenever the
+account flag is flipped; Karoo waits for hardware.
+
+### Still needing a human answer
+
+1. **Is Zwift showing duplicates?** Decides whether `.zwo` file-writing survives at all.
+2. **What identifies a plan across a config rename?** `PLAN_NAME` is the join key for five
+   readers; renaming it in config orphans every stored row. Either a stable internal id with
+   the name as a label, or a documented rename path. Leaning: internal id, because a config
+   file invites editing and the current behaviour silently loses data.
+3. **Timezone.** `date.today()` is correctly the athlete's day but is really the *server's*
+   day. Fine on a laptop, wrong on a server left in UTC. Worth fixing in step 1 while the
+   config is being built, or deferring until hosting is real.
