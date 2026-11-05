@@ -9,20 +9,10 @@ from src.db.schema import read_connection
 from src.analysis.dates import monday_of
 from src.analysis.load import effective_tss
 from src.clock import today_local
-
-SPORT_GROUPS = {
-    "Ride": "cycling", "VirtualRide": "cycling", "GravelRide": "cycling",
-    "MountainBikeRide": "cycling", "EBikeRide": "cycling",
-    "Run": "running", "VirtualRun": "running", "TrailRun": "running",
-    "Swim": "swimming", "OpenWaterSwim": "swimming",
-    "WeightTraining": "strength", "Workout": "strength",
-    "Yoga": "yoga", "Pilates": "yoga",
-    "Walk": "walk", "Hike": "hike",
-}
+from src.sports import SPORT_GROUPS, sport_group  # noqa: F401  (re-export)
 
 
-def _sport_group(activity_type: str) -> str:
-    return SPORT_GROUPS.get(activity_type, "other")
+_sport_group = sport_group
 
 
 def recent_activities(days: int = 28) -> list[dict]:
@@ -123,9 +113,9 @@ def week_volume(conn, monday: date) -> dict:
     training_days: set[str] = set()
     strength = 0
     for r in rows:
-        # _sport_group's "cycling" set is the same five types as compliance.CYCLING_TYPES;
-        # using the local grouping keeps this module's one notion of sport authoritative.
-        group = _sport_group(r["type"] or "")
+        # The same table compliance.CYCLING_TYPES is derived from, so "is this a ride" has
+        # one answer across the gate, the matcher and this rollup.
+        group = sport_group(r["type"])
         secs = r["moving_time"] or 0
         day = r["date"][:10]
         training_days.add(day)

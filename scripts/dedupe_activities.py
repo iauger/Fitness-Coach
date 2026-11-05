@@ -19,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.sports import sport_group
 from src.db.schema import get_connection
 
 DURATION_TOLERANCE_SECS = 60  # 1 minute — covers Garmin/Strava clock drift
@@ -33,19 +34,8 @@ def _richness(row: dict) -> int:
         return 0
 
 
-SPORT_GROUPS = {
-    "Ride": "cycling", "VirtualRide": "cycling", "GravelRide": "cycling",
-    "MountainBikeRide": "cycling", "EBikeRide": "cycling",
-    "Run": "running", "VirtualRun": "running", "TrailRun": "running",
-    "Swim": "swimming", "OpenWaterSwim": "swimming",
-    "WeightTraining": "strength", "Workout": "strength",
-    "Yoga": "yoga", "Pilates": "yoga",
-    "Walk": "walk", "Hike": "hike",
-}
 
-
-def _sport_group(activity_type: str | None) -> str:
-    return SPORT_GROUPS.get(activity_type or "", "other")
+_sport_group = sport_group
 
 
 def find_duplicates(conn) -> list[tuple]:

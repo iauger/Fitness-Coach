@@ -15,6 +15,7 @@ from src.analysis.load import effective_tss
 from src.visualizations.theme import COLORS
 from src.clock import today_local
 from src.config import config
+from src.sports import OTHER, sport_group
 
 CHARTS_DIR = Path(__file__).parent.parent.parent / "data" / "charts"
 
@@ -101,19 +102,8 @@ def _load_data(start: date, end: date) -> dict[str, dict]:
     return days
 
 
-SPORT_GROUPS = {
-    "Ride": "cycling", "VirtualRide": "cycling", "GravelRide": "cycling",
-    "MountainBikeRide": "cycling", "EBikeRide": "cycling",
-    "Run": "running", "VirtualRun": "running", "TrailRun": "running",
-    "Swim": "swimming", "OpenWaterSwim": "swimming",
-    "WeightTraining": "strength", "Workout": "strength",
-    "Yoga": "yoga", "Pilates": "yoga",
-    "Walk": "walk", "Hike": "hike",
-}
-
-
 def _sport_color(activity_type: str | None) -> str:
-    return COLORS.get(SPORT_GROUPS.get(activity_type or "", "other"), COLORS["other"])
+    return COLORS.get(sport_group(activity_type), COLORS[OTHER])
 
 
 def _wellness_html(w: dict | None) -> str:

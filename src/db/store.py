@@ -4,23 +4,13 @@ from datetime import date
 from pathlib import Path
 from .schema import DB_PATH, write_connection
 from src.clock import utc_now_iso
-
-
-_SPORT_GROUPS = {
-    "Ride": "cycling", "VirtualRide": "cycling", "GravelRide": "cycling",
-    "MountainBikeRide": "cycling", "EBikeRide": "cycling",
-    "Run": "running", "VirtualRun": "running", "TrailRun": "running",
-    "Swim": "swimming", "OpenWaterSwim": "swimming",
-    "WeightTraining": "strength", "Workout": "strength",
-    "Yoga": "yoga", "Pilates": "yoga",
-    "Walk": "walk", "Hike": "hike",
-}
+from src.sports import sport_group
 
 
 def _has_near_duplicate(conn, date: str, moving_time: int, activity_type: str,
                         exclude_id: str, tolerance: int = 60) -> bool:
     """True if a same-sport activity with similar duration already exists on this date."""
-    group = _SPORT_GROUPS.get(activity_type or "", "other")
+    group = sport_group(activity_type)
     # Fetch same-date activities with duration within tolerance
     rows = conn.execute("""
         SELECT type FROM activities
@@ -28,7 +18,7 @@ def _has_near_duplicate(conn, date: str, moving_time: int, activity_type: str,
           AND moving_time IS NOT NULL
           AND ABS(moving_time - ?) <= ?
     """, (date, exclude_id, moving_time, tolerance)).fetchall()
-    return any(_SPORT_GROUPS.get(r["type"] or "", "other") == group for r in rows)
+    return any(sport_group(r["type"]) == group for r in rows)
 
 
 def upsert_activities(activities: list[dict], db_path: Path = DB_PATH) -> int:

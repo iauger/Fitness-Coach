@@ -409,3 +409,28 @@ def test_the_committed_example_fills_every_optional_section():
     assert set(raw["athlete"]) >= {"name", "timezone", "history_start", "primary_sport",
                                    "equipment", "notes", "tools"}
     assert set(raw["profile"]) == {"height_in", "weight_lbs", "ftp"}
+
+
+def test_the_sport_table_is_defined_exactly_once():
+    """
+    A grep, like the `date.today()` guard above and for the same reason.
+
+    `SPORT_GROUPS` existed in four copies, plus two hand-maintained derivations. They agreed
+    when they were merged, but nothing made them agree, and the way they would have diverged
+    is quiet: an unrecognised activity type falls to "other", so a ride would silently vanish
+    from a distribution chart, be skipped by the duplicate check and be left uncoloured on the
+    calendar — three separate wrongnesses, no error.
+    """
+    import pathlib
+
+    definitions = []
+    for root in ("src", "scripts"):
+        for f in sorted(pathlib.Path(root).rglob("*.py")):
+            if "__pycache__" in str(f):
+                continue
+            for n, line in enumerate(f.read_text(encoding="utf-8").split("\n"), 1):
+                if line.strip().startswith(("SPORT_GROUPS = {", "_SPORT_GROUPS = {")):
+                    definitions.append(f"{f}:{n}")
+    assert len(definitions) == 1, (
+        f"the sport table is defined in {len(definitions)} places: {definitions}")
+    assert definitions[0].replace(chr(92), "/").startswith("src/sports.py:")

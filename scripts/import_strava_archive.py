@@ -25,17 +25,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.db.schema import read_connection
+from src.sports import SPORT_GROUPS
 
-# Map Strava sport types → our SPORT_GROUPS keys (matching activities.py)
-STRAVA_TYPE_MAP = {
-    "Ride": "Ride", "VirtualRide": "VirtualRide", "GravelRide": "GravelRide",
-    "MountainBikeRide": "MountainBikeRide", "EBikeRide": "EBikeRide",
-    "Run": "Run", "VirtualRun": "VirtualRun", "TrailRun": "TrailRun",
-    "Swim": "Swim", "OpenWaterSwim": "OpenWaterSwim",
-    "WeightTraining": "WeightTraining", "Workout": "Workout",
-    "Yoga": "Yoga", "Pilates": "Pilates",
-    "Walk": "Walk", "Hike": "Hike",
-}
+# Strava sport type -> ours. An identity map over every type we recognise: Strava's names
+# happen to match intervals.icu's for all sixteen, so the map's real job is to *reject*
+# anything else rather than to translate. Built from the one table so a type added there is
+# importable without a second edit here.
+STRAVA_TYPE_MAP = {t: t for t in SPORT_GROUPS}
 
 # Columns that may appear in the CSV with their possible header variants
 def _col(row: dict, *names) -> str | None:

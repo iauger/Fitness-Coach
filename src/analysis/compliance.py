@@ -9,8 +9,7 @@ from datetime import date, timedelta
 from src.athlete.profile import get_metric
 from src.db.schema import get_connection, read_connection
 from src.clock import today_local
-
-CYCLING_TYPES = ("Ride", "VirtualRide", "GravelRide", "MountainBikeRide", "EBikeRide")
+from src.sports import CYCLING_TYPES  # noqa: F401  (re-exported: one importer outside)
 
 COMPLETED_PCT = 85
 
