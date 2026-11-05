@@ -19,12 +19,12 @@ import csv
 import zipfile
 import argparse
 import io
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.db.schema import get_connection, read_connection
+from src.db.schema import read_connection
 
 # Map Strava sport types → our SPORT_GROUPS keys (matching activities.py)
 STRAVA_TYPE_MAP = {
