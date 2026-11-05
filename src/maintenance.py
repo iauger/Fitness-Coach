@@ -32,7 +32,6 @@ import os
 import time
 from contextlib import contextmanager
 from datetime import date
-from pathlib import Path
 
 from src.clock import utc_now_iso
 from src.db.schema import DB_PATH, read_connection, write_connection

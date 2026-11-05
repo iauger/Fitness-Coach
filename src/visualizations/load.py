@@ -2,11 +2,9 @@
 Weekly training load by sport — stacked bar chart, 12 weeks.
 """
 
-from datetime import date, timedelta
-from collections import defaultdict
 import plotly.graph_objects as go
 from src.analysis.activities import weekly_load_by_sport
-from src.visualizations.theme import COLORS, LAYOUT, AXIS, SPORT_COLOR
+from src.visualizations.theme import LAYOUT, AXIS, SPORT_COLOR
 
 SPORT_ORDER = ["cycling", "running", "strength", "swimming", "yoga", "walk", "hike", "other"]
 

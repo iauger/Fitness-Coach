@@ -15,7 +15,6 @@ import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from typing import Iterator
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse

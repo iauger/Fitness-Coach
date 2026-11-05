@@ -3,7 +3,6 @@ Assembles all analysis signals into a structured coaching context.
 This is what gets passed to Claude as the data payload.
 """
 
-import json
 from datetime import date, timedelta
 from .fitness import current_fitness, ctl_trend, peak_ctl, ctl_history
 from .activities import recent_activities, sport_distribution, weekly_load_by_sport, yearly_volume
@@ -19,7 +18,7 @@ from .weekly import summaries_between, summary_lines
 from .load import load_correction_text
 from .derive import derived_text
 from src.athlete.profile import current_profile
-from src.db.schema import get_connection, read_connection
+from src.db.schema import read_connection
 
 
 def _with_weekday(iso_date: str) -> str:

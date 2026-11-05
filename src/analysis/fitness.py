@@ -5,8 +5,7 @@ Reads from the wellness table where CTL/ATL are stored per day.
 
 import json
 from datetime import date, timedelta
-from statistics import mean, stdev
-from src.db.schema import get_connection, read_connection
+from src.db.schema import read_connection
 
 
 def _wellness_rows(days: int = 365) -> list[dict]:

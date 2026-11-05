@@ -9,7 +9,7 @@ blocks almost immediately.
 """
 
 from datetime import date, timedelta
-from src.db.schema import get_connection, read_connection
+from src.db.schema import read_connection
 
 
 def _rows(plan_name: str | None = None) -> list[dict]:

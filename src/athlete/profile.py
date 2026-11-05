@@ -9,8 +9,8 @@ was actually true then, not whatever it is today — get_metric(metric, as_of=ac
 looks up the value effective on that date, not the latest one.
 """
 
-from datetime import date, datetime
-from src.db.schema import get_connection, read_connection, write_connection
+from datetime import date
+from src.db.schema import read_connection, write_connection
 from src.clock import utc_now_iso
 
 METRICS = ("height_in", "weight_lbs", "ftp")

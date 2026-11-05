@@ -2,10 +2,9 @@
 Recovery and wellness signal analysis — HRV, sleep, resting HR trends.
 """
 
-import json
 from datetime import date, timedelta
-from statistics import mean, stdev
-from src.db.schema import get_connection, read_connection
+from statistics import mean
+from src.db.schema import read_connection
 
 
 def _recent_wellness(days: int) -> list[dict]:

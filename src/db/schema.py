@@ -1,6 +1,5 @@
 import sqlite3
 from contextlib import contextmanager
-import os
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent.parent.parent / "data" / "fitness.db"

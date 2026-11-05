@@ -12,7 +12,6 @@ request to the API is malformed.
 
 import json
 import uuid
-from datetime import datetime
 
 from src.db.schema import get_connection, write_connection
 from src.clock import utc_now_iso

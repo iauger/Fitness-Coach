@@ -7,7 +7,7 @@ import json
 from datetime import date
 from pathlib import Path
 from src.visualizations import pmc, load, recovery
-from src.db.schema import get_connection, read_connection
+from src.db.schema import read_connection
 
 CHARTS_DIR = Path(__file__).parent.parent.parent / "data" / "charts"
 

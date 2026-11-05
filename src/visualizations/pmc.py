@@ -13,7 +13,7 @@ import json
 from datetime import date, timedelta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from src.db.schema import get_connection, read_connection
+from src.db.schema import read_connection
 from src.athlete.profile import metric_history
 from src.analysis.forecast import project_fitness
 from src.visualizations.theme import COLORS, LAYOUT, AXIS

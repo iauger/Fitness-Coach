@@ -12,8 +12,8 @@ deliberately easy week doesn't dilute the read on the hard ones.
 """
 
 import json
-from datetime import date, datetime
-from src.db.schema import get_connection, read_connection, write_connection
+from datetime import date
+from src.db.schema import read_connection, write_connection
 from src.analysis.training_plan import cycles
 from src.analysis.load import sum_effective_tss
 from src.clock import utc_now_iso

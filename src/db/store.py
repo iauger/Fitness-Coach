@@ -2,7 +2,7 @@ import json
 import sqlite3
 from datetime import date
 from pathlib import Path
-from .schema import DB_PATH, get_connection, write_connection
+from .schema import DB_PATH, write_connection
 from src.clock import utc_now_iso
 
 

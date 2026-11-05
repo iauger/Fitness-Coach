@@ -5,7 +5,7 @@ Recovery dashboard — HRV trend + sleep hours, dual panel, 30 days.
 from datetime import date, timedelta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from src.db.schema import get_connection, read_connection
+from src.db.schema import read_connection
 from src.visualizations.theme import COLORS, LAYOUT, AXIS
 
 

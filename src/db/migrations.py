@@ -27,7 +27,6 @@ on the same result.
 """
 
 import sqlite3
-from datetime import datetime
 from pathlib import Path
 
 from .schema import DB_PATH, get_connection

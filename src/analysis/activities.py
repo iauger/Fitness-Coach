@@ -5,7 +5,7 @@ Activity breakdown — sport distribution, recent training, load patterns.
 import json
 from datetime import date, timedelta
 from collections import defaultdict
-from src.db.schema import get_connection, read_connection
+from src.db.schema import read_connection
 from src.analysis.dates import monday_of
 from src.analysis.load import effective_tss
 

@@ -7,7 +7,7 @@ typically only publishes the near-term block, not the full season) — this is a
 """
 
 from datetime import date, timedelta
-from src.db.schema import get_connection, read_connection
+from src.db.schema import read_connection
 
 CTL_DAYS = 42
 ATL_DAYS = 7

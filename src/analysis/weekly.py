@@ -12,7 +12,7 @@ derive.py's metrics fail — see the "what gets computed, what gets stored" rule
 """
 
 import json
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from src.db.schema import get_connection, read_connection, write_connection
 from src.analysis.cycle import _load_for_range, _recovery_for_range
 

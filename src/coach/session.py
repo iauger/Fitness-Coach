@@ -6,7 +6,7 @@ Model controlled by COACH_MODEL env var (default: claude-haiku-4-5).
 import os
 import json
 import uuid
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 from anthropic import Anthropic
 from dotenv import load_dotenv
@@ -21,9 +21,8 @@ from src.analysis.weekly import (
 )
 from src.coach.summarize import weekly_narrative
 from src.coach.prompt import build_system_prompt
-from src.coach.tools import TOOL_SCHEMAS, execute_tool
-from src.coach.stream import run_turn, stream_turn, Event
-from src.db.schema import get_connection, write_connection
+from src.coach.stream import run_turn
+from src.db.schema import write_connection
 from src.sync import incremental_sync
 from src.clock import today_local_iso, utc_now_iso
 

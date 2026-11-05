@@ -6,11 +6,10 @@ plus our own plan-compliance overlay (which intervals.icu's stock view doesn't h
 Raw HTML/CSS grid, not Plotly — this is a layout problem, not a chart.
 """
 
-import json
 from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
-from src.db.schema import get_connection, read_connection
+from src.db.schema import read_connection
 from src.analysis.load import effective_tss
 from src.visualizations.theme import COLORS
 
