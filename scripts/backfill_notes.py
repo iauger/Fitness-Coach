@@ -11,7 +11,7 @@ column, or any time notes were written further back than that window reaches:
 
 import sys
 import argparse
-from datetime import date, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -19,11 +19,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.intervals.client import IntervalsClient
 from src.db.store import update_activity_notes
 from src.sync import sync_activity_notes
+from src.clock import today_local
 
 
 def run(days: int, dry_run: bool) -> None:
-    start = date.today() - timedelta(days=days)
-    end = date.today()
+    start = today_local() - timedelta(days=days)
+    end = today_local()
     print(f"Scanning activities {start} to {end} for chat threads...")
 
     client = IntervalsClient()

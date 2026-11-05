@@ -10,6 +10,7 @@ blocks almost immediately.
 
 from datetime import date, timedelta
 from src.db.schema import read_connection
+from src.clock import today_local
 
 
 def _rows(plan_name: str | None = None) -> list[dict]:
@@ -28,7 +29,7 @@ def _rows(plan_name: str | None = None) -> list[dict]:
 
 def current_week(on: date | None = None, plan_name: str | None = None) -> dict | None:
     """The plan week containing `on` (default today), or None if outside any seeded plan."""
-    d = (on or date.today()).isoformat()
+    d = (on or today_local()).isoformat()
     for r in _rows(plan_name):
         if r["week_start_date"] <= d <= r["week_end_date"]:
             return r
@@ -87,7 +88,7 @@ def _cycle(weeks: list[dict], closed: bool) -> dict:
 
 
 def current_cycle(on: date | None = None, plan_name: str | None = None) -> dict | None:
-    d = (on or date.today()).isoformat()
+    d = (on or today_local()).isoformat()
     for c in cycles(plan_name):
         if c["start_date"] <= d <= c["end_date"]:
             return c
@@ -101,7 +102,7 @@ def just_completed_cycle(on: date | None = None, plan_name: str | None = None) -
     This is the trigger for the 4-week cycle review: it returns something exactly once per
     cycle, on the day the new one starts, so a caller can fire a review without tracking state.
     """
-    d = on or date.today()
+    d = on or today_local()
     for c in cycles(plan_name):
         if c["closed"] and date.fromisoformat(c["end_date"]) == d - timedelta(days=1):
             return c

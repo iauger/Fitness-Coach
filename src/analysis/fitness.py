@@ -6,10 +6,11 @@ Reads from the wellness table where CTL/ATL are stored per day.
 import json
 from datetime import date, timedelta
 from src.db.schema import read_connection
+from src.clock import today_local
 
 
 def _wellness_rows(days: int = 365) -> list[dict]:
-    end = date.today()
+    end = today_local()
     start = end - timedelta(days=days)
     with read_connection() as conn:
         rows = conn.execute("""
@@ -72,7 +73,7 @@ def peak_ctl(years: int = 9) -> dict:
             SELECT date, ctl FROM wellness
             WHERE ctl IS NOT NULL AND date >= ?
             ORDER BY ctl DESC LIMIT 1
-        """, ((date.today() - timedelta(days=years * 365)).isoformat(),)).fetchone()
+        """, ((today_local() - timedelta(days=years * 365)).isoformat(),)).fetchone()
     if not row:
         return {}
     return {"date": row["date"], "ctl": round(row["ctl"], 1)}

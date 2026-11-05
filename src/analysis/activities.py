@@ -8,6 +8,7 @@ from collections import defaultdict
 from src.db.schema import read_connection
 from src.analysis.dates import monday_of
 from src.analysis.load import effective_tss
+from src.clock import today_local
 
 SPORT_GROUPS = {
     "Ride": "cycling", "VirtualRide": "cycling", "GravelRide": "cycling",
@@ -26,7 +27,7 @@ def _sport_group(activity_type: str) -> str:
 
 def recent_activities(days: int = 28) -> list[dict]:
     """Last N days of activities with key fields extracted."""
-    since = (date.today() - timedelta(days=days)).isoformat()
+    since = (today_local() - timedelta(days=days)).isoformat()
     with read_connection() as conn:
         rows = conn.execute("""
             SELECT id, date, name, type, moving_time, distance, avg_hr, tss, calories, feel,
@@ -71,7 +72,7 @@ def weekly_load_by_sport(weeks: int | None = 12) -> list[dict]:
                 SELECT date, type, raw_json FROM activities ORDER BY date ASC
             """).fetchall()
         else:
-            since = (date.today() - timedelta(days=weeks * 7)).isoformat()
+            since = (today_local() - timedelta(days=weeks * 7)).isoformat()
             rows = conn.execute("""
                 SELECT date, type, raw_json FROM activities WHERE date >= ? ORDER BY date ASC
             """, (since,)).fetchall()
@@ -148,7 +149,7 @@ def week_volume(conn, monday: date) -> dict:
 
 def sport_distribution(days: int = 90) -> dict:
     """Sport group breakdown by activity count and time for recent period."""
-    since = (date.today() - timedelta(days=days)).isoformat()
+    since = (today_local() - timedelta(days=days)).isoformat()
     with read_connection() as conn:
         rows = conn.execute("""
             SELECT type, moving_time FROM activities WHERE date >= ?

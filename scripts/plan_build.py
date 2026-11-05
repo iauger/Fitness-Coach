@@ -32,8 +32,8 @@ from src.planning.blocks import (
     PLAN_NAME, ROTATION, expand_week, intensity_split, rotation_after, weekly_rollup,
 )
 from src.planning.progression import TIERS
-from src.planning.roller import plan_week_number
 from src.planning.progression_store import current_state
+from src.clock import today_local
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
@@ -116,7 +116,7 @@ def main() -> int:
     p.add_argument("--plan-name", default=PLAN_NAME)
     args = p.parse_args()
 
-    today = args.as_of or date.today()
+    today = args.as_of or today_local()
     # A pretend date must not file its decisions as real ones — see derive_state.
     persisted = args.as_of is None
     state = derive_state(today, persist=persisted)

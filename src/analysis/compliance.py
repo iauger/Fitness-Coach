@@ -8,6 +8,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 from src.athlete.profile import get_metric
 from src.db.schema import get_connection, read_connection
+from src.clock import today_local
 
 CYCLING_TYPES = ("Ride", "VirtualRide", "GravelRide", "MountainBikeRide", "EBikeRide")
 
@@ -122,13 +123,13 @@ def match_planned_workouts(start: str, end: str) -> dict:
 
 def compliance_summary(weeks: int = 8) -> dict:
     """Adherence rate over the trailing N weeks (only dates already matched)."""
-    since = (date.today() - timedelta(weeks=weeks)).isoformat()
+    since = (today_local() - timedelta(weeks=weeks)).isoformat()
     with read_connection() as conn:
         rows = conn.execute("""
             SELECT compliance_status, COUNT(*) as n FROM planned_workouts
             WHERE date >= ? AND date <= ? AND compliance_status IS NOT NULL
             GROUP BY compliance_status
-        """, (since, date.today().isoformat())).fetchall()
+        """, (since, today_local().isoformat())).fetchall()
 
     counts = {r["compliance_status"]: r["n"] for r in rows}
     total = sum(counts.values())
@@ -145,7 +146,7 @@ def compliance_summary(weeks: int = 8) -> dict:
 
 def recent_planned_workouts(days: int = 14) -> list[dict]:
     """Recent planned workouts with their compliance outcome, most recent first."""
-    since = (date.today() - timedelta(days=days)).isoformat()
+    since = (today_local() - timedelta(days=days)).isoformat()
     with read_connection() as conn:
         rows = conn.execute("""
             SELECT date, name, planned_tss, planned_duration_min, compliance_status, compliance_pct

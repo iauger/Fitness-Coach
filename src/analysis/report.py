@@ -19,6 +19,7 @@ from .load import load_correction_text
 from .derive import derived_text
 from src.athlete.profile import current_profile
 from src.db.schema import read_connection
+from src.clock import today_local
 
 
 def _with_weekday(iso_date: str) -> str:
@@ -45,7 +46,7 @@ RAW_ACTIVITY_DAYS = 14
 
 
 def _raw_activity_horizon() -> str:
-    return (date.today() - timedelta(days=RAW_ACTIVITY_DAYS)).isoformat()
+    return (today_local() - timedelta(days=RAW_ACTIVITY_DAYS)).isoformat()
 
 
 def _earlier_week_summaries() -> list[dict]:
@@ -106,7 +107,7 @@ def _recent_coaching_memory(limit: int = MEMORY_PER_TYPE) -> list[str]:
 
 def _recent_life_events(days: int = 90) -> list[dict]:
     """Life events from the last N days."""
-    since = (date.today() - timedelta(days=days)).isoformat()
+    since = (today_local() - timedelta(days=days)).isoformat()
     with read_connection() as conn:
         rows = conn.execute("""
             SELECT start_date, end_date, type, severity, note
@@ -117,7 +118,7 @@ def _recent_life_events(days: int = 90) -> list[dict]:
 
 def _recent_subjective_feel(days: int = 14) -> list[dict]:
     """Recent subjective feel entries."""
-    since = (date.today() - timedelta(days=days)).isoformat()
+    since = (today_local() - timedelta(days=days)).isoformat()
     with read_connection() as conn:
         rows = conn.execute("""
             SELECT date, feel_score, energy, motivation, legs, tr_compliance, notes
@@ -164,7 +165,7 @@ def _rolling_plan(today: date | None = None) -> dict | None:
     Read-only: `persist=False`, because building a report must never record a training
     decision. The gate's own catch-up runs on sync, which is where that belongs.
     """
-    today = today or date.today()
+    today = today or today_local()
     try:
         with read_connection() as conn:
             state = current_state(conn, today, persist=False)
@@ -193,7 +194,7 @@ def build_coaching_context(
     history_weeks: int = 52,
 ) -> dict:
     """Full coaching context snapshot. Pass this to the Claude coaching layer."""
-    today = date.today().isoformat()
+    today = today_local().isoformat()
 
     fitness = current_fitness()
     peak = peak_ctl(years=9)
@@ -222,7 +223,7 @@ def build_coaching_context(
     # so the plan generator and the report cannot disagree about them.
     cx_target = date.fromisoformat(GOAL_DATE)
     gravel_target = date.fromisoformat(GRAVEL_DATE)
-    today_d = date.today()
+    today_d = today_local()
     weeks_to_cx = (cx_target - today_d).days // 7
     weeks_to_gravel = (gravel_target - today_d).days // 7
 

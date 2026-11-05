@@ -9,9 +9,8 @@ was actually true then, not whatever it is today — get_metric(metric, as_of=ac
 looks up the value effective on that date, not the latest one.
 """
 
-from datetime import date
 from src.db.schema import read_connection, write_connection
-from src.clock import utc_now_iso
+from src.clock import today_local, utc_now_iso
 
 METRICS = ("height_in", "weight_lbs", "ftp")
 
@@ -23,7 +22,7 @@ def set_metric(metric: str, value: float, effective_date: str = None, note: str 
         conn.execute("""
             INSERT INTO athlete_profile (metric, value, effective_date, note, created_at)
             VALUES (?, ?, ?, ?, ?)
-        """, (metric, value, effective_date or date.today().isoformat(), note,
+        """, (metric, value, effective_date or today_local().isoformat(), note,
               utc_now_iso()))
     # analysis/load.py caches FTP history for the life of the process, so a long-lived one
     # (scripts/serve.py) would keep scoring rides against the old value after this write.
@@ -40,7 +39,7 @@ def get_metric(metric: str, as_of: str = None) -> float | None:
     closer guess than returning nothing, since these stats don't reset to zero at the
     point we happened to start tracking them.
     """
-    as_of = as_of or date.today().isoformat()
+    as_of = as_of or today_local().isoformat()
     with read_connection() as conn:
         row = conn.execute("""
             SELECT value FROM athlete_profile

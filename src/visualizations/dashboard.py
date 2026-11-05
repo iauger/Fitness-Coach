@@ -8,6 +8,7 @@ from datetime import date
 from pathlib import Path
 from src.visualizations import pmc, load, recovery
 from src.db.schema import read_connection
+from src.clock import today_local
 
 CHARTS_DIR = Path(__file__).parent.parent.parent / "data" / "charts"
 
@@ -34,7 +35,7 @@ def _earliest_data_date() -> str:
                 SELECT MIN(date) as d FROM activities
             )
         """).fetchone()
-    return row[0] or date.today().isoformat()
+    return row[0] or today_local().isoformat()
 
 
 def _latest_data_date() -> str:
@@ -44,7 +45,7 @@ def _latest_data_date() -> str:
     with read_connection() as conn:
         row = conn.execute("SELECT MAX(date) FROM planned_workouts").fetchone()
     latest_planned = row[0] if row and row[0] else None
-    today_iso = date.today().isoformat()
+    today_iso = today_local().isoformat()
     return max(latest_planned, today_iso) if latest_planned else today_iso
 
 
@@ -63,8 +64,8 @@ def _embed(fig, div_id: str) -> str:
 
 
 def build_dashboard() -> str:
-    today = date.today().strftime("%B %d, %Y")
-    today_iso = date.today().isoformat()
+    today = today_local().strftime("%B %d, %Y")
+    today_iso = today_local().isoformat()
     earliest_iso = _earliest_data_date()
     chart_end_iso = _latest_data_date()
 
@@ -81,7 +82,7 @@ def build_dashboard() -> str:
         for key, label, _ in RANGE_PRESETS
     )
     presets_json = json.dumps({key: days for key, _, days in RANGE_PRESETS})
-    max_days = max((date.today() - date.fromisoformat(earliest_iso)).days, 7)
+    max_days = max((today_local() - date.fromisoformat(earliest_iso)).days, 7)
     default_days = dict((key, days) for key, _, days in RANGE_PRESETS)[DEFAULT_PRESET]
 
     return f"""<!DOCTYPE html>

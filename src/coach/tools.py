@@ -6,7 +6,7 @@ Each tool has a schema (sent to Claude) and an execute function (called locally)
 import json
 from datetime import date
 from src.db.schema import read_connection, write_connection
-from src.clock import today_local_iso, utc_now_iso
+from src.clock import today_local, today_local_iso, utc_now_iso
 
 NOW = utc_now_iso
 
@@ -235,7 +235,7 @@ def query_history(query_type: str, start_date: str = None, end_date: str = None,
     oldest-first for readability, and `total` plus `truncated` say what was left out.
     """
     with read_connection() as conn:
-        end = end_date or date.today().isoformat()
+        end = end_date or today_local().isoformat()
         start = start_date or "2017-01-01"
 
         total = None
@@ -334,7 +334,7 @@ def calculate_ramp_target(target_ctl: float, target_date: str) -> dict:
         """).fetchone()
 
     current_ctl = row["ctl"] if row else 0
-    today = date.today()
+    today = today_local()
     goal = date.fromisoformat(target_date)
     weeks = max((goal - today).days / 7, 1)
     ctl_gap = target_ctl - current_ctl

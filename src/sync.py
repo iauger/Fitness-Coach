@@ -17,6 +17,7 @@ from src.db.store import (
 )
 from src.analysis.compliance import match_planned_workouts
 from src.planning.roller import store_horizon
+from src.clock import today_local
 
 OVERLAP_DAYS = 2
 MAX_INCREMENTAL_DAYS = 30
@@ -76,14 +77,14 @@ def _max_wellness_date() -> date | None:
         row = conn.execute("""
             SELECT MAX(date) as max_date FROM wellness
             WHERE date <= ?
-        """, (date.today().isoformat(),)).fetchone()
+        """, (today_local().isoformat(),)).fetchone()
     val = row["max_date"] if row else None
     return date.fromisoformat(val) if val else None
 
 
 def sync_window() -> tuple[date, date]:
     """Return (start, end) dates for the incremental sync."""
-    today = date.today()
+    today = today_local()
     max_date = _max_wellness_date()
 
     if max_date is None:
@@ -108,7 +109,7 @@ def incremental_sync(silent: bool = False) -> dict:
             print(msg)
 
     start, end = sync_window()
-    today = date.today()
+    today = today_local()
     max_date = _max_wellness_date()
     gap_days = (today - max_date).days if max_date else MAX_INCREMENTAL_DAYS
 

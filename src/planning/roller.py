@@ -30,7 +30,7 @@ import json
 from datetime import date, timedelta
 
 from src.analysis.dates import monday_of
-from src.clock import utc_now_iso
+from src.clock import today_local, utc_now_iso
 from src.planning.blocks import (
     PLAN_NAME, ROTATION, advance_position, expand_week, plan_week_row,
 )
@@ -79,7 +79,7 @@ def horizon(conn, today: date | None = None, plan_name: str = PLAN_NAME,
     test, and so `scripts/plan_build.py` can preview exactly what a sync would write rather
     than something built by a parallel code path.
     """
-    today = today or date.today()
+    today = today or today_local()
     state = current_state(conn, today, plan_name, start_tier, persist=persist_state)
 
     tier = state["tier"]
@@ -118,7 +118,7 @@ def store_horizon(conn, today: date | None = None, plan_name: str = PLAN_NAME,
 
     Returns counts of what moved, so a sync log says something useful rather than "ok".
     """
-    today = today or date.today()
+    today = today or today_local()
     built = horizon(conn, today, plan_name, weeks, start_tier)
     cutoff = built["cutoff"]
 

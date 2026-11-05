@@ -5,10 +5,11 @@ Recovery and wellness signal analysis — HRV, sleep, resting HR trends.
 from datetime import date, timedelta
 from statistics import mean
 from src.db.schema import read_connection
+from src.clock import today_local
 
 
 def _recent_wellness(days: int) -> list[dict]:
-    since = (date.today() - timedelta(days=days)).isoformat()
+    since = (today_local() - timedelta(days=days)).isoformat()
     with read_connection() as conn:
         rows = conn.execute("""
             SELECT date, rhr, hrv, sleep_hrs, sleep_score, steps

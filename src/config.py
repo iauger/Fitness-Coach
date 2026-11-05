@@ -25,7 +25,7 @@ import os
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import date
 from pathlib import Path
-from typing import Any, Optional, Union, get_args, get_origin
+from typing import Any, get_args, get_origin
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml

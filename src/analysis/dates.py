@@ -14,6 +14,7 @@ pulled that chain into `analysis/derive.py`, which `planning/blocks.py` imports.
 """
 
 from datetime import date, timedelta
+from src.clock import today_local
 
 
 def monday_of(d: date) -> date:
@@ -28,7 +29,7 @@ def sunday_of(d: date) -> date:
 
 def last_completed_week(on: date | None = None) -> date:
     """Monday of the most recent week that has fully elapsed."""
-    return monday_of(on or date.today()) - timedelta(weeks=1)
+    return monday_of(on or today_local()) - timedelta(weeks=1)
 
 
 def mondays_between(start: date, end: date) -> list[date]:

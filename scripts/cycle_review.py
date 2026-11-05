@@ -26,13 +26,14 @@ from src.db.schema import migrate_db
 from src.analysis.cycle import (
     cycle_for_review, cycle_metrics, cycle_context_text, previous_review,
 )
+from src.clock import today_local
 
 
 def run(as_of: date | None, metrics_only: bool, verbose: bool) -> int:
     migrate_db()
 
-    if as_of and as_of > date.today():
-        print(f"--as-of {as_of} is in the future; clamping to today ({date.today()}). "
+    if as_of and as_of > today_local():
+        print(f"--as-of {as_of} is in the future; clamping to today ({today_local()}). "
               "A cycle that hasn't finished yet has no data to review.")
         as_of = None
 
@@ -56,7 +57,7 @@ def run(as_of: date | None, metrics_only: bool, verbose: bool) -> int:
 
 def _next_cycle_end(as_of: date | None) -> str | None:
     from src.analysis.training_plan import cycles
-    d = (as_of or date.today()).isoformat()
+    d = (as_of or today_local()).isoformat()
     return next((c["end_date"] for c in cycles() if c["end_date"] >= d), None)
 
 

@@ -16,12 +16,12 @@ Usage:
 import sys
 import argparse
 from pathlib import Path
-from datetime import date
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.db.schema import migrate_db
 from src.athlete.profile import set_metric, get_metric
+from src.clock import today_local
 
 # (default value, default effective_date, default note) — height is static, so it's
 # backdated to the start of the athlete's tracked history; weight/FTP default to today.
@@ -38,7 +38,7 @@ def update(metric: str, value: float, effective_date: str = None, note: str = No
         print(f"  {metric}: unchanged ({value})")
         return
     set_metric(metric, value, effective_date, note)
-    eff = effective_date or date.today().isoformat()
+    eff = effective_date or today_local().isoformat()
     print(f"  {metric}: {current} -> {value}  (effective {eff})")
 
 

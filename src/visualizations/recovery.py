@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from src.db.schema import read_connection
 from src.visualizations.theme import COLORS, LAYOUT, AXIS
+from src.clock import today_local
 
 
 def _rolling_avg(values: list, window: int = 7) -> list:
@@ -25,7 +26,7 @@ def _load_data(days: int | None):
                 SELECT date, hrv, sleep_hrs, sleep_score FROM wellness ORDER BY date
             """).fetchall()
         else:
-            since = (date.today() - timedelta(days=days)).isoformat()
+            since = (today_local() - timedelta(days=days)).isoformat()
             rows = conn.execute("""
                 SELECT date, hrv, sleep_hrs, sleep_score
                 FROM wellness WHERE date >= ? ORDER BY date

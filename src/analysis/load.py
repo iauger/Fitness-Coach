@@ -23,6 +23,7 @@ transient — see ctl_correction() — and is reported rather than recomputed.
 import json
 from datetime import date, timedelta
 from src.db.schema import get_connection
+from src.clock import today_local
 
 CTL_DAYS = 42
 ATL_DAYS = 7
@@ -150,7 +151,7 @@ def ctl_correction(conn, today: date | None = None) -> dict | None:
 
     Returns None once no mis-analysed rides remain in the window, which is the steady state.
     """
-    today = today or date.today()
+    today = today or today_local()
     bad = corrected_activities(conn)
     if not bad:
         return None

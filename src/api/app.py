@@ -43,6 +43,7 @@ from src.db.schema import get_connection, read_connection
 from src.db.migrations import status as migration_status
 from src.visualizations.calendar_view import build_calendar_html
 from src.visualizations.dashboard import build_dashboard
+from src.clock import today_local
 
 # ── the background maintenance loop ───────────────────────────────────────────
 
@@ -207,7 +208,7 @@ def plan() -> dict:
 def plan_week(on: date | None = None) -> dict:
     week = current_week(on)
     if week is None:
-        raise HTTPException(404, f"{on or date.today()} falls outside any seeded plan")
+        raise HTTPException(404, f"{on or today_local()} falls outside any seeded plan")
     return week
 
 
@@ -219,7 +220,7 @@ def plan_state(on: date | None = None) -> dict:
     Read-only: the catch-up runs with `persist=False`, because a GET must never record a
     training decision. Writing happens on sync, which is where it belongs.
     """
-    today = on or date.today()
+    today = on or today_local()
     with read_connection() as conn:
         state = current_state(conn, today, persist=False)
     return {
@@ -239,7 +240,7 @@ def plan_state(on: date | None = None) -> dict:
 @app.get("/api/plan/sessions", tags=["plan"])
 def plan_sessions(start: date | None = None, days: int = 21) -> dict:
     """The committed horizon: dated sessions as prescribed, newest-first by date."""
-    first = start or date.today()
+    first = start or today_local()
     last = first + timedelta(days=days)
     with read_connection() as conn:
         rows = [dict(r) for r in conn.execute(
@@ -262,7 +263,7 @@ def plan_outline_route(on: date | None = None, weeks: int = 12,
     marked `projected` and the assumption it rests on is returned alongside it rather than
     buried.
     """
-    today = on or date.today()
+    today = on or today_local()
     with read_connection() as conn:
         state = current_state(conn, today, persist=False)
     return plan_outline(state, today, weeks=weeks, met_in_four=met_in_four)
@@ -303,7 +304,7 @@ def review_pending() -> dict | None:
 @app.get("/api/weeks", tags=["plan"])
 def weeks(start: date | None = None, end: date | None = None) -> list[dict]:
     lo = (start or date(2000, 1, 1)).isoformat()
-    hi = (end or date.today()).isoformat()
+    hi = (end or today_local()).isoformat()
     return summaries_between(lo, hi)
 
 

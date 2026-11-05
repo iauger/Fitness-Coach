@@ -16,7 +16,7 @@ from datetime import date
 from src.db.schema import read_connection, write_connection
 from src.analysis.training_plan import cycles
 from src.analysis.load import sum_effective_tss
-from src.clock import utc_now_iso
+from src.clock import today_local, utc_now_iso
 
 
 def _weeks_in_cycle(conn, cycle: dict) -> list[dict]:
@@ -346,6 +346,6 @@ def cycle_for_review(on: date | None = None) -> dict | None:
     # whose later weeks have no activities yet, and every absent week reads identically to a
     # skipped one: a live test with --as-of two weeks ahead produced a confident review saying
     # two-thirds of the plan had been missed. A cycle that hasn't finished can't be reviewed.
-    d = min(on or date.today(), date.today()).isoformat()
+    d = min(on or today_local(), today_local()).isoformat()
     closed = [c for c in cycles() if c["closed"] and c["end_date"] < d]
     return closed[-1] if closed else None

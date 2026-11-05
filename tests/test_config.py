@@ -270,3 +270,85 @@ def test_config_imports_nothing_from_this_project():
         elif isinstance(node, ast.Import):
             imported += [a.name for a in node.names]
     assert not [m for m in imported if m.startswith("src")], imported
+
+
+# ── the athlete's day, not the server's ───────────────────────────────────────
+
+def test_today_local_follows_the_configured_timezone(monkeypatch, tmp_path):
+    """
+    The point of the whole timezone step.
+
+    `date.today()` is the day where the *process* runs. On a laptop that is the athlete's day
+    by luck; on a server left in UTC an evening session in the Americas files under tomorrow,
+    and is then compared against activity dates intervals.icu reports in local time.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from src import clock
+
+    cfg = tmp_path / "a.yaml"
+    cfg.write_text(
+        "athlete:\n  name: S\n  timezone: Pacific/Kiritimati\n"
+        "plan:\n  name: T\n  start_monday: 2026-11-02\n", encoding="utf-8")
+    monkeypatch.setattr(C, "CONFIG_PATH", cfg)
+
+    assert clock.athlete_timezone().key == "Pacific/Kiritimati"
+    assert clock.today_local() == datetime.now(ZoneInfo("Pacific/Kiritimati")).date()
+
+
+def test_an_unreadable_config_falls_back_to_utc_rather_than_failing(monkeypatch, tmp_path):
+    """
+    This module is imported by the migration runner. A broken configuration must not be able
+    to stop the schema upgrading or a timestamp being written — config problems get reported
+    where config is actually read, not by taking down everything that needs the time.
+    """
+    from datetime import datetime, timezone
+
+    from src import clock
+
+    broken = tmp_path / "broken.yaml"
+    broken.write_text("athlete:\n  name: [unclosed\n", encoding="utf-8")
+    monkeypatch.setattr(C, "CONFIG_PATH", broken)
+
+    assert clock.athlete_timezone().key == "UTC"
+    assert clock.today_local() == datetime.now(timezone.utc).date()
+
+
+def test_asking_the_time_never_creates_a_config_file(monkeypatch, tmp_path):
+    """
+    It did. `today_local()` went through `load()`, which generates a starter file when none
+    exists, so importing anything that touched the clock silently wrote config/athlete.yaml.
+    Generating one belongs to a deliberate first run, not to a timestamp.
+    """
+    from src import clock
+
+    absent = tmp_path / "nothing" / "athlete.yaml"
+    monkeypatch.setattr(C, "CONFIG_PATH", absent)
+
+    clock.today_local()
+
+    assert not absent.exists()
+
+
+def test_nothing_outside_clock_calls_date_today():
+    """
+    A grep, deliberately.
+
+    57 call sites were routed through `clock.today_local()`; one new `date.today()` anywhere
+    else silently reintroduces the server's timezone for whatever it touches, and no
+    behavioural test would catch it on a laptop that happens to be in the right zone.
+    """
+    import pathlib
+
+    offenders = []
+    for root in ("src", "scripts"):
+        for f in sorted(pathlib.Path(root).rglob("*.py")):
+            if "__pycache__" in str(f) or f.name == "clock.py":
+                continue
+            for n, line in enumerate(f.read_text(encoding="utf-8").split("\n"), 1):
+                if "date.today()" in line and "noqa" not in line:
+                    offenders.append(f"{f}:{n}")
+    assert not offenders, (
+        "use clock.today_local() instead of date.today() — the athlete's day, not the "
+        f"server's:\n  " + "\n  ".join(offenders))

@@ -4,12 +4,12 @@ Annual training volume — TSS and estimated hours by year, sourced from wellnes
 which is computed server-side from all activities.)
 """
 
-from datetime import date
 import plotly.graph_objects as go
 from src.analysis.activities import yearly_volume
 from src.visualizations.theme import COLORS, LAYOUT, AXIS
+from src.clock import today_local
 
-_CURRENT_YEAR = str(date.today().year)
+_CURRENT_YEAR = str(today_local().year)
 
 
 def build() -> go.Figure:

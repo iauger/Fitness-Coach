@@ -18,6 +18,7 @@ from src.athlete.profile import get_metric
 from src.analysis.dates import monday_of
 from src.analysis.load import sum_effective_tss
 from src.planning.constants import PLAN_NAME
+from src.clock import today_local
 
 # Seiler's three-zone model in intensity-factor terms. LT1 (the aerobic threshold, above which
 # a session stops being conversational) sits near IF 0.75; LT2 near 0.85, which is also the
@@ -267,7 +268,7 @@ def consistency(conn, today: date, days: int = 28) -> dict:
 # ── assembly ──────────────────────────────────────────────────────────────────
 
 def derived_metrics(today: date | None = None) -> dict:
-    today = today or date.today()
+    today = today or today_local()
     conn = get_connection()
     try:
         return {

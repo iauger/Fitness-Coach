@@ -27,7 +27,7 @@ from datetime import date, timedelta
 
 from src.analysis.activities import week_volume
 from src.analysis.dates import last_completed_week, monday_of, mondays_between
-from src.clock import utc_now_iso
+from src.clock import today_local, utc_now_iso
 from src.planning.blocks import ROTATION_LOOP_FROM, advance_position
 from src.planning import plans
 from src.planning.constants import PLAN_NAME, PLAN_SLUG, PLAN_START_MONDAY
@@ -139,7 +139,7 @@ def catch_up(conn, today: date | None = None, plan_name: str = PLAN_NAME,
     needs: asking "where would I be in March" must not file March's decisions as though they had
     happened, and the unique constraint would then lock those fictional rows in permanently.
     """
-    today = today or date.today()
+    today = today or today_local()
     plan_start = monday_of(date.fromisoformat(PLAN_START_MONDAY))
     last_closed = last_completed_week(today)   # already a Monday
 

@@ -33,7 +33,7 @@ import time
 from contextlib import contextmanager
 from datetime import date
 
-from src.clock import utc_now_iso
+from src.clock import today_local, utc_now_iso
 from src.db.schema import DB_PATH, read_connection, write_connection
 from src.planning.constants import PLAN_NAME
 
@@ -107,7 +107,7 @@ def run_cycle(today: date | None = None, push_enabled: bool = True,
     scheduled run overlaps another. Those are recorded in `errors` and the next run tries
     again. An unattended job that dies on a transient failure stops being unattended.
     """
-    today = today or date.today()
+    today = today or today_local()
     result: dict = {"ran_at": utc_now_iso(), "errors": []}
 
     try:

@@ -12,6 +12,7 @@ from pathlib import Path
 from src.db.schema import read_connection
 from src.analysis.load import effective_tss
 from src.visualizations.theme import COLORS
+from src.clock import today_local
 
 CHARTS_DIR = Path(__file__).parent.parent.parent / "data" / "charts"
 
@@ -40,7 +41,7 @@ def _fmt_hms(seconds: float | None) -> str:
 
 
 def _week_bounds(weeks: int) -> tuple[date, date]:
-    today = date.today()
+    today = today_local()
     this_monday = today - timedelta(days=today.weekday())
     start = this_monday - timedelta(weeks=weeks - 1)
     end = this_monday + timedelta(days=6)  # Sunday of the current week
@@ -203,7 +204,7 @@ def _day_cell_html(day: dict, today_str: str) -> str:
 def build_calendar_html(weeks: int = 6) -> str:
     start, end = _week_bounds(weeks)
     days = _load_data(start, end)
-    today_str = date.today().isoformat()
+    today_str = today_local().isoformat()
 
     week_rows = []
     cur = start

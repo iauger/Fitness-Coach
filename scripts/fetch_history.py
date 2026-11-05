@@ -20,6 +20,7 @@ from src.intervals.client import IntervalsClient
 from src.db.schema import migrate_db
 from src.db.store import upsert_activities, upsert_wellness, upsert_events, log_sync
 from src.db.schema import get_connection
+from src.clock import today_local
 
 CHUNK_DAYS = 90  # pull in 90-day windows to stay well within API limits
 
@@ -98,7 +99,7 @@ def fetch_all(start: date, end: date, verbose: bool = True) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fetch intervals.icu history into local DB")
     parser.add_argument("--start", default="2017-01-01", help="Start date (YYYY-MM-DD)")
-    parser.add_argument("--end", default=date.today().isoformat(), help="End date (YYYY-MM-DD)")
+    parser.add_argument("--end", default=today_local().isoformat(), help="End date (YYYY-MM-DD)")
     args = parser.parse_args()
 
     fetch_all(

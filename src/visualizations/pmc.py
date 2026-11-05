@@ -17,6 +17,7 @@ from src.db.schema import read_connection
 from src.athlete.profile import metric_history
 from src.analysis.forecast import project_fitness
 from src.visualizations.theme import COLORS, LAYOUT, AXIS
+from src.clock import today_local
 
 FRESH_MIN = 5      # TSB >= 5: Fresh
 GREY_MIN = -5      # -5 <= TSB < 5: Grey Zone
@@ -54,7 +55,7 @@ def _load_data(weeks: int | None):
                 WHERE category IN ('A', 'B', 'C') ORDER BY date
             """).fetchall()
         else:
-            since = (date.today() - timedelta(weeks=weeks)).isoformat()
+            since = (today_local() - timedelta(weeks=weeks)).isoformat()
             rows = conn.execute("""
                 SELECT date, ctl, atl, round(ctl - atl, 1) as tsb, raw_json
                 FROM wellness
