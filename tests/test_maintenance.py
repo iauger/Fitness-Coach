@@ -25,6 +25,8 @@ from datetime import date, timedelta
 
 import pytest
 
+from conftest import seed_ladder
+
 from src.db.migrations import migrate
 from src import maintenance
 from src.maintenance import AlreadyRunning, _exclusive, needs_push, run_cycle, summarise
@@ -47,6 +49,7 @@ def db(tmp_path):
     migrate(path)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
+    seed_ladder(conn, name=PLAN)
     store_horizon(conn, TODAY, PLAN)
     conn.commit()
     yield conn

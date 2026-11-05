@@ -34,6 +34,7 @@ from src.analysis.fitness import current_fitness, ctl_trend, peak_ctl
 from src.analysis.load import ctl_correction, corrected_activities
 from src.analysis.report import build_coaching_context, coaching_context_text
 from src.analysis.training_plan import plan_summary, current_week
+from src.planning import plans, tiers_store
 from src.planning.constants import plan_name
 from src.planning.outline import from_state as plan_outline
 from src.planning.progression import TIERS
@@ -212,6 +213,18 @@ def plan_week(on: date | None = None) -> dict:
     return week
 
 
+def _ladder(conn) -> dict | None:
+    """
+    The configured plan's stored tier ladder, or None.
+
+    None rather than a raise: these are read routes, and a plan that has not been bootstrapped
+    should still be able to report that it has not been bootstrapped. The *write* path is where
+    the refusal belongs, and `roller.store_horizon` has it.
+    """
+    plan = plans.by_name(conn, plan_name())
+    return tiers_store.load(conn, plan.id) if plan else None
+
+
 @app.get("/api/plan/state", tags=["plan"])
 def plan_state(on: date | None = None) -> dict:
     """
@@ -222,11 +235,12 @@ def plan_state(on: date | None = None) -> dict:
     """
     today = on or today_local()
     with read_connection() as conn:
-        state = current_state(conn, today, persist=False)
+        ladder = _ladder(conn)
+        state = current_state(conn, today, persist=False, tiers=ladder)
     return {
         "plan_name": plan_name(),
         "tier": state["tier"],
-        "tier_hours": TIERS[state["tier"]].target_hours,
+        "tier_hours": (ladder or TIERS)[state["tier"]].target_hours,
         "week_type": state["week_type"],
         "block_index": state["block_index"],
         "week_in_block": state["week_in_block"],
@@ -265,8 +279,9 @@ def plan_outline_route(on: date | None = None, weeks: int = 12,
     """
     today = on or today_local()
     with read_connection() as conn:
-        state = current_state(conn, today, persist=False)
-    return plan_outline(state, today, weeks=weeks, met_in_four=met_in_four)
+        ladder = _ladder(conn)
+        state = current_state(conn, today, persist=False, tiers=ladder)
+    return plan_outline(state, today, weeks=weeks, met_in_four=met_in_four, tiers=ladder)
 
 
 @app.get("/api/plan/progression", tags=["plan"])

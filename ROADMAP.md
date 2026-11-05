@@ -1498,3 +1498,64 @@ one too.
 Added to the backlog, ahead of eFTP tracking since they are the same piece of work:
 **compute CTL/ATL locally from `effective_tss` instead of reading intervals.icu's.** Then one
 FTP correction fixes the whole history at once, which is the behaviour that was wanted here.
+
+### Step 5 — the tier ladder derived from history, done 2026-11-05
+
+The design-risk step, and it came out better than expected.
+
+**The result.** Derived against the reference year, the ladder independently reproduces the
+hand-written one: identical long rides (75, 75, 90, 105, 120), identical ride days, identical
+hard-session placement. The single difference is a uniform +5min easy ride — the athlete's
+median session is 64min, so the derivation rounds to 65 where a person rounded to 60. The
+derivation is arguably the more correct of the two.
+
+**What is derived, what is intent, what is fixed.**
+
+| | |
+|---|---|
+| derived from history | long ride, easy ride, ride days, where the floor sits |
+| config, as intent | `sustainable_band_hours`, `long_ride_ceiling_min` |
+| fixed by design | five rungs, one hard session above the floor, none at the floor, strength never trimmed |
+
+Config says where to climb to, never what a rung contains. When the history cannot reach the
+configured band the bootstrap **says so and builds the shorter ladder** — bending a ladder up
+to meet an aspiration is how the old plan reached 8.4h/week.
+
+**Three defects found by deriving rather than by reasoning.**
+
+1. **A dead rung.** `round()` is banker's rounding, so at a 15-minute step the second and third
+   rungs landed on 86.25 and 97.5 → 90 and, because 6.5 goes to 6, also 90. Two identical
+   rungs: the gate advances a tier, prescribes exactly the same week, and costs a week before
+   the next real step. No error, plausible-looking ladder.
+2. **The floor and the first rung should share a long ride.** Forcing a strict increase
+   everywhere made T0→T1 a 68% jump and compressed everything above it. The hand ladder has
+   both at 75min, and the reason is that what separates them is the hard session. The strict
+   rule was invented during implementation rather than read off the design.
+3. **Ride days have to be clamped to the rotation's ride slots.** Every block declares three;
+   `pattern_for` only ever reduces, and `Block` raises at construction if a tier asks for more.
+   A five-day-a-week athlete would have derived a ladder that crashed the generator at import.
+
+**The refusal.** `tiers_store.require` raises when a plan has no ladder, and `store_horizon`
+calls it before building anything. Not `load(...) or TIERS` — that one-liner generates a
+complete, believable plan from a stranger's measured practice and reports nothing, and because
+it never fails there is no later moment at which anyone finds out. Verified live: the sync
+refused with the bootstrap command in the message, and still completed its activity and
+wellness sections.
+
+**A consistency bug introduced and fixed inside the step.** The write path took the stored
+ladder while the read paths still used the module constant, so `/api/plan/state` reported 3.42h
+against a calendar showing 3.5h. Exactly the shape of the CTL/TSS split noted above, and one of
+those in a project is enough. `outline`, `report` and the API now all take the plan's ladder,
+with a test asserting that what is reported is what was prescribed.
+
+**Live.** Bootstrapped plan 2 from 78 weeks; the only change to the horizon was the easy ride
+going 60 → 65min, and 13 calendar events were re-pushed. `derived_from` holds the observed
+statistics, so the ladder can be explained later rather than merely obeyed.
+
+17 mutants, all caught — four survived first, including the two that mattered most: the roller
+gating on the ladder and then generating without it, and `expand_week` ignoring the ladder it
+was handed. Both escaped because the stored and hand-written ladders agree at the low tiers a
+fresh database starts on. The test now uses a ladder that overlaps the module one nowhere.
+
+**Also corrected:** the README's tier table had been copied from an early design draft and was
+wrong for T1, T2 and T4. It is now generated from what the derivation actually produces.

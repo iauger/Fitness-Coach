@@ -49,7 +49,8 @@ class OutlineWeek:
 
 def outline(start_monday: date, tier: int, block_index: int, week_in_block: int,
             weeks: int = OUTLINE_WEEKS, horizon_weeks: int = 3,
-            met_in_four: int = DEFAULT_MET_IN_FOUR) -> list[OutlineWeek]:
+            met_in_four: int = DEFAULT_MET_IN_FOUR,
+            tiers: dict | None = None) -> list[OutlineWeek]:
     """
     The next `weeks` weeks of shape, from a starting position the gate supplies.
 
@@ -81,7 +82,7 @@ def outline(start_monday: date, tier: int, block_index: int, week_in_block: int,
             week_in_block=week_in_block,
             recovery=recovery,
             tier=tier,
-            hours=TIERS[tier].target_hours,
+            hours=(tiers or TIERS)[tier].target_hours,
             projected=not in_horizon,
             met_assumed=met,
         ))
@@ -93,7 +94,8 @@ def outline(start_monday: date, tier: int, block_index: int, week_in_block: int,
 
 
 def summarise(rows: list[OutlineWeek], met_in_four: int = DEFAULT_MET_IN_FOUR,
-              strength_recently_held: bool | None = None) -> str:
+              strength_recently_held: bool | None = None,
+              tiers: dict | None = None) -> str:
     """
     One paragraph a coach or a person can read, with the assumption stated in it.
 
@@ -106,6 +108,7 @@ def summarise(rows: list[OutlineWeek], met_in_four: int = DEFAULT_MET_IN_FOUR,
     projected = [r for r in rows if r.projected]
     end_tier = rows[-1].tier
     start_tier = rows[0].tier
+    ladder = tiers or TIERS
 
     blocks: list[str] = []
     for r in rows:
@@ -115,14 +118,14 @@ def summarise(rows: list[OutlineWeek], met_in_four: int = DEFAULT_MET_IN_FOUR,
 
     lines = [
         f"Committed: {len(committed)} weeks of dated sessions at T{start_tier} "
-        f"({TIERS[start_tier].target_hours}h/wk).",
+        f"({ladder[start_tier].target_hours}h/wk).",
         f"Beyond that, {len(projected)} weeks of shape only: {sequence}.",
     ]
     if end_tier > start_tier:
         when = next(r.week_start for r in rows if r.tier == end_tier)
         lines.append(
             f"At {met_in_four} of 4 weeks met you reach T{end_tier} "
-            f"({TIERS[end_tier].target_hours}h/wk) by {when} — a projection on that "
+            f"({ladder[end_tier].target_hours}h/wk) by {when} — a projection on that "
             f"assumption, not a schedule."
         )
     elif end_tier == CAP_TIER:
@@ -146,10 +149,19 @@ def summarise(rows: list[OutlineWeek], met_in_four: int = DEFAULT_MET_IN_FOUR,
 
 
 def from_state(state: dict, today: date, weeks: int = OUTLINE_WEEKS,
-               met_in_four: int = DEFAULT_MET_IN_FOUR) -> dict:
-    """Outline plus summary, from a `progression_store.current_state` dict."""
+               met_in_four: int = DEFAULT_MET_IN_FOUR, tiers: dict | None = None) -> dict:
+    """
+    Outline plus summary, from a `progression_store.current_state` dict.
+
+    `tiers` is the plan's stored ladder. Passing it matters more than it looks: the write path
+    generates from the stored ladder, so a reader falling back to the module constant reports
+    one number while the calendar shows another — 3.42h on the dashboard against 3.5h in the
+    sessions actually prescribed. That is the same two-sources-one-chart problem as CTL being
+    intervals.icu's while TSS is ours, and it is worth not introducing a second one.
+    """
     rows = outline(monday_of(today), state["tier"], state["block_index"],
-                   state["week_in_block"], weeks=weeks, met_in_four=met_in_four)
+                   state["week_in_block"], weeks=weeks, met_in_four=met_in_four,
+                   tiers=tiers)
     recent = state.get("recent") or []
     held = sum(1 for r in recent[-STRENGTH_WINDOW:] if r.get("habit_held"))
     strength_ok = (held >= STRENGTH_GATED_WEEKS) if recent else None
@@ -158,5 +170,5 @@ def from_state(state: dict, today: date, weeks: int = OUTLINE_WEEKS,
         "assumption": f"{met_in_four} of every 4 non-recovery weeks met",
         "strength_recently_held": strength_ok,
         "weeks": [vars(r) for r in rows],
-        "summary": summarise(rows, met_in_four, strength_ok),
+        "summary": summarise(rows, met_in_four, strength_ok, tiers),
     }

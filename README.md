@@ -16,15 +16,29 @@ weeks 1–13 happened. That works until you miss a fortnight, at which point the
 a past you did not live and there is no way back into it except to start over.
 
 This one has no dates beyond a three-week horizon and no end. Progression is a **tier ladder**,
-and you move up a rung by completing a week, not by the calendar advancing:
+and you move up a rung by completing a week, not by the calendar advancing.
 
-| tier | rides | long ride | hard | ~hours |
-|---|---|---|---|---|
-| T0 | 2 | 75min | 0 | 2.0 |
-| T1 | 3 | 75min | 1 | 2.75 |
-| T2 | 3 | 90min | 1 | 3.25 |
-| T3 | 3 | 105min | 1 | 3.75 |
-| T4 | 3 | 120min | 1 | 4.2 |
+**The ladder is derived from your own synced riding**, not shipped with the project. One run of
+`scripts/bootstrap_plan.py` reads your history, finds the volume you have actually held and the
+long ride you actually do, and places five rungs between there and the band you say you want to
+reach. Until that has happened the generator refuses to build anything — a plan built on a
+stranger's measured practice would be plausible, wrong, and silent about it.
+
+For one real athlete — returning from a six-month gap, riding about 2.8h a week with a
+70-minute longest ride — it derives:
+
+| tier | rides | long ride | hard | easy | ~hours |
+|---|---|---|---|---|---|
+| T0 | 2 | 75min | 0 | 50min | 2.1 |
+| T1 | 3 | 75min | 1 | 65min | 3.3 |
+| T2 | 3 | 90min | 1 | 65min | 3.5 |
+| T3 | 3 | 105min | 1 | 65min | 3.8 |
+| T4 | 3 | 120min | 1 | 65min | 4.1 |
+
+T0 and T1 share a long ride on purpose: what separates them is the hard session. Yours will
+look different, and the top rung reaches for `sustainable_band_hours` from your config without
+exceeding what `long_ride_ceiling_min` allows — if your history cannot reach the band you asked
+for, the bootstrap says so rather than quietly bending the ladder upward to meet it.
 
 A week that hits ≥90% of its tier's volume *and* its ride-day count advances you one rung. A
 partial week holds. A gap steps you down one rung per week and produces a **re-entry week**
@@ -58,8 +72,11 @@ overreaching. That is why there is no ramp to fall behind, why a missed week cos
 instead of the plan, and why strength work is never trimmed at any tier: in 8 of those 21
 zero-ride weeks, lifting continued after cycling stopped.
 
-Your own data will say something different. The ladder above is the default; deriving it from
-your synced history is the next thing on the roadmap.
+Your own data will say something different, which is why the ladder is derived rather than
+shipped. As a check on that derivation: run against this athlete's own history, it independently
+reproduces the ladder a human chose from the same data — identical long rides, ride days and
+hard-session placement — differing only by rounding a 64-minute median session up to 65 where
+the human rounded down to 60.
 
 ## Configuration
 
@@ -106,6 +123,7 @@ cp config/athlete.example.yaml config/athlete.yaml
 
 python scripts/fetch_history.py    # one-time backfill
 python scripts/seed_profile.py     # height / weight / FTP baseline
+python scripts/bootstrap_plan.py   # derive your tier ladder (add --write to keep it)
 python scripts/serve.py --open     # dashboard, calendar, API
 ```
 
@@ -146,6 +164,7 @@ intervals.icu ──sync──> SQLite ──> progression gate ──> rolling 
 |---|---|
 | `src/config.py` | the athlete's file, parsed into frozen dataclasses and validated at the door |
 | `src/sync.py` | incremental pull from intervals.icu, then score, then roll |
+| `src/planning/bootstrap.py` | derives the tier ladder from history; pure functions |
 | `src/planning/progression.py` | the gate, as pure functions — no database, no I/O |
 | `src/planning/progression_store.py` | the append-only decision log |
 | `src/planning/roller.py` | builds and stores the horizon; owns the freeze rule |
@@ -158,11 +177,11 @@ intervals.icu ──sync──> SQLite ──> progression gate ──> rolling 
 Working and in daily use by its author: the sync, the gate, the rolling horizon, calendar push
 with device delivery confirmed on Zwift, the dashboard and calendar, and the coaching layer.
 
-Mid-refactor from *one person's plan* into *something someone else could run*. Steps 0–4 are
+Mid-refactor from *one person's plan* into *something someone else could run*. Steps 0–5 are
 done — the config loader, a plan identity that survives being renamed, athlete timezone, the
-personal constants moved into config, and the sport table deduplicated. Still ahead:
+personal constants moved into config, the sport table deduplicated, and the tier ladder derived
+from your own history. Still ahead:
 
-- **Deriving the tier ladder from your own synced history** rather than using the defaults above
 - Archetype overrides, validated against the safety rules that are *not* configurable
 - A first-run path that works from a clean clone
 - **Authentication, before the server can bind anywhere but loopback**
@@ -175,7 +194,7 @@ See [ROADMAP.md](ROADMAP.md) for the reasoning behind each, and the feature back
 pytest
 ```
 
-533 tests. The convention worth knowing: new behaviour is checked by **mutation testing**, not
+558 tests. The convention worth knowing: new behaviour is checked by **mutation testing**, not
 only by a green suite. Breaking the code deliberately and confirming a test fails has
 repeatedly caught tests here that passed for the wrong reason — one asserting a constant's own
 value back at itself, a filter that worked only because of insert order. Several docstrings in

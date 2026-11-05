@@ -23,6 +23,8 @@ from datetime import date
 
 import pytest
 
+from conftest import seed_ladder
+
 import src.config
 from src.analysis.report import athlete_profile
 from src.db.migrations import migrate
@@ -68,11 +70,18 @@ def other_config(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def db(tmp_path):
+def db(tmp_path, other_config):
+    """
+    Depends on `other_config` deliberately: the ladder is seeded against the plan the config
+    names, so the config has to be in place before the plan exists. Seeding under the example
+    config and then rolling under this one would attach the roll to the wrong plan — which
+    `plans.resolve` would do silently, since it prefers the one plan already in the database.
+    """
     path = tmp_path / "p.db"
     migrate(path)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
+    seed_ladder(conn, name="Totally Different Plan", started_on="2026-11-16")
     yield conn
     conn.close()
 

@@ -94,8 +94,8 @@ def record_week(conn, graded: dict, decision, block_index: int, week_in_block: i
     return cur.rowcount > 0
 
 
-def _replay_before_plan(conn, first_monday: date,
-                        start_tier: int) -> tuple[int, str, list[dict]]:
+def _replay_before_plan(conn, first_monday: date, start_tier: int,
+                        tiers: dict | None = None) -> tuple[int, str, list[dict]]:
     """
     The counterfactual: where would the gate have put the athlete by `first_monday`.
 
@@ -112,15 +112,16 @@ def _replay_before_plan(conn, first_monday: date,
              if m < first_monday]
     tier, history, rotation = start_tier, [], "continue"
     for week in weeks:
-        history.append(classify_week(week, tier))
+        history.append(classify_week(week, tier, tiers))
         decision = next_state(history, tier)
         tier, rotation = decision.tier, decision.rotation
     return tier, rotation, history
 
 
-def _seed(conn, plan_start: date, start_tier: int) -> tuple[int, int, int, str, list[dict]]:
+def _seed(conn, plan_start: date, start_tier: int,
+          tiers: dict | None = None) -> tuple[int, int, int, str, list[dict]]:
     """Starting tier and rotation position when no week has been decided yet."""
-    tier, rotation, replayed = _replay_before_plan(conn, plan_start, start_tier)
+    tier, rotation, replayed = _replay_before_plan(conn, plan_start, start_tier, tiers)
     # The Consistency block is the entry point for a cold start and where a long absence
     # restarts. An athlete who has been riding is returning from something rather than from
     # nothing, and four weeks of pure endurance is its own abandonment risk.
@@ -129,7 +130,8 @@ def _seed(conn, plan_start: date, start_tier: int) -> tuple[int, int, int, str, 
 
 
 def catch_up(conn, today: date | None = None, plan_name: str | None = None,
-             start_tier: int = 1, persist: bool = True) -> dict:
+             start_tier: int = 1, persist: bool = True,
+             tiers: dict | None = None) -> dict:
     """
     Decide every week that has closed since the last decided one, and store it.
 
@@ -159,7 +161,7 @@ def catch_up(conn, today: date | None = None, plan_name: str | None = None,
     else:
         resume = plan_start
         tier, block_index, week_in_block, seeded_from, replayed = _seed(
-            conn, plan_start, start_tier)
+            conn, plan_start, start_tier, tiers)
 
     history = [_graded_from_row(r) for r in stored]
     recorded = []
@@ -167,7 +169,7 @@ def catch_up(conn, today: date | None = None, plan_name: str | None = None,
     # last_closed — which is the normal state between a catch-up and the next Monday.
     for monday in mondays_between(max(resume, plan_start), last_closed):
         week = week_volume(conn, monday)
-        graded = classify_week(week, tier)
+        graded = classify_week(week, tier, tiers)
         history.append(graded)
         decision = next_state(history, tier)
         block_index, week_in_block = advance_position(
@@ -201,7 +203,8 @@ def catch_up(conn, today: date | None = None, plan_name: str | None = None,
 
 
 def current_state(conn, today: date | None = None, plan_name: str | None = None,
-                  start_tier: int = 1, persist: bool = True) -> dict:
+                  start_tier: int = 1, persist: bool = True,
+                  tiers: dict | None = None) -> dict:
     """
     Everything the generator needs to build this week: tier, rotation position, week type.
 
@@ -209,4 +212,4 @@ def current_state(conn, today: date | None = None, plan_name: str | None = None,
     generator building at a stale tier. The answer is identical with `persist=False`; only the
     writing stops.
     """
-    return catch_up(conn, today, plan_name, start_tier, persist)
+    return catch_up(conn, today, plan_name, start_tier, persist, tiers)

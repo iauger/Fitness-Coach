@@ -24,6 +24,8 @@ from datetime import date
 
 import pytest
 
+from conftest import seed_ladder
+
 from src.db.migrations import migrate
 from src.planning.export import (
     CATEGORY, MIDNIGHT, build_payload, event_for, pending, push,
@@ -66,6 +68,7 @@ def db(tmp_path):
     migrate(path)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
+    seed_ladder(conn, name=PLAN)
     store_horizon(conn, TODAY, PLAN)
     conn.commit()
     yield conn

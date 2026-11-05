@@ -580,6 +580,24 @@ def _slug_for(name: str) -> str:
     return "".join(c if c.isalnum() else "-" for c in name.lower()).strip("-")
 
 
+TIERS_SQL = """
+CREATE TABLE IF NOT EXISTS tiers (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id       INTEGER NOT NULL REFERENCES plans(id),
+    tier_index    INTEGER NOT NULL,
+    rides         INTEGER NOT NULL,
+    long_min      INTEGER NOT NULL,
+    hard          INTEGER NOT NULL,
+    hard_min      INTEGER NOT NULL,
+    lit_min       INTEGER NOT NULL,
+    derived_from  TEXT NOT NULL,
+    notes         TEXT,
+    created_at    TEXT NOT NULL,
+    UNIQUE(plan_id, tier_index)
+);
+"""
+
+
 def _m008_plans_table(conn: sqlite3.Connection) -> None:
     """
     Give a plan a row, and an identity that survives being renamed.
@@ -634,6 +652,31 @@ def _m008_plans_table(conn: sqlite3.Connection) -> None:
             f"{table}.plan_name) WHERE plan_id IS NULL")
 
 
+def _m009_tiers_table(conn: sqlite3.Connection) -> None:
+    """
+    The tier ladder becomes data belonging to a plan, instead of a constant in source.
+
+    `progression.TIERS` is one athlete's ladder, anchored on his measured practice. It stays as
+    the fallback and as the shape every test reasons about, but a second athlete needs rungs on
+    their own scale: a prescription at a third of what someone already rides is ignored exactly
+    like one at triple.
+
+    **`derived_from` is the column that earns this table.** It holds the JSON of what the
+    bootstrap observed — the window walked, median recent volume, the sustained window and
+    where it started. Without it a ladder cannot be explained ("why is T3 105 minutes?") or
+    regenerated, and the first question anyone asks of a number a program chose is where it
+    came from. Same reasoning as `tier_applied` on `plan_progression` and `config_hash` on
+    `plans`: store the inputs the decision was made under, because re-deriving them later
+    answers today's question rather than the one that was asked.
+
+    No backfill. An empty table means "not bootstrapped", which is a state the roller has to
+    be able to see — it refuses rather than quietly generating from the fallback and never
+    revisiting it. Writing this athlete's hand ladder in here as a migration would erase
+    exactly that distinction.
+    """
+    conn.executescript(TIERS_SQL)
+
+
 # (version, name, step). Append only — never renumber or edit an applied migration.
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "baseline schema as of phase 12B", _m001_baseline),
@@ -644,6 +687,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (6, "retire the TrainerRoad feed", _m006_retire_the_trainerroad_feed),
     (7, "close the cutover overlap", _m007_close_the_cutover_overlap),
     (8, "plans table and plan_id foreign keys", _m008_plans_table),
+    (9, "tiers table: the ladder as data, with its provenance", _m009_tiers_table),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)

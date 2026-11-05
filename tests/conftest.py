@@ -82,3 +82,40 @@ def _example_config(monkeypatch):
     src.config.reset()
     yield
     src.config.reset()
+
+
+def seed_ladder(conn, slug: str | None = None, name: str | None = None,
+                started_on: str = "2026-11-02"):
+    """
+    Give a test database a plan and a tier ladder, so the roller will run.
+
+    `store_horizon` refuses to build anything for a plan with no ladder — deliberately, since
+    falling back to the hand-written one would generate a believable plan from another
+    athlete's measured practice and say nothing. That refusal means every test touching the
+    roller has to say which ladder it is testing against, and all of them want the same answer:
+    the hand-written rungs, which is what the whole progression suite is written around.
+
+    Explicit rather than autouse. An autouse fixture here would silently bootstrap every
+    database in the suite, including the ones whose point is that bootstrapping has *not*
+    happened.
+    """
+    from src.planning import plans, tiers_store
+    from src.planning.bootstrap import DerivedTier, Ladder, Observed
+    from src.planning.constants import plan_name as configured_plan_name
+    from src.planning.progression import TIERS
+
+    name = name or configured_plan_name()
+    slug = slug or plans.slug_for(name)
+    plan = plans.ensure(conn, slug, name, started_on=started_on)
+
+    observed = Observed(
+        weeks_seen=0, ridden_weeks=0, window_start="", window_end="",
+        recent_volume_min=0.0, recent_long_min=0.0, recent_session_min=0.0,
+        recent_ride_days=0.0, sustained_volume_min=0.0, sustained_long_min=0.0,
+        sustained_window_start="")
+    ladder = Ladder(
+        tuple(DerivedTier(index=t.index, rides=t.rides, long_min=t.long_min, hard=t.hard,
+                          hard_min=t.hard_min, lit_min=t.lit_min) for t in TIERS.values()),
+        observed, ("seeded by tests, not derived",))
+    tiers_store.save(conn, plan.id, ladder, replace=True)
+    return plan

@@ -51,6 +51,13 @@ MAX_HARD_PER_WEEK = 2
 # pattern_for only reduces.
 MAX_TIER_RIDES = max(t.rides for t in TIERS.values())
 
+# How many ride slots every block in the rotation declares. A derived ladder cannot ask for
+# more than this — `pattern_for` only reduces — so `bootstrap.derive` is handed it and clamps.
+# Computed from the blocks themselves rather than written down, so adding a slot to a block is
+# enough to raise the ceiling.
+def max_pattern_rides() -> int:
+    return min(sum(1 for _, r in b.pattern if r != "strength") for b in ROTATION)
+
 # Ride slots are dropped in this order when a tier asks for fewer rides than the block declares.
 # The long ride is never dropped — it is the session the plan exists to protect — and a hard slot
 # becomes an easy ride rather than disappearing, so the week keeps its session count where it can.
@@ -192,7 +199,8 @@ def advance_position(block_index: int, week_in_block: int, rotation: str) -> tup
 # ── tier-aware pattern ────────────────────────────────────────────────────────
 
 def pattern_for(block: Block, tier: int, recovery: bool = False,
-                reentry: bool = False) -> list[tuple[int, str]]:
+                reentry: bool = False,
+                tiers: dict | None = None) -> list[tuple[int, str]]:
     """
     The nominal pattern reduced to what this tier actually asks for.
 
@@ -202,7 +210,7 @@ def pattern_for(block: Block, tier: int, recovery: bool = False,
     Strength slots pass through untouched at every tier, including the floor, recovery weeks and
     re-entry weeks.
     """
-    spec = TIERS[tier]
+    spec = (tiers or TIERS)[tier]
     rides = [(d, r) for d, r in block.pattern if r != "strength"]
     strength = [(d, r) for d, r in block.pattern if r == "strength"]
 
@@ -281,7 +289,7 @@ def _hard_session(block: Block, week_in_block: int) -> A.Session:
 
 def expand_week(block: Block, week_in_block: int, tier: int, monday: date,
                 plan_name: str | None = None, block_index: int = 1,
-                week_type: str = "normal") -> list[dict]:
+                week_type: str = "normal", tiers: dict | None = None) -> list[dict]:
     """
     One week of dated prescriptions, at a tier.
 
@@ -291,10 +299,10 @@ def expand_week(block: Block, week_in_block: int, tier: int, monday: date,
     and it is the least fatiguing thing to keep.
     """
     plan_name = plan_name or configured_plan_name()
-    spec = TIERS[tier]
+    spec = (tiers or TIERS)[tier]
     recovery = week_in_block in block.recovery_weeks
     reentry = week_type == "reentry"
-    pattern = pattern_for(block, tier, recovery=recovery, reentry=reentry)
+    pattern = pattern_for(block, tier, recovery=recovery, reentry=reentry, tiers=tiers)
     strength_variants = _strength_for_week(pattern, week_in_block)
 
     long_min = spec.long_min - (15 if (recovery or reentry) else 0)

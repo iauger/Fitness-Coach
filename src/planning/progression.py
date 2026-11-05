@@ -127,7 +127,7 @@ class Decision:
     reason: str
 
 
-def classify_week(week: dict, tier: int) -> dict:
+def classify_week(week: dict, tier: int, tiers: dict[int, Tier] | None = None) -> dict:
     """
     Grade one elapsed week against the tier that was prescribed *for that week*.
 
@@ -138,9 +138,14 @@ def classify_week(week: dict, tier: int) -> dict:
     `partial` exists as a distinct outcome because it does real work: it does not advance you,
     but it also does not count toward a gap. A week where something was ridden is not a week off,
     and treating it as one would trigger a re-entry ramp the athlete doesn't need.
+
+    `tiers` is the plan's own ladder. It defaults to the hand-written one so tests and the
+    pure-replay path read as they always did; the generator never relies on that default —
+    `tiers_store.require` raises before a prescription is built without a stored ladder.
     """
-    target = TIERS[tier].target_min
-    rides_wanted = TIERS[tier].rides
+    spec = (tiers or TIERS)[tier]
+    target = spec.target_min
+    rides_wanted = spec.rides
     ride_min = week["ride_min"]
 
     if ride_min >= MET_FRACTION * target and week["ride_days"] >= rides_wanted:
@@ -250,7 +255,8 @@ def next_state(history: list[dict], tier: int) -> Decision:
                     f"met at T{tier} — T{tier} -> T{tier + 1}")
 
 
-def replay(weeks: list[dict], start_tier: int = 1) -> list[dict]:
+def replay(weeks: list[dict], start_tier: int = 1,
+           tiers: dict[int, Tier] | None = None) -> list[dict]:
     """
     Run the gate over a sequence of measured weeks, oldest first.
 
@@ -262,7 +268,7 @@ def replay(weeks: list[dict], start_tier: int = 1) -> list[dict]:
     history: list[dict] = []
     out: list[dict] = []
     for week in weeks:
-        graded = classify_week(week, tier)
+        graded = classify_week(week, tier, tiers)
         history.append(graded)
         decision = next_state(history, tier)
         out.append({**graded, "verdict": decision.verdict, "next_tier": decision.tier,

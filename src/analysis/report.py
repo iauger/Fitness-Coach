@@ -7,6 +7,7 @@ from datetime import date, timedelta
 from .fitness import current_fitness, ctl_trend, peak_ctl, ctl_history
 from .activities import recent_activities, sport_distribution, weekly_load_by_sport, yearly_volume
 from src.config import config
+from src.planning import plans, tiers_store
 from src.planning.constants import dated_goals, plan_name
 from src.planning.outline import from_state as plan_outline
 from src.planning.progression import TIERS
@@ -176,19 +177,23 @@ def _rolling_plan(today: date | None = None) -> dict | None:
     today = today or today_local()
     try:
         with read_connection() as conn:
-            state = current_state(conn, today, persist=False)
+            # The plan's own ladder, so what is reported is what was prescribed. Falling back
+            # to the module constant here would print 3.42h beside a calendar showing 3.5h.
+            plan = plans.by_name(conn, plan_name())
+            ladder = tiers_store.load(conn, plan.id) if plan else None
+            state = current_state(conn, today, persist=False, tiers=ladder)
             upcoming = [dict(r) for r in conn.execute(
                 "SELECT date, role, prescription, minutes, tss, volume_tier, week_type "
                 "FROM prescribed_sessions WHERE plan_name = ? AND date >= ? "
                 "ORDER BY date LIMIT 10", (plan_name(), today.isoformat()))]
         return {
             "tier": state["tier"],
-            "tier_hours": TIERS[state["tier"]].target_hours,
+            "tier_hours": (ladder or TIERS)[state["tier"]].target_hours,
             "week_type": state["week_type"],
             "reason": state["reason"],
             "decided_through": state["decided_through"],
             "upcoming": upcoming,
-            "outline": plan_outline(state, today),
+            "outline": plan_outline(state, today, tiers=ladder),
         }
     except Exception:
         # Advisory context. A failure here must not take down the whole snapshot, which the

@@ -32,7 +32,7 @@ from datetime import date, timedelta
 from src.analysis.dates import monday_of
 from src.clock import today_local, utc_now_iso
 from src.planning.blocks import ROTATION, advance_position, expand_week, plan_week_row
-from src.planning import plans
+from src.planning import plans, tiers_store
 from src.planning.constants import (
     configured_slug, goal_date, plan_name as configured_plan_name, plan_start_monday,
 )
@@ -71,7 +71,7 @@ def external_id(plan_name: str, on: str, role: str) -> str:
 
 def horizon(conn, today: date | None = None, plan_name: str | None = None,
             weeks: int = HORIZON_WEEKS, start_tier: int = 1,
-            persist_state: bool = True) -> dict:
+            persist_state: bool = True, tiers: dict | None = None) -> dict:
     """
     Build the horizon without writing it. Returns the state, the sessions and the week rows.
 
@@ -81,7 +81,8 @@ def horizon(conn, today: date | None = None, plan_name: str | None = None,
     """
     today = today or today_local()
     plan_name = plan_name or configured_plan_name()
-    state = current_state(conn, today, plan_name, start_tier, persist=persist_state)
+    state = current_state(conn, today, plan_name, start_tier, persist=persist_state,
+                          tiers=tiers)
 
     tier = state["tier"]
     block_index, week_in_block = state["block_index"], state["week_in_block"]
@@ -95,7 +96,7 @@ def horizon(conn, today: date | None = None, plan_name: str | None = None,
         # starting, and it has said nothing about the two after it.
         week_type = state["week_type"] if offset == 0 else "normal"
         sessions += expand_week(block, week_in_block, tier, monday, plan_name,
-                                block_index, week_type)
+                                block_index, week_type, tiers=tiers)
         week_rows.append(plan_week_row(
             monday, block, block_index, week_in_block,
             plan_week_number=plan_week_number(monday), tier=tier, week_type=week_type,
@@ -122,8 +123,6 @@ def store_horizon(conn, today: date | None = None, plan_name: str | None = None,
     """
     today = today or today_local()
     plan_name = plan_name or configured_plan_name()
-    built = horizon(conn, today, plan_name, weeks, start_tier)
-    cutoff = built["cutoff"]
 
     # Resolved once per roll. Keyed on the slug, so a renamed plan keeps its identity and its
     # stored history instead of quietly becoming a second plan alongside the first. The slug
@@ -133,6 +132,16 @@ def store_horizon(conn, today: date | None = None, plan_name: str | None = None,
     plan = plans.ensure(conn, slug, plan_name, started_on=plan_start_monday(),
                         goal_date=goal_date())
     plan_id = plan.id
+
+    # Before anything is built, not after. The ladder is this athlete's, derived from their own
+    # synced riding, and `require` raises when there is none rather than falling back to the
+    # hand-written one — a fallback here would generate a complete, believable plan from a
+    # stranger's measured practice and report nothing, and a plan that fits badly reads as the
+    # plan being wrong about *you*. The refusal names the command that fixes it.
+    ladder = tiers_store.require(conn, plan_id, plan_name)
+
+    built = horizon(conn, today, plan_name, weeks, start_tier, tiers=ladder)
+    cutoff = built["cutoff"]
 
     # Delete only what the new horizon no longer contains, then update the rest in place.
     #

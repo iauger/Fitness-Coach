@@ -188,7 +188,10 @@ def test_the_report_asks_the_gate_not_to_persist(monkeypatch, temp_db):
 
     seen = {}
 
-    def spy(conn, today=None, plan_name=None, start_tier=1, persist=True):
+    # `tiers` is accepted because the readers now pass the plan's stored ladder. Without it
+    # the call raises TypeError, _rolling_plan swallows that into a None result, and the spy
+    # records nothing — which is exactly how this test failed when the ladder was threaded.
+    def spy(conn, today=None, plan_name=None, start_tier=1, persist=True, tiers=None):
         seen["persist"] = persist
         return {"tier": 2, "block_index": 1, "week_in_block": 1, "week_type": "normal",
                 "reason": "spied", "decided_through": None, "decided_weeks": 0,
@@ -206,7 +209,10 @@ def test_the_plan_api_asks_the_gate_not_to_persist(monkeypatch, temp_db):
 
     calls = []
 
-    def spy(conn, today=None, plan_name=None, start_tier=1, persist=True):
+    # `tiers` is accepted because the readers now pass the plan's stored ladder. Without it
+    # the call raises TypeError, _rolling_plan swallows that into a None result, and the spy
+    # records nothing — which is exactly how this test failed when the ladder was threaded.
+    def spy(conn, today=None, plan_name=None, start_tier=1, persist=True, tiers=None):
         calls.append(persist)
         return {"tier": 2, "block_index": 1, "week_in_block": 1, "week_type": "normal",
                 "reason": "spied", "decided_through": None, "decided_weeks": 0,

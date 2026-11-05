@@ -16,6 +16,8 @@ from datetime import date
 
 import pytest
 
+from conftest import seed_ladder
+
 from src.db.migrations import migrate
 from src.planning import plans
 from src.planning.roller import store_horizon
@@ -30,6 +32,7 @@ def db(tmp_path):
     migrate(path)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
+    seed_ladder(conn)
     yield conn
     conn.close()
 
@@ -224,6 +227,10 @@ def test_resolve_prefers_the_slug_already_in_the_database_over_the_name(db):
 
 
 def test_resolve_derives_from_the_name_only_on_a_genuine_first_run(db):
+    # The fixture seeds a plan so the roller will run; this is the one test about there not
+    # being one, so it clears the table first.
+    db.execute("DELETE FROM tiers")
+    db.execute("DELETE FROM plans")
     assert plans.active(db) == []
     assert plans.resolve(db, "Brand New Plan") == "brand-new-plan"
 
