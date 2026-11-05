@@ -193,3 +193,57 @@ def test_every_advertised_tool_has_an_implementation():
     """A schema with no function behind it fails only once the model decides to call it."""
     advertised = {t["name"] for t in tools.TOOL_SCHEMAS}
     assert advertised == set(tools.TOOL_FN_MAP)
+
+
+# ── the turn has to produce an answer, or say it did not ──────────────────────
+
+class _Turn:
+    """A stand-in for stream_turn that yields a scripted sequence of events."""
+
+    def __init__(self, *events):
+        self.events = events
+
+    def __call__(self, *a, **k):
+        return iter(self.events)
+
+
+@pytest.mark.parametrize("events, why", [
+    ([("error", "turn exceeded 12 tool iterations"), ("turn_end", "")],
+     "burned every tool iteration without ever writing text"),
+    ([("turn_end", "")], "model returned nothing at all"),
+    ([("error", "Connection reset")], "the API call itself failed"),
+])
+def test_a_turn_with_no_answer_raises(monkeypatch, events, why):
+    """
+    Returning "" here is the expensive failure, and it had three routes in, not one.
+
+    An earlier fix caught only the missing turn_end that an API exception produces. A turn
+    that spends all MAX_ITERATIONS on tool calls, and a model that simply returns nothing,
+    both yield a turn_end carrying "" — and every caller treats the return value as the
+    answer. checkin() writes it into coaching_log; cycle_review() files it against a
+    UNIQUE(plan_name, cycle_start) row, after which that cycle counts as reviewed forever.
+    """
+    from src.coach import stream
+
+    scripted = [stream.Event(t, **({"text": v} if t == "turn_end" else {"message": v}))
+                for t, v in events]
+    monkeypatch.setattr(stream, "stream_turn", _Turn(*scripted))
+
+    with pytest.raises(RuntimeError, match="no answer"):
+        stream.run_turn(None, "model", "system", [], 100)
+
+
+def test_whitespace_only_counts_as_no_answer(monkeypatch):
+    from src.coach import stream
+
+    monkeypatch.setattr(stream, "stream_turn", _Turn(stream.Event("turn_end", text="  \n ")))
+    with pytest.raises(RuntimeError):
+        stream.run_turn(None, "model", "system", [], 100)
+
+
+def test_a_real_answer_comes_back_unchanged(monkeypatch):
+    from src.coach import stream
+
+    monkeypatch.setattr(stream, "stream_turn",
+                        _Turn(stream.Event("turn_end", text="Ride easy today.")))
+    assert stream.run_turn(None, "model", "system", [], 100) == "Ride easy today."

@@ -151,11 +151,16 @@ def run_turn(client: Anthropic, model: str, system: str, messages: list[dict],
         elif event.type == "error":
             errors.append(event.message)
 
-    if not saw_turn_end:
-        # stream_turn yields `error` and returns *without* a turn_end when the API call itself
-        # fails. This used to fall through and return "", which every caller took for a real
-        # answer: checkin() wrote the empty string into coaching_log, and cycle_review() filed
-        # it against a UNIQUE(plan_name, cycle_start) row that was thereafter treated as
-        # reviewed. A failed call has to be loud.
-        raise RuntimeError("the model turn failed: " + ("; ".join(errors) or "no turn_end"))
+    # An empty answer is a failure, however the turn ended.
+    #
+    # The first version of this guard only caught a missing turn_end, which is what an API
+    # exception produces. It missed the other two routes to the same place: a turn that burns
+    # all MAX_ITERATIONS on tool calls without ever emitting text yields `error` *and* a
+    # turn_end carrying "", and a model that simply returns nothing yields a clean turn_end
+    # carrying "". Both returned "" to a caller that treats the return value as the answer —
+    # checkin() writes it into coaching_log, and cycle_review() files it against a
+    # UNIQUE(plan_name, cycle_start) row, after which that cycle counts as reviewed forever.
+    if not saw_turn_end or not text.strip():
+        why = "; ".join(errors) or ("empty response" if saw_turn_end else "no turn_end")
+        raise RuntimeError(f"the model turn produced no answer: {why}")
     return text

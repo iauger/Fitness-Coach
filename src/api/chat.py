@@ -21,6 +21,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.analysis.report import coaching_context_text
+from src.api.cache import freshness_key
 from src.coach import chat_store
 from src.coach.prompt import build_system_prompt
 from src.coach.session import DEFAULT_MODEL, MAX_TOKENS, _client
@@ -33,9 +34,19 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 # SQLite write path serialised.
 _EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="coach")
 
-# Sessions are recreated from the database on demand, so this only caches the expensive
-# system-prompt build for the life of the process.
-_SYSTEM_CACHE: dict[str, str] = {}
+# The built system prompt, memoized against the database rather than against the session.
+#
+# It used to be keyed by session_id and only evicted when a session was explicitly ended,
+# which was wrong twice over. It grew without bound — one ~20KB prompt per session, for the
+# life of the server — and, worse, it went stale: the prompt carries the whole coaching
+# snapshot, so a conversation left open across a sync kept answering from the data that
+# existed when its first question was asked. A coach quoting yesterday's numbers at you, with
+# no way to tell.
+#
+# Keying on the database's freshness instead fixes both. Every session shares one entry,
+# because every session builds the identical prompt, and that entry is rebuilt exactly when
+# the data behind it changes.
+_SYSTEM_CACHE: dict[tuple, str] = {}
 
 _SENTINEL = object()
 
@@ -46,10 +57,16 @@ class AskRequest(BaseModel):
 
 
 def _system_for(session_id: str) -> str:
-    if session_id not in _SYSTEM_CACHE:
-        _SYSTEM_CACHE[session_id] = build_system_prompt(
+    """The system prompt for this turn. `session_id` is unused: see _SYSTEM_CACHE."""
+    key = freshness_key()
+    cached = _SYSTEM_CACHE.get(key)
+    if cached is None:
+        # Only the current key is kept. Holding the old one would reintroduce the unbounded
+        # growth this replaced, and nothing ever wants a prompt built from stale data.
+        _SYSTEM_CACHE.clear()
+        cached = _SYSTEM_CACHE[key] = build_system_prompt(
             coaching_context_text(), mode="conversation")
-    return _SYSTEM_CACHE[session_id]
+    return cached
 
 
 def _sse(event: Event | dict) -> str:
@@ -130,5 +147,4 @@ def session_end(session_id: str) -> dict:
     if not chat_store.session_exists(session_id):
         raise HTTPException(404, f"unknown session {session_id}")
     chat_store.end_session(session_id)
-    _SYSTEM_CACHE.pop(session_id, None)
     return {"ended": session_id}
