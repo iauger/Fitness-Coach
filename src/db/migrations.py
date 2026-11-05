@@ -552,6 +552,88 @@ def _m007_close_the_cutover_overlap(conn: sqlite3.Connection) -> None:
     )
 
 
+# ── migration 8 ───────────────────────────────────────────────────────────────
+
+PLANS_SQL = """
+CREATE TABLE IF NOT EXISTS plans (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug         TEXT NOT NULL UNIQUE,   -- stable identity; generated once, never edited
+    name         TEXT NOT NULL,          -- the label, free to change
+    started_on   TEXT NOT NULL,
+    goal_date    TEXT,
+    config_hash  TEXT,                   -- which configuration produced this plan
+    created_at   TEXT NOT NULL,
+    retired_at   TEXT                    -- a plan ends by being retired, never deleted
+);
+CREATE INDEX IF NOT EXISTS idx_plans_slug ON plans(slug);
+"""
+
+
+def _slug_for(name: str) -> str:
+    """
+    The stable identity derived from a name, once.
+
+    Deliberately identical to `planning.roller.external_id_prefix`'s derivation, because the
+    external ids already pushed to the intervals.icu calendar are built from it. A different
+    rule here would orphan fifteen live calendar events on the next push.
+    """
+    return "".join(c if c.isalnum() else "-" for c in name.lower()).strip("-")
+
+
+def _m008_plans_table(conn: sqlite3.Connection) -> None:
+    """
+    Give a plan a row, and an identity that survives being renamed.
+
+    `plan_name` is a string repeated across `prescribed_sessions`, `training_plan_weeks` and
+    `plan_progression`, and five readers join on it. That was tolerable while the name lived in
+    a Python constant that nobody edited. It stops being tolerable the moment the name comes
+    from a config file, because renaming a plan there would silently orphan every stored row —
+    no error, just a plan that appears to have no history.
+
+    So identity moves to a generated `slug`, and `name` becomes a label. The slug is derived
+    from the name exactly once, here, using the same rule that produced the `external_id`s
+    already sitting on the intervals.icu calendar.
+
+    **`plan_name` stays** on all three tables. It is used in 116 places across 14 modules, and
+    rewriting those in the same change that introduces the table would make neither reviewable.
+    It is now a cached label rather than the key: `planning/plans.py` owns keeping it in step
+    with `plans.name`, and a later migration drops it once the readers have moved.
+
+    `config_hash` exists for the same reason `tier_applied` exists on `plan_progression`: store
+    the inputs a decision was made under. Once configuration is editable, "which settings
+    produced this prescription" is otherwise unanswerable, because re-deriving it later gives
+    today's answer to yesterday's question.
+    """
+    conn.executescript(PLANS_SQL)
+
+    tables = (("prescribed_sessions", "date"),
+              ("training_plan_weeks", "week_start_date"),
+              ("plan_progression", "week_start"))
+    for table, _ in tables:
+        add_column(conn, table, "plan_id", "INTEGER REFERENCES plans(id)")
+
+    # Every distinct plan that already has rows, oldest first so ids read chronologically.
+    seen: dict[str, str] = {}
+    for table, date_col in tables:
+        for row in conn.execute(
+                f"SELECT plan_name, MIN({date_col}) started FROM {table} "
+                f"WHERE plan_name IS NOT NULL GROUP BY plan_name"):
+            name, started = row[0], row[1]
+            if name not in seen or (started and started < seen[name]):
+                seen[name] = started
+
+    now = utc_now_iso()
+    for name, started in sorted(seen.items(), key=lambda kv: (kv[1] or "", kv[0])):
+        conn.execute(
+            "INSERT OR IGNORE INTO plans (slug, name, started_on, created_at) "
+            "VALUES (?, ?, ?, ?)", (_slug_for(name), name, started or now[:10], now))
+
+    for table, _ in tables:
+        conn.execute(
+            f"UPDATE {table} SET plan_id = (SELECT id FROM plans WHERE plans.name = "
+            f"{table}.plan_name) WHERE plan_id IS NULL")
+
+
 # (version, name, step). Append only — never renumber or edit an applied migration.
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "baseline schema as of phase 12B", _m001_baseline),
@@ -561,6 +643,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (5, "tier and week type on the stored plan", _m005_tier_on_the_stored_plan),
     (6, "retire the TrainerRoad feed", _m006_retire_the_trainerroad_feed),
     (7, "close the cutover overlap", _m007_close_the_cutover_overlap),
+    (8, "plans table and plan_id foreign keys", _m008_plans_table),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)

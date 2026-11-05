@@ -29,7 +29,8 @@ from src.analysis.activities import week_volume
 from src.analysis.dates import last_completed_week, monday_of, mondays_between
 from src.clock import utc_now_iso
 from src.planning.blocks import ROTATION_LOOP_FROM, advance_position
-from src.planning.constants import PLAN_NAME, PLAN_START_MONDAY
+from src.planning import plans
+from src.planning.constants import PLAN_NAME, PLAN_SLUG, PLAN_START_MONDAY
 from src.planning.progression import classify_week, next_state
 
 # How far back the pre-plan replay looks when nothing is persisted yet. Long enough to cover the
@@ -74,12 +75,14 @@ def record_week(conn, graded: dict, decision, block_index: int, week_in_block: i
     """
     cur = conn.execute("""
         INSERT INTO plan_progression (
-            plan_name, week_start, ride_minutes, ride_days, strength_logged, outcome,
-            tier_applied, verdict, tier_next, week_type_next, rotation,
+            plan_name, plan_id, week_start, ride_minutes, ride_days, strength_logged,
+            outcome, tier_applied, verdict, tier_next, week_type_next, rotation,
             block_index, week_in_block, reason, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(plan_name, week_start) DO NOTHING
-    """, (plan_name, graded["week_start"], graded["ride_min"], graded["ride_days"],
+    """, (plan_name,
+          plans.ensure(conn, PLAN_SLUG, plan_name, started_on=PLAN_START_MONDAY).id,
+          graded["week_start"], graded["ride_min"], graded["ride_days"],
           strength_logged, graded["outcome"], graded["tier"], decision.verdict, decision.tier,
           decision.week_type, decision.rotation, block_index, week_in_block,
           decision.reason, utc_now_iso()))

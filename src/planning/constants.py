@@ -15,6 +15,16 @@ thresholds, so having `derive` import `blocks` would close a cycle. A leaf modul
 # plan_summary, cycle_metrics and week_metrics all key on.
 PLAN_NAME = "Sustainable rolling"
 
+# The plan's identity, fixed when the plan was created and never recomputed.
+#
+# Deliberately *not* derived from PLAN_NAME at runtime. Deriving it is what made a rename
+# create a second plan: ensure() computed a slug from the new name, found nothing, and
+# inserted a duplicate alongside the original. The slug is also what every external_id on the
+# intervals.icu calendar was built from, so regenerating it would orphan live events.
+#
+# Rename PLAN_NAME freely. Never change this.
+PLAN_SLUG = "sustainable-rolling"
+
 # The primary goal: cyclocross, autumn 2027. Held as a constant rather than read from `goals` so
 # a stored plan row's end date cannot drift when the goals table is edited, and deliberately not
 # a taper target — nothing in the rotation peaks for it. `plan_end_date` on a training_plan_weeks

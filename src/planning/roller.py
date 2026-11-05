@@ -34,7 +34,8 @@ from src.clock import utc_now_iso
 from src.planning.blocks import (
     PLAN_NAME, ROTATION, advance_position, expand_week, plan_week_row,
 )
-from src.planning.constants import GOAL_DATE, PLAN_START_MONDAY
+from src.planning import plans
+from src.planning.constants import GOAL_DATE, PLAN_SLUG, PLAN_START_MONDAY
 from src.planning.progression_store import current_state
 
 # The current week plus the next two. Long enough to see a shape, short enough that it is always
@@ -121,6 +122,12 @@ def store_horizon(conn, today: date | None = None, plan_name: str = PLAN_NAME,
     built = horizon(conn, today, plan_name, weeks, start_tier)
     cutoff = built["cutoff"]
 
+    # Resolved once per roll. Keyed on the slug, so a renamed plan keeps its identity and its
+    # stored history instead of quietly becoming a second plan alongside the first.
+    plan = plans.ensure(conn, PLAN_SLUG, plan_name, started_on=PLAN_START_MONDAY,
+                        goal_date=GOAL_DATE)
+    plan_id = plan.id
+
     # Delete only what the new horizon no longer contains, then update the rest in place.
     #
     # This used to delete the whole future and re-insert it, which was correct for the
@@ -162,7 +169,7 @@ def store_horizon(conn, today: date | None = None, plan_name: str = PLAN_NAME,
     future = frozen = 0
     for s in built["sessions"]:
         if s["date"] >= cutoff:
-            _upsert_session(conn, s, overwrite=True)
+            _upsert_session(conn, s, overwrite=True, plan_id=plan_id)
             future += 1
         elif not already:
             # First run for this window: fill it in, or the current week is half-missing.
@@ -172,10 +179,11 @@ def store_horizon(conn, today: date | None = None, plan_name: str = PLAN_NAME,
             # guard is ever loosened, this degrades to the old insert-if-missing behaviour
             # rather than to silently overwriting frozen sessions. Reading *this* line as the
             # thing that protects the freeze is what hid the bug in the first place.
-            frozen += _upsert_session(conn, s, overwrite=False)
+            frozen += _upsert_session(conn, s, overwrite=False, plan_id=plan_id)
 
     weeks_written = sum(
-        _upsert_week(conn, row, overwrite=row["week_start_date"] >= cutoff)
+        _upsert_week(conn, row, overwrite=row["week_start_date"] >= cutoff,
+                     plan_id=plan_id)
         for row in built["week_rows"]
     )
 
@@ -188,7 +196,7 @@ def store_horizon(conn, today: date | None = None, plan_name: str = PLAN_NAME,
             "sessions": built["sessions"]}
 
 
-def _upsert_session(conn, s: dict, overwrite: bool) -> int:
+def _upsert_session(conn, s: dict, overwrite: bool, plan_id: int | None) -> int:
     conflict = ("""
         DO UPDATE SET
             weekday = excluded.weekday, block_index = excluded.block_index,
@@ -221,12 +229,13 @@ def _upsert_session(conn, s: dict, overwrite: bool) -> int:
     """ if overwrite else "DO NOTHING")
     cur = conn.execute(f"""
         INSERT INTO prescribed_sessions (
-            plan_name, date, weekday, block_index, block_name, week_in_block,
+            plan_name, plan_id, date, weekday, block_index, block_name, week_in_block,
             is_recovery_week, role, archetype, variant, prescription, minutes, tss,
             intensity_factor, params_json, volume_tier, week_type, external_id, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(plan_name, date, role) {conflict}
-    """, (s["plan_name"], s["date"], s["weekday"], s["block_index"], s["block_name"],
+    """, (s["plan_name"], plan_id, s["date"], s["weekday"], s["block_index"],
+          s["block_name"],
           s["week_in_block"], int(s["is_recovery_week"]), s["role"], s["archetype"],
           s["variant"], s["prescription"], s["minutes"], s["tss"], s["intensity_factor"],
           json.dumps(s["params"]), s["tier"], s["week_type"],
@@ -234,7 +243,7 @@ def _upsert_session(conn, s: dict, overwrite: bool) -> int:
     return cur.rowcount
 
 
-def _upsert_week(conn, row: dict, overwrite: bool) -> int:
+def _upsert_week(conn, row: dict, overwrite: bool, plan_id: int | None) -> int:
     conflict = ("""
         DO UPDATE SET
             week_end_date = excluded.week_end_date, week_type = excluded.week_type,
@@ -244,11 +253,12 @@ def _upsert_week(conn, row: dict, overwrite: bool) -> int:
     """ if overwrite else "DO NOTHING")
     cur = conn.execute(f"""
         INSERT INTO training_plan_weeks (
-            plan_name, plan_start_date, plan_end_date, week_start_date, week_end_date,
-            week_type, phase, phase_number, phase_week_number, plan_week_number, volume_tier
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            plan_name, plan_id, plan_start_date, plan_end_date, week_start_date,
+            week_end_date, week_type, phase, phase_number, phase_week_number,
+            plan_week_number, volume_tier
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(plan_name, week_start_date) {conflict}
-    """, (row["plan_name"], row["plan_start_date"], row["plan_end_date"],
+    """, (row["plan_name"], plan_id, row["plan_start_date"], row["plan_end_date"],
           row["week_start_date"], row["week_end_date"], row["week_type"], row["phase"],
           row["phase_number"], row["phase_week_number"], row["plan_week_number"],
           row["volume_tier"]))
