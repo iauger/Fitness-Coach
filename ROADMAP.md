@@ -1419,3 +1419,48 @@ what the model says, and nothing would have failed.
 11 mutants, all caught; two survived first — `expand_week`'s fallback was only ever exercised
 under a config whose plan name matched the old constant, so the test asserted the mutant's own
 answer. 525 tests green. Dashboard and calendar verified in a browser per `CLAUDE.md`.
+
+### Step 4.5 — settle FTP before deriving anything from it, 2026-11-05
+
+Small, and it goes first because step 5's output is only as good as this input. The ladder
+itself is volume (minutes and ride-days), so FTP does not change the derivation — but every
+`%FTP` target in every session the derived ladder prescribes is a percentage of this number,
+and a wrong one makes the whole ladder unrideable while looking correct.
+
+**Four numbers disagreed:** intervals.icu 238, eFTP 257, power record 260, ramp test 271.
+
+**Resolved: 260.** Already what `athlete_profile` holds effective 2026-10-01, and the only
+value corroborated twice independently.
+
+The argument against 271, which was the tempting one ("if we don't trust the test, what's the
+point"): a Zwift ramp test measures MAP and multiplies by a fixed 0.75. The measurement is
+sound — best 1-minute ≈ 361W — and **the 0.75 is the assumption**, the part that varies most
+between riders. The test also predates five weeks of 2–3h/week riding, and a ramp is the most
+volume-insensitive protocol there is, so it reads high off a thin base.
+
+What settled it was the measured data rather than the reasoning: **the highest normalised
+power for any ride since 2026-09-15 is 215W**, over 64 minutes. Nothing in seven weeks of
+riding corroborates 271.
+
+And the error is asymmetric in a way that is specific to this design. At 271 a threshold rep
+asks for ~244W against a best hour of 215 NP; those sessions do not get completed, the gate
+reads measured volume, and a partial week steps the tier **down** — the ladder punishing the
+athlete for a number they typed in, and landing squarely on the abandonment failure mode the
+whole plan exists to avoid. At 260 the sessions come out slightly easy, get completed, and
+eFTP climbs on evidence. **The system self-corrects upward and has no mechanism to correct
+downward.**
+
+Two fixes to land before step 5:
+
+1. **Update intervals.icu's FTP field from 238 to 260.** Its own TSS figures are computed
+   against it, so every synced `tss` since 2026-10-01 is currently inflated. Ours are
+   recomputed against the tracked history (`_manual_tss`), which is why this has not shown up
+   as a visible wrongness — but the gate is about to read numbers derived from it.
+2. **`profile.ftp: 238.0` in `config/athlete.yaml`** reads as a current value and is not one.
+   It only ever seeds an empty `athlete_profile`, and this one is not empty — so it is inert
+   and misleading at the same time. Either set it to 260 or drop the key.
+
+Then **eFTP tracking** moves to the front of the feature queue, which is what makes this
+decision provisional rather than permanent: if 271 is real, the first threshold sessions at
+0.90 × 260 = 234W will feel easy and eFTP will walk up within weeks. FTP should move on
+demonstrated power, not on a number anyone decided — including this one.
