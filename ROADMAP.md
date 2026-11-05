@@ -1464,3 +1464,37 @@ Then **eFTP tracking** moves to the front of the feature queue, which is what ma
 decision provisional rather than permanent: if 271 is real, the first threshold sessions at
 0.90 × 260 = 234W will feel easy and eFTP will walk up within weeks. FTP should move on
 demonstrated power, not on a number anyone decided — including this one.
+
+#### Correction, same day: intervals.icu does not backfill TSS
+
+FTP was corrected to 260 on intervals.icu. **Re-syncing changed nothing.** A backfill over
+2026-09-01 → 2026-11-05 re-pulled all 19 activities and not one `tss` value moved: intervals
+applies a new FTP going forward and leaves history as recorded.
+
+Arithmetic on the 2026-10-27 ride (64min, NP 215) puts it beyond doubt:
+
+| | |
+|---|---|
+| stored `activities.tss` from intervals | **87.0** |
+| TSS at FTP 238 | **87.0** |
+| TSS at FTP 260 | 72.9 |
+| our `effective_tss`, recomputed | **73.1** (flagged as recomputed) |
+
+So the plan above was wrong in its remedy, right in its diagnosis. The inflation is baked into
+the stored column and no sync will clear it. What saves us is `_manual_tss`: every TSS this
+project reasons with is recomputed against the tracked FTP history, and it returns 73.1 where
+intervals says 87.
+
+**The part still wrong, and it is not cosmetic.** `wellness.ctl` / `.atl` are intervals.icu's
+own figures, computed from *their* TSS — so the CTL on the dashboard, in `current_fitness` and
+in every PMC panel is built on FTP 238 for everything since 2026-10-01, while the TSS beside
+it is built on 260. Two numbers on one chart from two different FTPs.
+
+Not urgent, and specifically **not a risk to step 5**: the progression gate reads
+`SUM(moving_time)` per week and never touches TSS or CTL. That decision was made to avoid
+inheriting compliance scoring's failure modes, and it turns out to insulate the gate from this
+one too.
+
+Added to the backlog, ahead of eFTP tracking since they are the same piece of work:
+**compute CTL/ATL locally from `effective_tss` instead of reading intervals.icu's.** Then one
+FTP correction fixes the whole history at once, which is the behaviour that was wanted here.
