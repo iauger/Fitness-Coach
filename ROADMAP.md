@@ -812,3 +812,302 @@ this section exists so that spec doesn't have to be re-derived from conversation
 - Should visual/browser verification (Playwright MCP, working as of Session 13) become a standing
   step before calling any chart work "done," given that the PMC rebuild passed two sessions of
   code-level review while actually broken? Leaning yes — not formalized anywhere yet.
+
+---
+
+# Refactor: one athlete's tool → something another person can run
+
+*Added 2026-11-04, after steps 0–9 of the rolling-plan rebuild and the code review that
+followed. This section is the plan for the next refactor and the questions still open on it.*
+
+## Why now
+
+Steps 0–9 are done and the loop closes: a session is prescribed, written to Zwift, ridden,
+synced back, and scored. The code review that followed found the project is in better shape
+for this than expected — the gate, the roller, the exporter and the serialisers already take
+their inputs as arguments rather than reaching for globals, and every chart, the coaching
+snapshot and the forecast already work against an empty database.
+
+What remains personal is small and enumerable. A full AST sweep of every module-level constant
+in `src/` and `scripts/` found **12 personal values and 113 tunable ones**, and the 12 sit in
+seven files.
+
+The aim is that this is the last structural refactor for a long time, so the plan below also
+records how each foreseeable feature lands in the architecture — not to build them now, but to
+check the shape can absorb them.
+
+## The sweep: everything personal, as of 2026-11-04
+
+| File | Constant | Value |
+|---|---|---|
+| `analysis/report.py` | `ATHLETE_PROFILE` | name, goals, equipment, "two young kids" |
+| `planning/constants.py` | `PLAN_NAME` | `Sustainable rolling` |
+| `planning/constants.py` | `GOAL_DATE` | `2027-10-01` (CX) |
+| `planning/constants.py` | `GRAVEL_DATE` | `2027-06-18` |
+| `planning/constants.py` | `PLAN_START_MONDAY` | `2026-11-02` |
+| `scripts/plan_build.py` | `ZWIFT_ID` | `393440` |
+| `scripts/seed_goals.py` | `GOALS` | five hardcoded goal rows |
+| `scripts/seed_profile.py` | `DEFAULTS` | height, weight, FTP |
+| `scripts/serve.py` | `DEFAULT_HOST` / `DEFAULT_PORT` | `127.0.0.1:8800` |
+| `visualizations/dashboard.py` | page title ×2 | "Fitness Coach — Ian Auger" |
+| `visualizations/calendar_view.py` | page title | "Training Calendar — Ian Auger" |
+| `db/migrations.py` | `CUTOVER_MONDAY`, `*_PLAN_NAME`, `TR_RETIRED_ON` | **leave alone** |
+
+The migration constants are deliberately excluded. A migration that reads a config value stops
+replaying to the same database the moment that value changes; they are frozen history and must
+stay frozen. A fresh install runs them against an empty database where they match nothing.
+
+**Not personal but wrong anyway:** `SPORT_GROUPS` is duplicated in four files
+(`analysis/activities.py`, `db/store.py`, `visualizations/calendar_view.py`,
+`scripts/dedupe_activities.py`). One definition, imported.
+
+## The 113 tunables are three different things
+
+Lumping them together is the mistake to avoid. They divide by *who is allowed to change them*:
+
+1. **Safety rules — not configurable.** `MAX_HARD_PER_WEEK = 2`; strength never trimmed; no
+   lower-body work beside a long ride; threshold targets hedged below FTP; `FREEZE_DAYS`.
+   These are the methodology. A config file that lets someone set six hard sessions a week has
+   not made the tool flexible, it has removed the thing the tool is for. They stay in code,
+   enforced in `blocks.pattern_for` and asserted in `tests/test_invariants.py`.
+
+2. **Methodology defaults — overridable, validated.** The archetype libraries
+   (`LIT_VARIANTS`, `SIT_VARIANTS`, `HIIT_VARIANTS`, `THRESHOLD_VARIANTS`,
+   `STRENGTH_VARIANTS`), the `ROTATION`, `EASY_IF_CEILING` / `HARD_IF_FLOOR`. Ship ours as the
+   default; let a config override a named variant; validate every override against the safety
+   rules in (1) and reject with a message a stranger can act on.
+
+3. **Mechanics — leave in code.** `CTL_DAYS = 42`, `OVERLAP_DAYS`, `LOCK_STALE_SECONDS`,
+   `MAX_ITERATIONS`, cache budgets. Nobody wants to tune these and exposing them is surface
+   area with no payoff.
+
+## Decisions already taken
+
+- **History comes from intervals.icu.** Assume a new user has an account and brings their
+  history down on first run. This is what makes the tier ladder derivable rather than guessed.
+- **One database, one athlete.** Clone the repo, run it locally. No multi-tenancy.
+- **Archetypes: ours as default, override by name.**
+- **The tier ladder is derived, not configured.** See below.
+
+## The tier ladder: derive, don't configure
+
+The ladder in `planning/progression.py` was not chosen, it was *measured* — T1 is roughly where
+the athlete already was, and the ceiling is the 3.84h/wk actually held for twelve consecutive
+weeks. Asking a new user to hand-write five tiers reproduces the failure this whole rebuild
+removed: numbers that describe a past they did not live.
+
+So config expresses **intent**, and a bootstrap derives the ladder from synced history:
+
+```yaml
+plan:
+  sustainable_band_hours: [3.5, 4.0]   # where the gate should climb to
+  long_ride_ceiling_min: 120           # extended on demand, never ramped
+  start_from: measured                 # measured | floor | explicit
+```
+
+On first run, after the initial sync, `scripts/bootstrap_plan.py` walks the synced weeks with
+the existing `analysis.activities.week_volume`, finds the athlete's own sustained volume, and
+writes a ladder into the database. The floor is the minimum viable week; the ceiling is the
+band; the rungs interpolate.
+
+This removes the validation problem rather than solving it: there is no hand-written ladder to
+validate. The generated one still gets checked against the existing internal-consistency rules
+(`target_min` equals its components, `rides == 2 + hard`), which `tests/test_progression.py`
+already asserts.
+
+**`start_from: explicit`** stays available for someone who knows what they want, and *that*
+path validates hard and refuses to load on failure.
+
+## Proposed config shape
+
+One file, `config/athlete.yaml`, with `config/athlete.example.yaml` committed and the real one
+gitignored like `.env`. Loaded once into a frozen dataclass by a new leaf module
+`src/config.py` — leaf because `planning/constants.py` already had to be a leaf for exactly
+this reason (`analysis` cannot import `planning.blocks`, which imports `analysis.derive`).
+
+```yaml
+athlete:
+  name: Ian Auger
+  timezone: America/New_York          # currently implicit in date.today()
+  history_start: 2017
+
+goals:
+  - {description: Cyclocross racing fall 2027, date: 2027-10-01, priority: primary}
+  - {description: Gravel spring/summer 2027,   date: 2027-06-18, priority: opt_in}
+
+plan:
+  name: Sustainable rolling
+  start_monday: 2026-11-02
+  sustainable_band_hours: [3.5, 4.0]
+  long_ride_ceiling_min: 120
+  horizon_weeks: 3
+  rotation: [consistency, sprints, threshold, vo2]
+
+integrations:
+  intervals_icu: {push_calendar: true}
+  zwift: {athlete_id: "393440", enabled: true}
+
+server:
+  host: 127.0.0.1
+  port: 8800
+
+coach:
+  model: claude-haiku-4-5
+  enabled: true
+```
+
+Secrets stay in `.env`. The split is: `.env` is what must not be shared, `athlete.yaml` is what
+someone *would* share when asking for help.
+
+## Open questions
+
+1. **Does the config reload, or is a restart required?** The maintenance loop and the server
+   are long-lived. Simplest is load-once-at-import; the cost is that editing the file while the
+   server runs does nothing, silently. Leaning: load once, expose the loaded values at
+   `/api/config` so the running state is at least inspectable.
+
+2. **What happens when `athlete.yaml` is missing?** Refuse to start, or run on defaults with
+   the athlete's name blank? Refusing is clearer but makes the first run a wall. Leaning:
+   generate it from the example on first run and say so.
+
+3. **How much does the coach's system prompt come from config?** `coach/prompt.py` currently
+   hardcodes the methodology, the voice, and this athlete's specific situation. The methodology
+   should stay; the situation should not. Where exactly is the line?
+
+4. **Does the bootstrap run automatically or explicitly?** Deriving a ladder from a sync that
+   has not finished would produce a floor ladder and then never revisit it. Leaning: explicit
+   `scripts/bootstrap_plan.py`, with the roller refusing to run until it has.
+
+5. **What identifies a plan across a config change?** `PLAN_NAME` is the join key for five
+   readers. If someone renames their plan in the config, every stored row orphans. Needs a
+   stable internal id with the name as a label, or a documented rename path.
+
+6. **Timezone.** `date.today()` is the athlete's day, correctly, but it is the *server's*
+   today. Fine for a laptop in one timezone; wrong for a server left in UTC.
+
+## Features: what to build, and what not to
+
+### Network hosting with a real UI — the one that forces an architectural decision
+
+Currently `scripts/serve.py` binds `127.0.0.1` deliberately: the process reads `.env`, so it
+holds the intervals.icu and Anthropic keys, and it has **no authentication of any kind**. On a
+routable interface it is an open proxy to both, and anyone on the network can spend the
+Anthropic key.
+
+So "available on the local network" is not a config change, it is a feature with a prerequisite:
+
+- **Auth before exposure.** Single-user, so a long random token in `.env` checked by FastAPI
+  middleware is proportionate. Sessions/OAuth are over-engineering for one person.
+- **The chat endpoint is the exposure that matters.** `/api/chat/ask` spends money per call.
+  It needs auth and a rate limit even on a trusted network.
+- **Bind address stays explicit.** `--host 0.0.0.0` already warns; it should additionally
+  refuse unless an auth token is configured.
+
+The UI itself is the smaller half: the dashboard and calendar are already served, and
+`/api/chat/ask` already streams SSE with a working test page at `/chat-test`. What is missing
+is a real chat panel wired into the dashboard, which is roadmap work that predates this
+refactor and is unaffected by it.
+
+### ML for forecasting and fatigue — mostly no, and the reason is in our own data
+
+You are right that the dataset is the limit, and it is worth writing down *how* limited so this
+does not get revisited on vibes:
+
+- **Fatigue early warning: one positive example.** Of eleven training dropouts in the reference
+  history, exactly **one** had a fatigue signature. 2026-04-13 began with HRV 52 and the best
+  sleep of the spring, then four weeks off. You cannot train an early-warning model on n=1, and
+  the existing `wellness.recovery_flags()` already surfaces the signals as advisory text, which
+  is the right altitude.
+- **FTP projection: the measurement is cheaper than the model.** A ramp test is 25 minutes and
+  gives a number; a model trained on one athlete's sparse history gives a guess with a
+  confidence interval wide enough to contain the guess you would make anyway.
+- **CTL/ATL projection is already deterministic** and does not want a model — it is the same
+  EWMA intervals.icu uses, run forward over the prescribed horizon.
+
+**The honest statistical play that is worth doing:** per-athlete control limits. Rolling
+baselines of HRV and RHR with a simple deviation band, which `recovery_flags` half-does
+already. That is statistics, not ML, it works on one athlete's data, and it is interpretable —
+which matters when the output is advice.
+
+### What other platforms have that is worth taking
+
+Filtered hard through what this project is *for*. Most commercial features exist to drive
+engagement or sell subscriptions, and several actively fight the adherence-gated philosophy.
+
+**Worth building, in order:**
+
+1. **eFTP tracking.** intervals.icu computes an estimated FTP from your power data
+   continuously. We already sync the data and ignore the field. This directly fixes a live
+   problem: the intervals.icu FTP is configured at 238 while eFTP reads 257, our own record
+   says 260, and a Zwift ramp test said 271 — four numbers, and every `%FTP` target in every
+   prescription is computed against one of them. Pull eFTP, track it as a profile metric
+   alongside the manual one, and surface the disagreement rather than silently picking.
+
+2. **Execution scoring, not just completion.** This is the biggest gap relative to the
+   project's own goals. Compliance currently scores a session on duration and TSS — Tuesday's
+   sprints came back "completed, 112%". It does not know whether eight maximal efforts actually
+   happened. intervals.icu detects intervals within an activity; comparing detected intervals
+   against `prescribed_sessions.params_json` would answer "did you execute the prescription",
+   which is a different and more useful question than "did you ride for long enough". The gate
+   should keep reading volume — that is deliberate and well-argued — but the *athlete* should
+   see execution.
+
+3. **Power curve (mean-maximal power) as the progress signal.** CTL measures volume, not
+   fitness, and this project has nothing that answers "am I getting stronger". MMP over
+   rolling windows does, needs no model, and is a chart we do not have.
+
+4. **Workout alternates.** TrainerRoad's best feature: swap today's session for an equivalent
+   at the same dose. This fits our architecture almost suspiciously well — the tier already
+   defines the dose and the archetype defines the shape, so an alternate is "another variant at
+   the same `target_min`". Probably a day's work.
+
+5. **Outdoor / Garmin export.** We write `.zwo` for Zwift only. intervals.icu can push a
+   structured workout to Garmin once `workout_doc` is populated, which it now is as of the
+   export path. Caveat recorded during that work: the intervals.icu forum warned on 2026-10-09
+   that Garmin API access may be restricted — verify before building.
+
+**Deliberately not building:**
+
+- **HRV-guided daily readiness** (Whoop, Xert). Decided against on evidence during the rebuild;
+  see the dropout analysis above. Recorded here so a future contributor does not re-add it
+  without new evidence.
+- **Social, segments, leaderboards.** Not what this is for.
+- **Nutrition and fuelling.** Real, and a different project.
+- **Adaptive training that reschedules missed sessions.** This is what the tier gate replaces.
+  A plan that moves missed work forward is the thing that produced a 32-week ramp nobody could
+  follow.
+
+## How each feature lands in the current architecture
+
+The point of this section is to check the shape holds, not to schedule work.
+
+| Feature | Where it goes | Does the architecture absorb it? |
+|---|---|---|
+| Config file | new `src/config.py` leaf; `planning/constants.py` reads it | Yes — constants.py exists for this reason |
+| Tier bootstrap | new `scripts/bootstrap_plan.py` + a `tiers` table | Yes — `TIERS` is already plain data |
+| Auth | FastAPI middleware in `api/app.py` | Yes — single entry point |
+| Real chat UI | `visualizations/dashboard.py` panel + existing SSE | Yes — endpoint already streams |
+| eFTP tracking | `intervals/client.py` field + `athlete/profile.py` metric | Yes — profile is already a dated history |
+| Execution scoring | `analysis/compliance.py`, against `params_json` | Yes — params already stored per session |
+| Power curve | new `analysis/power_curve.py` + a chart | Yes — same shape as every other chart |
+| Workout alternates | `planning/archetypes.py` selection by `target_min` | Yes — dose and shape already separate |
+| Garmin export | `planning/export.py`, same payload | Yes — `workout_doc` already populated |
+| Control-limit flags | extend `wellness.recovery_flags()` | Yes |
+
+Nothing on that list requires moving a boundary. The two that would have — multi-tenancy and
+rescheduling missed work — are the two explicitly ruled out.
+
+## Sequencing
+
+1. `src/config.py` + `athlete.example.yaml`, with the 12 personal constants reading from it.
+   No behaviour change; the committed config reproduces today's values exactly.
+2. Deduplicate `SPORT_GROUPS`.
+3. Tier bootstrap from synced history, with `start_from: explicit` as the escape hatch.
+4. Archetype overrides, validated against the safety rules.
+5. Auth, then network binding.
+6. Features, in the order above.
+
+Steps 1–2 are mechanical and verifiable by the existing suite: if the committed config
+reproduces today's prescriptions byte-for-byte, nothing regressed. Step 3 is where the real
+design risk is, and it deserves the same treatment the progression gate got — replay against
+the frozen history fixture and check the derived ladder against the one we chose by hand.
