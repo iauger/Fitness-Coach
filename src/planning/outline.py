@@ -21,7 +21,7 @@ from datetime import date, timedelta
 
 from src.analysis.dates import monday_of
 from src.planning.blocks import ROTATION, advance_position
-from src.planning.constants import PLAN_NAME
+from src.planning.constants import plan_name
 from src.planning.progression import (
     CAP_TIER, FLOOR_TIER, STRENGTH_GATED_TIER, STRENGTH_GATED_WEEKS,
     STRENGTH_WINDOW, TIERS,
@@ -154,7 +154,7 @@ def from_state(state: dict, today: date, weeks: int = OUTLINE_WEEKS,
     held = sum(1 for r in recent[-STRENGTH_WINDOW:] if r.get("habit_held"))
     strength_ok = (held >= STRENGTH_GATED_WEEKS) if recent else None
     return {
-        "plan_name": PLAN_NAME,
+        "plan_name": plan_name(),
         "assumption": f"{met_in_four} of every 4 non-recovery weeks met",
         "strength_recently_held": strength_ok,
         "weeks": [vars(r) for r in rows],

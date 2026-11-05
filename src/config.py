@@ -47,9 +47,32 @@ class Athlete:
     name: str
     timezone: str = "UTC"
     history_start: int | None = None
+    primary_sport: str = "cycling"
+    # Free text, both of them, and both read by the coach rather than by any logic. `notes`
+    # carries life load — small children, shift work, a long commute — and is the one field
+    # here that materially changes what the model says, because it is what lets a missed week
+    # be read as life rather than as a failure.
+    equipment: str = ""
+    notes: str = ""
+    tools: tuple[str, ...] = ()
 
     def zone(self) -> ZoneInfo:
         return ZoneInfo(self.timezone)
+
+
+@dataclass(frozen=True)
+class Profile:
+    """
+    Baseline body and power numbers, used *only* to seed an empty `athlete_profile` table.
+
+    Deliberately not the source of truth: `src/athlete/profile.py` holds dated entries, so FTP
+    has a history rather than a value, and `scripts/seed_profile.py` will not write one of these
+    over a metric that already has a record. Editing a number here after the first run does
+    nothing, which is correct — a new FTP is an event on a date, not a changed setting.
+    """
+    height_in: float | None = None
+    weight_lbs: float | None = None
+    ftp: float | None = None
 
 
 @dataclass(frozen=True)
@@ -63,6 +86,12 @@ class Goal:
 class Plan:
     name: str
     start_monday: date
+    # The plan's identity. Generated from the name on first creation and then **never
+    # recomputed** — deriving it at runtime is what made a rename insert a second plan with
+    # the stored rows repointed at it, and it is what every external_id on the intervals.icu
+    # calendar was built from. Left unset, `plans.resolve` takes the slug of the plan already
+    # in the database and only falls back to deriving one when there is no plan at all.
+    slug: str | None = None
     sustainable_band_hours: tuple[float, float] = (3.5, 4.0)
     long_ride_ceiling_min: int = 120
     horizon_weeks: int = 3
@@ -96,6 +125,7 @@ class Config:
     athlete: Athlete
     plan: Plan
     goals: tuple[Goal, ...] = ()
+    profile: Profile = Profile()
     integrations: Integrations = Integrations()
     server: Server = Server()
     coach: Coach = Coach()
@@ -213,6 +243,23 @@ def _validate(cfg: Config) -> None:
         raise ConfigError(
             f"plan.sustainable_band_hours: expected [low, high] with 0 < low < high, "
             f"got [{low}, {high}]")
+
+    if cfg.plan.slug is not None:
+        # The slug travels into `external_id`s on the remote calendar, so it has to survive a
+        # URL and a filename. Rejecting a bad one here beats discovering it as events that do
+        # not match the ones already pushed.
+        slug = cfg.plan.slug
+        allowed = set("abcdefghijklmnopqrstuvwxyz0123456789-")
+        if not slug or slug.strip("-") != slug or set(slug) - allowed:
+            raise ConfigError(
+                f"plan.slug: {slug!r} must be lowercase letters, digits and hyphens, not "
+                f"starting or ending with a hyphen. Normally you leave this unset and it is "
+                f"generated from plan.name once.")
+
+    for name in ("height_in", "weight_lbs", "ftp"):
+        value = getattr(cfg.profile, name)
+        if value is not None and value <= 0:
+            raise ConfigError(f"profile.{name}: {value} is not a usable measurement")
 
     if cfg.plan.horizon_weeks < 1:
         raise ConfigError(

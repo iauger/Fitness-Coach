@@ -34,7 +34,7 @@ from src.analysis.fitness import current_fitness, ctl_trend, peak_ctl
 from src.analysis.load import ctl_correction, corrected_activities
 from src.analysis.report import build_coaching_context, coaching_context_text
 from src.analysis.training_plan import plan_summary, current_week
-from src.planning.constants import PLAN_NAME
+from src.planning.constants import plan_name
 from src.planning.outline import from_state as plan_outline
 from src.planning.progression import TIERS
 from src.planning.progression_store import current_state
@@ -224,7 +224,7 @@ def plan_state(on: date | None = None) -> dict:
     with read_connection() as conn:
         state = current_state(conn, today, persist=False)
     return {
-        "plan_name": PLAN_NAME,
+        "plan_name": plan_name(),
         "tier": state["tier"],
         "tier_hours": TIERS[state["tier"]].target_hours,
         "week_type": state["week_type"],
@@ -248,8 +248,8 @@ def plan_sessions(start: date | None = None, days: int = 21) -> dict:
             "intensity_factor, volume_tier, week_type, block_name, week_in_block, "
             "external_id, remote_event_id, pushed_at "
             "FROM prescribed_sessions WHERE plan_name = ? AND date BETWEEN ? AND ? "
-            "ORDER BY date, role", (PLAN_NAME, first.isoformat(), last.isoformat()))]
-    return {"plan_name": PLAN_NAME, "start": first.isoformat(), "end": last.isoformat(),
+            "ORDER BY date, role", (plan_name(), first.isoformat(), last.isoformat()))]
+    return {"plan_name": plan_name(), "start": first.isoformat(), "end": last.isoformat(),
             "sessions": rows}
 
 
@@ -277,8 +277,8 @@ def plan_progression(limit: int = 26) -> dict:
             "SELECT week_start, ride_minutes, ride_days, strength_logged, outcome, "
             "tier_applied, verdict, tier_next, week_type_next, rotation, reason "
             "FROM plan_progression WHERE plan_name = ? ORDER BY week_start DESC LIMIT ?",
-            (PLAN_NAME, limit))]
-    return {"plan_name": PLAN_NAME, "weeks": rows}
+            (plan_name(), limit))]
+    return {"plan_name": plan_name(), "weeks": rows}
 
 
 @app.get("/api/cycles/{start_date}", tags=["plan"])

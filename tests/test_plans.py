@@ -205,3 +205,54 @@ def test_the_migration_backfilled_rows_that_predate_the_table(db):
     plan = plans.by_slug(db, "legacy-plan")
     assert plan is not None and row["plan_id"] == plan.id
     assert plan.started_on == "2026-01-05", "started_on should come from the earliest row"
+
+
+# ── resolving a slug when the name comes from a file ──────────────────────────
+#
+# Step 1 closed the rename bug by hardcoding the slug. Step 3 reads the name from a file
+# someone is invited to edit, which reopens it unless the slug can be found without being
+# derived. These are the cases that matter.
+
+def test_resolve_prefers_the_slug_already_in_the_database_over_the_name(db):
+    """
+    The rename case, with nothing configured. This is the whole reason `resolve` exists: the
+    name says one thing, the database says another, and deriving from the name would insert a
+    second plan rather than renaming the first.
+    """
+    store_horizon(db, date(2026, 11, 2), NAME)
+    assert plans.resolve(db, "A Completely New Name") == SLUG
+
+
+def test_resolve_derives_from_the_name_only_on_a_genuine_first_run(db):
+    assert plans.active(db) == []
+    assert plans.resolve(db, "Brand New Plan") == "brand-new-plan"
+
+
+def test_an_explicitly_configured_slug_wins(db):
+    store_horizon(db, date(2026, 11, 2), NAME)
+    assert plans.resolve(db, NAME, "chosen-by-hand") == "chosen-by-hand"
+
+
+def test_resolve_refuses_to_guess_between_two_plans(db):
+    plans.ensure(db, SLUG, NAME, started_on="2026-11-02")
+    plans.ensure(db, "other-plan", "Other Plan", started_on="2027-01-04")
+    with pytest.raises(ValueError, match="no way to tell"):
+        plans.resolve(db, "A Third Name")
+
+
+def test_resolve_matches_by_name_when_several_plans_exist(db):
+    """Ambiguous only when the name matches nothing. An exact match is not a guess."""
+    plans.ensure(db, SLUG, NAME, started_on="2026-11-02")
+    plans.ensure(db, "other-plan", "Other Plan", started_on="2027-01-04")
+    assert plans.resolve(db, "Other Plan") == "other-plan"
+
+
+def test_a_retired_plan_does_not_make_the_live_one_ambiguous(db):
+    """
+    The live database is exactly this shape: TrainerRoad retired, one plan running. If retired
+    plans counted, every roll would raise.
+    """
+    plans.ensure(db, "trainerroad-2026-27", "TrainerRoad 2026-27", started_on="2026-08-17")
+    plans.retire(db, "trainerroad-2026-27")
+    plans.ensure(db, SLUG, NAME, started_on="2026-11-02")
+    assert plans.resolve(db, "Renamed") == SLUG

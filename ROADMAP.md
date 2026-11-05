@@ -1350,7 +1350,7 @@ Steps renumber because identity has to land before config can rename anything sa
 | 0 | `src/config.py` loader, no consumers | nothing depends on it yet |
 | 1 | `plans` table, `plan_id` foreign keys, `config_hash` | **before** config can rename a plan |
 | 2 | Timezone: `clock.today_local()` + the 58 call sites | before dates come from config |
-| 3 | The 11 personal constants read from config | diff `prescribed_sessions` — byte-identical |
+| 3 | The 11 personal constants read from config | **done** — `prescribed_sessions` byte-identical |
 | 4 | Deduplicate `SPORT_GROUPS` | keeps step 3's diff clean |
 | 5 | Tier ladder derived from history, `tiers` table | needs `plan_id` from step 1 |
 | 6 | Archetype overrides, validated | needs the loader and the safety rules |
@@ -1377,3 +1377,45 @@ our next three *rides* within seven days — Thu 60min, Sat 90min, Tue 6x20s —
 excluded the three strength days, which are `WeightTraining` rather than rides. It files them
 under its own `Intervals icu` folder in Zwift, which is the folder organisation we briefly
 built by hand and then deleted.
+
+### Step 3, done — what it cost and what it found
+
+The eleven are gone: `ATHLETE_PROFILE`, `PLAN_NAME`, `PLAN_SLUG`, `GOAL_DATE`, `GRAVEL_DATE`,
+`PLAN_START_MONDAY`, the two seed scripts' tables, the server host/port, and the two page
+titles.
+
+**The shape change that mattered.** `planning/constants.py` became *functions*, not constants
+reassigned from config. A constant is read into every default argument it appears in —
+`plan_name: str = PLAN_NAME` binds when the function is defined — and `PLAN_NAME` sat in eight
+of those. Reassigning it from config would have left all eight holding whatever loaded first,
+unreachable by any later `reset()`. Same mechanism as the `schema.DB_PATH` fixture that did
+nothing and let the suite write to the real database. So every such default became `None`,
+resolved in the body.
+
+**Verification.** The horizon was generated from a `HEAD` worktree and from the new code into
+two copies of the live database and the stored rows diffed: identical, twice — once with the
+`plans` table emptied, once against the live state. The committed config reproduces today's
+plan exactly.
+
+**`GRAVEL_DATE` did not become a setting.** It was the second of two events the report counted
+down to by name. The report now counts down to whatever dated goals are configured, soonest
+first, with the priority beside each — which is the only version of that line that means
+anything to a second athlete, and which says out loud that an `opt_in` goal is one the
+rotation does not taper for.
+
+**`plans.resolve`, and a bug reopened by this step.** Step 1 closed the rename-splits-a-plan
+bug by hardcoding `PLAN_SLUG`. Reading the name from a file someone is invited to edit reopens
+it, because the fix was a hardcoded answer. `resolve` takes the configured slug if there is
+one, otherwise the slug of the plan already in the database, and derives from the name only
+when there is no plan at all — so deriving is now reachable only when there is nothing to
+orphan.
+
+**Found by running it, not by tests:** `plan_build.py` printed `None` as the plan name, because
+one of the mechanical replacements silently did not apply. And two fields of real content —
+`equipment` and `notes` — were briefly lost, because the config file had no home for them; the
+coach's "Life context" line had gone blank. That line is the one field in the file that changes
+what the model says, and nothing would have failed.
+
+11 mutants, all caught; two survived first — `expand_week`'s fallback was only ever exercised
+under a config whose plan name matched the old constant, so the test asserted the mutant's own
+answer. 525 tests green. Dashboard and calendar verified in a browser per `CLAUDE.md`.

@@ -24,7 +24,7 @@ import json
 from datetime import date, timedelta
 
 from src.clock import utc_now_iso
-from src.planning.constants import PLAN_NAME
+from src.planning.constants import plan_name as configured_plan_name
 from src.planning.zwo import safe_filename, to_zwo
 
 # intervals.icu rejects a start date carrying a time of day: the forum is explicit that calendar
@@ -102,7 +102,7 @@ def _description(row: dict, dose: bool = True) -> str:
     return "\n".join(bits)
 
 
-def pending(conn, today: date, plan_name: str = PLAN_NAME) -> list[dict]:
+def pending(conn, today: date, plan_name: str | None = None) -> list[dict]:
     """
     The sessions that should be on the remote calendar: today onward, within the stored plan.
 
@@ -110,6 +110,7 @@ def pending(conn, today: date, plan_name: str = PLAN_NAME) -> list[dict]:
     them would both be pointless and risk overwriting an activity the athlete has already
     logged against that day.
     """
+    plan_name = plan_name or configured_plan_name()
     return [dict(r) for r in conn.execute(
         "SELECT * FROM prescribed_sessions WHERE plan_name = ? AND date >= ? ORDER BY date, role",
         (plan_name, today.isoformat()),
@@ -159,7 +160,7 @@ def _as_event_id(value) -> int | None:
         return None
 
 
-def reconcile(conn, client, today: date, plan_name: str = PLAN_NAME,
+def reconcile(conn, client, today: date, plan_name: str | None = None,
               horizon_days: int = 60) -> dict:
     """
     Re-link local sessions to remote events that already exist, by `external_id`.
@@ -189,7 +190,7 @@ def reconcile(conn, client, today: date, plan_name: str = PLAN_NAME,
     return {"remote_events": len(remote), "relinked": relinked}
 
 
-def push(conn, client, today: date, plan_name: str = PLAN_NAME,
+def push(conn, client, today: date, plan_name: str | None = None,
          dry_run: bool = True) -> dict:
     """
     Replace the remote copy of the upcoming horizon.

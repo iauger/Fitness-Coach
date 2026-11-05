@@ -77,6 +77,30 @@ def test_the_dashboard_renders_with_no_data(empty):
     assert len(build_dashboard()) > 1000
 
 
+def test_both_pages_title_themselves_from_the_configuration(empty, tmp_path, monkeypatch):
+    """
+    The name in the title bar used to be a string literal in two modules. It is now the
+    athlete's, and it is **escaped**, because it arrives from a file and lands inside markup —
+    an apostrophe alone would break the page for a plausible name.
+    """
+    import src.config
+    from src.visualizations.calendar_view import build_calendar_html
+    from src.visualizations.dashboard import build_dashboard
+
+    path = tmp_path / "c.yaml"
+    path.write_text(
+        'athlete:\n  name: "A & B <script>"\n'
+        'plan:\n  name: P\n  start_monday: 2026-11-02\n', encoding="utf-8")
+    monkeypatch.setattr(src.config, "CONFIG_PATH", path)
+    src.config.reset()
+
+    for html in (build_calendar_html(), build_dashboard()):
+        assert "A &amp; B &lt;script&gt;" in html
+        # The dashboard has <script> blocks of its own, so the check is that the *name* never
+        # reaches the page unescaped — not that the page contains no script tag.
+        assert "A & B <script>" not in html
+
+
 @pytest.mark.parametrize("module_name", ["pmc", "recovery", "volume", "distribution", "load"])
 def test_every_individual_chart_builds_with_no_data(empty, module_name):
     """

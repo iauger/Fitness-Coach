@@ -30,10 +30,14 @@ from src.analysis.derive import EASY_IF_CEILING, HARD_IF_FLOOR
 from src.planning import archetypes as A
 from src.planning.progression import TIERS
 
-# Re-exported from planning/constants.py, which has no imports of its own. The three readers in
+# From planning/constants.py, which imports nothing but src.config. The three readers in
 # src.analysis that need to filter on the plan name cannot import this module — blocks.py already
 # imports src.analysis.derive above, so the dependency would be circular.
-from src.planning.constants import GOAL_DATE, PLAN_NAME  # noqa: F401  (re-export)
+#
+# Called, not assigned to a module constant: a constant read into a default argument binds at
+# import and no later config change can reach it, which is the defect this step removes.
+from src.planning.constants import (
+    goal_date as configured_goal_date, plan_name as configured_plan_name)
 
 # Weekday roles a slot can take.
 ROLES = ("hard", "long", "lit", "strength")
@@ -276,7 +280,7 @@ def _hard_session(block: Block, week_in_block: int) -> A.Session:
 
 
 def expand_week(block: Block, week_in_block: int, tier: int, monday: date,
-                plan_name: str = PLAN_NAME, block_index: int = 1,
+                plan_name: str | None = None, block_index: int = 1,
                 week_type: str = "normal") -> list[dict]:
     """
     One week of dated prescriptions, at a tier.
@@ -286,6 +290,7 @@ def expand_week(block: Block, week_in_block: int, tier: int, monday: date,
     long ride rather than scaling everything, because duration is the adaptation being protected
     and it is the least fatiguing thing to keep.
     """
+    plan_name = plan_name or configured_plan_name()
     spec = TIERS[tier]
     recovery = week_in_block in block.recovery_weeks
     reentry = week_type == "reentry"
@@ -332,7 +337,7 @@ def expand_week(block: Block, week_in_block: int, tier: int, monday: date,
 
 def plan_week_row(monday: date, block: Block, block_index: int, week_in_block: int,
                   plan_week_number: int, tier: int, week_type: str = "normal",
-                  plan_name: str = PLAN_NAME, goal_date: str = GOAL_DATE,
+                  plan_name: str | None = None, goal_date: str | None = None,
                   plan_start: str | None = None) -> dict:
     """
     One row for `training_plan_weeks`, derived from the same block the sessions come from.
@@ -341,9 +346,11 @@ def plan_week_row(monday: date, block: Block, block_index: int, week_in_block: i
     makes the plan_name join correct by construction rather than by remembering to keep two
     constants in step.
 
-    `plan_end_date` is the goal date (CX, 2027-10-01) rather than a plan end, because the
+    `plan_end_date` is `plan.goal_date` from configuration rather than a plan end, because the
     rotation has no end — it is labelled as a goal wherever it is rendered.
     """
+    plan_name = plan_name or configured_plan_name()
+    goal_date = goal_date or configured_goal_date()
     start = monday_of(monday)
     recovery = week_in_block in block.recovery_weeks
     return {

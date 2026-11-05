@@ -31,11 +31,11 @@ from datetime import date, timedelta
 
 from src.analysis.dates import monday_of
 from src.clock import today_local, utc_now_iso
-from src.planning.blocks import (
-    PLAN_NAME, ROTATION, advance_position, expand_week, plan_week_row,
-)
+from src.planning.blocks import ROTATION, advance_position, expand_week, plan_week_row
 from src.planning import plans
-from src.planning.constants import GOAL_DATE, PLAN_SLUG, PLAN_START_MONDAY
+from src.planning.constants import (
+    configured_slug, goal_date, plan_name as configured_plan_name, plan_start_monday,
+)
 from src.planning.progression_store import current_state
 
 # The current week plus the next two. Long enough to see a shape, short enough that it is always
@@ -69,7 +69,7 @@ def external_id(plan_name: str, on: str, role: str) -> str:
     return f"{external_id_prefix(plan_name)}{on}-{role}"
 
 
-def horizon(conn, today: date | None = None, plan_name: str = PLAN_NAME,
+def horizon(conn, today: date | None = None, plan_name: str | None = None,
             weeks: int = HORIZON_WEEKS, start_tier: int = 1,
             persist_state: bool = True) -> dict:
     """
@@ -80,6 +80,7 @@ def horizon(conn, today: date | None = None, plan_name: str = PLAN_NAME,
     than something built by a parallel code path.
     """
     today = today or today_local()
+    plan_name = plan_name or configured_plan_name()
     state = current_state(conn, today, plan_name, start_tier, persist=persist_state)
 
     tier = state["tier"]
@@ -98,7 +99,8 @@ def horizon(conn, today: date | None = None, plan_name: str = PLAN_NAME,
         week_rows.append(plan_week_row(
             monday, block, block_index, week_in_block,
             plan_week_number=plan_week_number(monday), tier=tier, week_type=week_type,
-            plan_name=plan_name, goal_date=GOAL_DATE, plan_start=PLAN_START_MONDAY))
+            plan_name=plan_name, goal_date=goal_date(),
+            plan_start=plan_start_monday()))
         block_index, week_in_block = advance_position(block_index, week_in_block, "continue")
 
     return {"state": state, "sessions": sessions, "week_rows": week_rows,
@@ -107,11 +109,11 @@ def horizon(conn, today: date | None = None, plan_name: str = PLAN_NAME,
 
 def plan_week_number(monday: date) -> int:
     """Weeks since the plan started, 1-based. Replaces a hand-maintained counter."""
-    start = monday_of(date.fromisoformat(PLAN_START_MONDAY))
+    start = monday_of(date.fromisoformat(plan_start_monday()))
     return ((monday - start).days // 7) + 1
 
 
-def store_horizon(conn, today: date | None = None, plan_name: str = PLAN_NAME,
+def store_horizon(conn, today: date | None = None, plan_name: str | None = None,
                   weeks: int = HORIZON_WEEKS, start_tier: int = 1) -> dict:
     """
     Regenerate and store the horizon. Idempotent, and never rewrites a frozen session.
@@ -119,13 +121,17 @@ def store_horizon(conn, today: date | None = None, plan_name: str = PLAN_NAME,
     Returns counts of what moved, so a sync log says something useful rather than "ok".
     """
     today = today or today_local()
+    plan_name = plan_name or configured_plan_name()
     built = horizon(conn, today, plan_name, weeks, start_tier)
     cutoff = built["cutoff"]
 
     # Resolved once per roll. Keyed on the slug, so a renamed plan keeps its identity and its
-    # stored history instead of quietly becoming a second plan alongside the first.
-    plan = plans.ensure(conn, PLAN_SLUG, plan_name, started_on=PLAN_START_MONDAY,
-                        goal_date=GOAL_DATE)
+    # stored history instead of quietly becoming a second plan alongside the first. The slug
+    # comes from `plans.resolve` rather than from the name, because the name now comes from a
+    # file someone is invited to edit — see the note on resolve().
+    slug = plans.resolve(conn, plan_name, configured_slug())
+    plan = plans.ensure(conn, slug, plan_name, started_on=plan_start_monday(),
+                        goal_date=goal_date())
     plan_id = plan.id
 
     # Delete only what the new horizon no longer contains, then update the rest in place.

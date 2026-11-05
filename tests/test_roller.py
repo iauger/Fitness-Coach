@@ -24,7 +24,9 @@ import pytest
 
 from src.db.migrations import migrate
 from src.planning import roller
-from src.planning.constants import PLAN_START_MONDAY
+from src.planning.constants import plan_start_monday
+
+PLAN_START_MONDAY = plan_start_monday()
 from src.planning.progression import TIERS
 from src.planning.roller import FREEZE_DAYS, external_id, horizon, store_horizon
 

@@ -10,6 +10,24 @@ athlete:
   # Everything is stored in UTC underneath; this only affects the athlete's day.
   timezone: UTC
   history_start: 2017            # optional; the first year you have data for
+  primary_sport: cycling
+  equipment: ""                  # e.g. the head unit you ride with
+  # Free text, read by the coach and by nothing else. This is where life load goes — small
+  # children, shift work, a long commute. It is what lets a missed week be read as life
+  # rather than as a failure, so it is worth writing even though no code looks at it.
+  notes: ""
+  tools:                         # other tools in the loop, for the coach's context
+    - intervals.icu (data aggregation)
+
+# Baseline body and power numbers, used only to seed an empty athlete_profile table.
+# src/athlete/profile.py holds dated entries and is the source of truth after that, so editing
+# these later does nothing — a new FTP is an event on a date, recorded with
+# `python scripts/seed_profile.py --ftp 250`. Leave one out and it is not seeded at all,
+# which is better than seeding a guess: every zone in every prescription is a % of FTP.
+profile:
+  height_in:
+  weight_lbs:
+  ftp:
 
 goals:
   - description: Cyclocross racing fall 2027

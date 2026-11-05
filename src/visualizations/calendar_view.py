@@ -8,11 +8,13 @@ Raw HTML/CSS grid, not Plotly — this is a layout problem, not a chart.
 
 from collections import defaultdict
 from datetime import date, timedelta
+from html import escape
 from pathlib import Path
 from src.db.schema import read_connection
 from src.analysis.load import effective_tss
 from src.visualizations.theme import COLORS
 from src.clock import today_local
+from src.config import config
 
 CHARTS_DIR = Path(__file__).parent.parent.parent / "data" / "charts"
 
@@ -205,6 +207,8 @@ def build_calendar_html(weeks: int = 6) -> str:
     start, end = _week_bounds(weeks)
     days = _load_data(start, end)
     today_str = today_local().isoformat()
+    # Escaped: the athlete's name comes from a configuration file and lands inside markup.
+    who = escape(config().athlete.name)
 
     week_rows = []
     cur = start
@@ -219,7 +223,7 @@ def build_calendar_html(weeks: int = 6) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Training Calendar — Ian Auger</title>
+  <title>Training Calendar — {who}</title>
   <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22&gt;&lt;text y=%22.9em%22 font-size=%2290%22&gt;📅&lt;/text&gt;&lt;/svg&gt;">
   <style>
     *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}

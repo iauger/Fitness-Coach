@@ -14,35 +14,26 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.config import config
 from src.db.schema import get_connection
 
-GOALS = [
-    {
-        "description": "Return to consistent training rhythm after 6-month gap",
-        "target_date": None,
-        "priority": "primary",
-    },
-    {
-        "description": "Cyclocross racing fall 2027",
-        "target_date": "2027-10-01",
-        "priority": "primary",
-    },
-    {
-        "description": "Gravel racing spring/summer 2027",
-        "target_date": "2027-05-01",
-        "priority": "secondary",
-    },
-    {
-        "description": "Baseline fitness: 120-mile ride not an overreach",
-        "target_date": "2027-06-01",
-        "priority": "secondary",
-    },
-    {
-        "description": "Introduce multi-sport variety: yoga, strength, running, swimming",
-        "target_date": None,
-        "priority": "secondary",
-    },
-]
+def goals_from_config() -> list[dict]:
+    """
+    The configured goals, in the shape the `goals` table wants.
+
+    This was a hardcoded list of five of the athlete's own targets. The table is still the
+    source of truth once seeded — it is what an in-conversation edit writes to and what
+    `_active_goals` reads — so this only ever fills an empty one.
+    """
+    return [
+        {"description": g.description,
+         "target_date": g.date.isoformat() if g.date else None,
+         # The table predates `opt_in` and stores a two-valued priority. An opt-in goal is one
+         # the rotation does not taper for, which is a planning distinction rather than an
+         # importance one, so it lands as secondary here.
+         "priority": "secondary" if g.priority == "opt_in" else g.priority}
+        for g in config().goals
+    ]
 
 
 def seed(reset: bool = False) -> None:
@@ -60,7 +51,7 @@ def seed(reset: bool = False) -> None:
         }
 
         added = 0
-        for g in GOALS:
+        for g in goals_from_config():
             if g["description"] in existing:
                 print(f"  skip (exists): {g['description'][:60]}")
                 continue

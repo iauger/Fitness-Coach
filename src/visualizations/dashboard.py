@@ -5,10 +5,12 @@ Generates a standalone HTML file with Plotly loaded once from CDN.
 
 import json
 from datetime import date
+from html import escape
 from pathlib import Path
 from src.visualizations import pmc, load, recovery
 from src.db.schema import read_connection
 from src.clock import today_local
+from src.config import config
 
 CHARTS_DIR = Path(__file__).parent.parent.parent / "data" / "charts"
 
@@ -82,6 +84,8 @@ def build_dashboard() -> str:
         for key, label, _ in RANGE_PRESETS
     )
     presets_json = json.dumps({key: days for key, _, days in RANGE_PRESETS})
+    # Escaped: the athlete's name comes from a configuration file and lands inside markup.
+    who = escape(config().athlete.name)
     max_days = max((today_local() - date.fromisoformat(earliest_iso)).days, 7)
     default_days = dict((key, days) for key, _, days in RANGE_PRESETS)[DEFAULT_PRESET]
 
@@ -90,7 +94,7 @@ def build_dashboard() -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Fitness Coach — Ian Auger</title>
+  <title>Fitness Coach — {who}</title>
   <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22&gt;&lt;text y=%22.9em%22 font-size=%2290%22&gt;🚴&lt;/text&gt;&lt;/svg&gt;">
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
   <style>
@@ -412,7 +416,7 @@ def build_dashboard() -> str:
 <body>
 
 <header>
-  <h1>Fitness Coach &mdash; Ian Auger</h1>
+  <h1>Fitness Coach &mdash; {who}</h1>
   <div class="header-right">
     <a class="calendar-link" href="calendar.html">&#128197; Calendar</a>
     <span>{today}</span>

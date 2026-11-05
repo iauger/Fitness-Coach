@@ -29,9 +29,12 @@ from src.analysis.derive import weekly_load
 from src.db.migrations import LATEST_VERSION, current_version, migrate
 from src.planning.blocks import ROTATION, ROTATION_LOOP_FROM, advance_position
 from src.planning.progression import TIERS, classify_week, next_state
+from src.planning.constants import plan_start_monday
 from src.planning.progression_store import (
-    PLAN_START_MONDAY, _graded_from_row, catch_up, record_week, rows,
+    _graded_from_row, catch_up, record_week, rows,
 )
+
+PLAN_START_MONDAY = plan_start_monday()
 
 PLAN = "test plan"
 

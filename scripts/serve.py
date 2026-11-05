@@ -25,17 +25,19 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import uvicorn
 
+from src.config import config
 from src.db.schema import migrate_db
 
-DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 8800
+# Loopback is the default in `src/config.py`, not here, so there is one answer to "what does
+# this bind to" rather than two that can disagree.
 
 
 def main() -> None:
+    server = config().server
     p = argparse.ArgumentParser()
-    p.add_argument("--host", default=DEFAULT_HOST,
-                   help=f"interface to bind (default {DEFAULT_HOST}; see the warning above)")
-    p.add_argument("--port", type=int, default=DEFAULT_PORT)
+    p.add_argument("--host", default=server.host,
+                   help=f"interface to bind (default {server.host}; see the warning above)")
+    p.add_argument("--port", type=int, default=server.port)
     p.add_argument("--reload", action="store_true", help="auto-restart on code changes")
     p.add_argument("--open", action="store_true", dest="open_browser")
     args = p.parse_args()

@@ -16,9 +16,10 @@ import pytest
 from src.analysis.derive import EASY_IF_CEILING, HARD_IF_FLOOR
 from src.planning import archetypes as A
 from src.planning.blocks import (
-    MAX_HARD_PER_WEEK, PLAN_NAME, ROTATION, ROTATION_LOOP_FROM, Block, expand_week,
+    MAX_HARD_PER_WEEK, ROTATION, ROTATION_LOOP_FROM, Block, expand_week,
     intensity_split, pattern_for, plan_week_row, rotation_after, weekly_rollup,
 )
+from src.planning.constants import plan_name as configured_plan_name
 from src.planning.progression import CAP_TIER, TIERS
 
 START = date(2026, 11, 9)  # a Monday
@@ -371,7 +372,7 @@ def test_plan_week_row_shares_the_plan_name_with_the_sessions():
     block = ROTATION[0]
     row = plan_week_row(START, block, 1, 1, 1, tier=1)
     session = expand_week(block, 1, 1, START)[0]
-    assert row["plan_name"] == session["plan_name"] == PLAN_NAME
+    assert row["plan_name"] == session["plan_name"] == configured_plan_name()
 
 
 def test_plan_week_row_spans_monday_to_sunday_and_normalises_its_date():

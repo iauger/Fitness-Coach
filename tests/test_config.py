@@ -352,3 +352,60 @@ def test_nothing_outside_clock_calls_date_today():
     assert not offenders, (
         "use clock.today_local() instead of date.today() — the athlete's day, not the "
         f"server's:\n  " + "\n  ".join(offenders))
+
+
+# ── the settings step 3 added ─────────────────────────────────────────────────
+
+def test_a_slug_that_could_not_survive_an_external_id_is_refused():
+    """
+    The slug is concatenated into every `external_id` pushed to the intervals.icu calendar.
+    A space or a capital in one produces ids that do not match the events already there, and
+    the push then creates duplicates beside them rather than updating.
+    """
+    for bad in ("My Plan", "My_Plan", "-leading", "trailing-", "", "Plan"):
+        with pytest.raises(C.ConfigError, match="plan.slug"):
+            cfg(MINIMAL + f'  slug: "{bad}"\n')
+
+
+def test_a_generated_slug_is_accepted_by_the_validator():
+    """These two derivations must agree, or a valid plan would be unconfigurable."""
+    from src.planning.plans import slug_for
+
+    for name in ("Sustainable rolling", "TrainerRoad 2026-27", "A/B test plan!"):
+        c = cfg(MINIMAL + f'  slug: "{slug_for(name)}"\n')
+        assert c.plan.slug == slug_for(name)
+
+
+def test_the_slug_is_optional_and_defaults_to_being_resolved_later():
+    assert cfg(MINIMAL).plan.slug is None
+
+
+def test_a_profile_measurement_that_is_not_a_measurement_is_refused():
+    for bad in ("0", "-5"):
+        with pytest.raises(C.ConfigError, match="profile.ftp"):
+            cfg(MINIMAL + f"\nprofile:\n  ftp: {bad}\n")
+
+
+def test_profile_values_are_all_optional():
+    """
+    A missing one is seeded as nothing rather than as a guess. A guessed FTP would seed a
+    wrong power history, and every zone in every prescription is a percentage of it.
+    """
+    c = cfg(MINIMAL + "\nprofile:\n  ftp: 250\n")
+    assert c.profile.ftp == 250.0
+    assert c.profile.height_in is None and c.profile.weight_lbs is None
+
+
+def test_the_committed_example_fills_every_optional_section():
+    """
+    The example is what a first run copies, so a section missing from it is a section a new
+    user never discovers. Every field is listed there even where its value is blank.
+    """
+    import yaml
+
+    raw = yaml.safe_load(C.EXAMPLE_PATH.read_text(encoding="utf-8"))
+    assert set(raw) == {"athlete", "goals", "plan", "profile", "integrations",
+                        "server", "coach"}
+    assert set(raw["athlete"]) >= {"name", "timezone", "history_start", "primary_sport",
+                                   "equipment", "notes", "tools"}
+    assert set(raw["profile"]) == {"height_in", "weight_lbs", "ftp"}

@@ -168,3 +168,42 @@ def orphans(conn) -> dict[str, int]:
             f"SELECT COUNT(*) FROM {table} WHERE plan_id IS NULL "
             f"OR plan_id NOT IN (SELECT id FROM plans)").fetchone()[0]
     return out
+
+
+def resolve(conn, name: str, slug: str | None = None) -> str:
+    """
+    The slug to use for this plan, given a configured name and an optional configured slug.
+
+    Three sources, in this order, and the order is the whole point:
+
+    1. **The configured slug**, when one is set. Explicit identity always wins.
+    2. **The slug already in the database**, when there is exactly one plan. This is what makes
+       renaming safe for someone who never set a slug: config says the plan is now called
+       "My Training Plan", the database says the plan it has is `sustainable-rolling`, and the
+       rename reaches the label without creating a second plan.
+    3. **Derived from the name**, only when there is no plan at all — a genuine first run.
+
+    Step 1 fixed this bug once already, by hardcoding `PLAN_SLUG`. Reading the name from a
+    configuration file reopens it, because a file invites editing, so the fix has to survive
+    without a hardcoded answer. Deriving from the name is now reachable only when there is
+    nothing to orphan.
+
+    With two or more plans and no configured slug there is no safe guess, so it raises rather
+    than picking one — silently picking is exactly the failure being prevented.
+    """
+    if slug:
+        return slug
+
+    existing = active(conn)
+    if len(existing) == 1:
+        return existing[0].slug
+    if not existing:
+        return slug_for(name)
+
+    named = by_name(conn, name)
+    if named:
+        return named.slug
+    raise ValueError(
+        f"{len(existing)} active plans and no plan.slug configured, so there is no way to tell "
+        f"which one {name!r} means. Set plan.slug in the configuration file to one of: "
+        f"{', '.join(p.slug for p in existing)}")

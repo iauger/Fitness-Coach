@@ -30,7 +30,9 @@ from src.analysis.dates import monday_of
 from src.db.migrations import migrate
 from src.planning import roller
 from src.planning.blocks import MAX_HARD_PER_WEEK, ROTATION
-from src.planning.constants import PLAN_START_MONDAY
+from src.planning.constants import plan_start_monday
+
+PLAN_START_MONDAY = plan_start_monday()
 from src.planning.outline import outline, summarise
 from src.planning.progression import CAP_TIER, FLOOR_TIER, TIERS
 from src.planning.progression_store import rows as progression_rows

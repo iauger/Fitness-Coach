@@ -15,12 +15,19 @@ default argument led there.
 
 A test that genuinely needs the real database can ask for `allow_real_database`, which is
 deliberately clumsy to type.
+
+The same reasoning now covers the configuration file. Once `plan_name()` and friends read
+`config/athlete.yaml`, a suite pointed at the real one asserts against *this* athlete's
+settings and passes or fails depending on whose checkout it runs in; worse, `config.load`
+generates the file from the example when it is absent, so a test run on a fresh clone would
+create it as a side effect. Every test reads the committed example instead.
 """
 
 import sqlite3
 
 import pytest
 
+import src.config
 from src.db.schema import DB_PATH
 
 _REAL = DB_PATH.resolve()
@@ -59,3 +66,19 @@ def _no_real_database(request, monkeypatch):
         return _real_connect(database, *args, **kwargs)
 
     monkeypatch.setattr(sqlite3, "connect", guarded)
+
+
+@pytest.fixture(autouse=True)
+def _example_config(monkeypatch):
+    """
+    Point every test at `config/athlete.example.yaml`, and clear the memoized load.
+
+    `CONFIG_PATH` is read inside `load()` rather than bound as a default, so patching the
+    module global is enough — the lesson of the `DB_PATH` fixture above, applied the right way
+    round this time. The cache is reset on both sides of the test so a test that loads config
+    cannot leak its answer into the next one.
+    """
+    monkeypatch.setattr(src.config, "CONFIG_PATH", src.config.EXAMPLE_PATH)
+    src.config.reset()
+    yield
+    src.config.reset()

@@ -17,7 +17,7 @@ from src.db.schema import get_connection
 from src.athlete.profile import get_metric
 from src.analysis.dates import monday_of
 from src.analysis.load import sum_effective_tss
-from src.planning.constants import PLAN_NAME
+from src.planning.constants import plan_name as configured_plan_name
 from src.clock import today_local
 
 # Seiler's three-zone model in intensity-factor terms. LT1 (the aerobic threshold, above which
@@ -60,7 +60,7 @@ def ctl_ramps(conn, today: date) -> dict:
 # ── weekly load, planned vs actual ────────────────────────────────────────────
 
 def weekly_load(conn, today: date, weeks: int = 8,
-                plan_name: str = PLAN_NAME) -> list[dict]:
+                plan_name: str | None = None) -> list[dict]:
     """
     Per-week planned vs actual load.
 
@@ -68,6 +68,7 @@ def weekly_load(conn, today: date, weeks: int = 8,
     week covered by two seeded plans matched twice and whichever row SQLite returned first
     supplied week_type and plan_week_number, silently and non-deterministically.
     """
+    plan_name = plan_name or configured_plan_name()
     start = monday_of(today) - timedelta(weeks=weeks - 1)
     rows = []
     for i in range(weeks):

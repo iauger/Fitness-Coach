@@ -12,7 +12,7 @@ re-grade the week behind it and move the tier while Saturday's long ride is alre
 calendar. And the decision is the thing worth auditing ("why am I at T3"), not the arithmetic
 that produced it. So: derive the inputs, persist the decision.
 
-**Where the record starts.** At `PLAN_START_MONDAY`, not at the beginning of history. Running
+**Where the record starts.** At `plan.start_monday`, not at the beginning of history. Running
 the gate over earlier weeks is a counterfactual — no gate existed then — and mixing those rows
 in with real decisions would destroy the one property an append-only log has. The pre-plan
 replay still happens, in memory, for the single purpose of choosing the rung to start on, and is
@@ -30,7 +30,9 @@ from src.analysis.dates import last_completed_week, monday_of, mondays_between
 from src.clock import today_local, utc_now_iso
 from src.planning.blocks import ROTATION_LOOP_FROM, advance_position
 from src.planning import plans
-from src.planning.constants import PLAN_NAME, PLAN_SLUG, PLAN_START_MONDAY
+from src.planning.constants import (
+    configured_slug, plan_name as configured_plan_name, plan_start_monday,
+)
 from src.planning.progression import classify_week, next_state
 
 # How far back the pre-plan replay looks when nothing is persisted yet. Long enough to cover the
@@ -38,8 +40,9 @@ from src.planning.progression import classify_week, next_state
 LOOKBACK_WEEKS = 26
 
 
-def rows(conn, plan_name: str = PLAN_NAME) -> list[dict]:
+def rows(conn, plan_name: str | None = None) -> list[dict]:
     """Every decided week for this plan, oldest first."""
+    plan_name = plan_name or configured_plan_name()
     return [dict(r) for r in conn.execute(
         "SELECT * FROM plan_progression WHERE plan_name = ? ORDER BY week_start",
         (plan_name,),
@@ -66,13 +69,14 @@ def _graded_from_row(row: dict) -> dict:
 
 
 def record_week(conn, graded: dict, decision, block_index: int, week_in_block: int,
-                strength_logged: int, plan_name: str = PLAN_NAME) -> bool:
+                strength_logged: int, plan_name: str | None = None) -> bool:
     """
     Store one closed week's decision. Returns False if that week was already decided.
 
     The caller supplies `block_index`/`week_in_block` for the *next* week, already advanced by
     `blocks.advance_position` — the rotation is that module's business, not the gate's.
     """
+    plan_name = plan_name or configured_plan_name()
     cur = conn.execute("""
         INSERT INTO plan_progression (
             plan_name, plan_id, week_start, ride_minutes, ride_days, strength_logged,
@@ -81,7 +85,8 @@ def record_week(conn, graded: dict, decision, block_index: int, week_in_block: i
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(plan_name, week_start) DO NOTHING
     """, (plan_name,
-          plans.ensure(conn, PLAN_SLUG, plan_name, started_on=PLAN_START_MONDAY).id,
+          plans.ensure(conn, plans.resolve(conn, plan_name, configured_slug()),
+                       plan_name, started_on=plan_start_monday()).id,
           graded["week_start"], graded["ride_min"], graded["ride_days"],
           strength_logged, graded["outcome"], graded["tier"], decision.verdict, decision.tier,
           decision.week_type, decision.rotation, block_index, week_in_block,
@@ -123,7 +128,7 @@ def _seed(conn, plan_start: date, start_tier: int) -> tuple[int, int, int, str, 
     return tier, block_index, 1, "pre-plan replay", replayed
 
 
-def catch_up(conn, today: date | None = None, plan_name: str = PLAN_NAME,
+def catch_up(conn, today: date | None = None, plan_name: str | None = None,
              start_tier: int = 1, persist: bool = True) -> dict:
     """
     Decide every week that has closed since the last decided one, and store it.
@@ -140,7 +145,8 @@ def catch_up(conn, today: date | None = None, plan_name: str = PLAN_NAME,
     happened, and the unique constraint would then lock those fictional rows in permanently.
     """
     today = today or today_local()
-    plan_start = monday_of(date.fromisoformat(PLAN_START_MONDAY))
+    plan_name = plan_name or configured_plan_name()
+    plan_start = monday_of(date.fromisoformat(plan_start_monday()))
     last_closed = last_completed_week(today)   # already a Monday
 
     stored = rows(conn, plan_name)
@@ -194,7 +200,7 @@ def catch_up(conn, today: date | None = None, plan_name: str = PLAN_NAME,
     }
 
 
-def current_state(conn, today: date | None = None, plan_name: str = PLAN_NAME,
+def current_state(conn, today: date | None = None, plan_name: str | None = None,
                   start_tier: int = 1, persist: bool = True) -> dict:
     """
     Everything the generator needs to build this week: tier, rotation position, week type.

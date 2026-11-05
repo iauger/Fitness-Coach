@@ -21,10 +21,10 @@ from src.analysis.cycle import _load_for_range, _recovery_for_range
 # activities.py can share them without importing this module's cycle/training_plan chain.
 from src.analysis.dates import monday_of, last_completed_week  # noqa: F401
 from src.clock import utc_now_iso
-from src.planning.constants import PLAN_NAME
+from src.planning.constants import plan_name as configured_plan_name
 
 
-def week_metrics(week_start: date, plan_name: str = PLAN_NAME) -> dict:
+def week_metrics(week_start: date, plan_name: str | None = None) -> dict:
     """
     Deterministic rollup for one week. No model involved.
 
@@ -32,6 +32,7 @@ def week_metrics(week_start: date, plan_name: str = PLAN_NAME) -> dict:
     covered by two seeded plans returned whichever row SQLite happened to order first, so
     week_type and phase on a stored summary depended on insertion order.
     """
+    plan_name = plan_name or configured_plan_name()
     conn = get_connection()
     try:
         start, end = week_start.isoformat(), (week_start + timedelta(days=6)).isoformat()

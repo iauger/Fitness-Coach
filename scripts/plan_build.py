@@ -29,8 +29,9 @@ from src.analysis.dates import monday_of
 from src.athlete.profile import get_metric
 from src.db.schema import read_connection, write_connection
 from src.planning.blocks import (
-    PLAN_NAME, ROTATION, expand_week, intensity_split, rotation_after, weekly_rollup,
+    ROTATION, expand_week, intensity_split, rotation_after, weekly_rollup,
 )
+from src.planning.constants import plan_name as configured_plan_name
 from src.planning.progression import TIERS
 from src.planning.progression_store import current_state
 from src.clock import today_local
@@ -113,9 +114,11 @@ def main() -> int:
     p.add_argument("--block", type=int, default=None, help="override the rotation block index")
     p.add_argument("--watts", action="store_true")
     p.add_argument("--steps", action="store_true", help="list every interval")
-    p.add_argument("--plan-name", default=PLAN_NAME)
+    p.add_argument("--plan-name", default=None,
+                   help="defaults to plan.name from the configuration file")
     args = p.parse_args()
 
+    plan_name = args.plan_name or configured_plan_name()
     today = args.as_of or today_local()
     # A pretend date must not file its decisions as real ones — see derive_state.
     persisted = args.as_of is None
@@ -123,7 +126,7 @@ def main() -> int:
     tier = args.tier if args.tier is not None else state["tier"]
     block_index = args.block if args.block is not None else state["block_index"]
 
-    print(f"\n  {args.plan_name} — as of {today} ({DAYS[today.weekday()]})")
+    print(f"\n  {plan_name} — as of {today} ({DAYS[today.weekday()]})")
     if state["recent"]:
         if not persisted:
             label = "simulated weeks — nothing was recorded"
@@ -159,7 +162,7 @@ def main() -> int:
     for offset in range(args.weeks):
         monday = monday_of(today) + timedelta(weeks=offset)
         block = ROTATION[bi]
-        sessions = expand_week(block, wib, tier, monday, args.plan_name, bi,
+        sessions = expand_week(block, wib, tier, monday, plan_name, bi,
                                week_type if offset == 0 else "normal")
         all_sessions += sessions
         print_week(sessions, watts=args.watts, steps=args.steps)

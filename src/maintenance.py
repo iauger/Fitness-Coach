@@ -35,7 +35,7 @@ from datetime import date
 
 from src.clock import today_local, utc_now_iso
 from src.db.schema import DB_PATH, read_connection, write_connection
-from src.planning.constants import PLAN_NAME
+from src.planning.constants import plan_name as configured_plan_name
 
 LOCK_PATH = DB_PATH.parent / "maintenance.lock"
 
@@ -79,7 +79,7 @@ def _holder() -> str:
         return "unknown"
 
 
-def needs_push(conn, today: date, plan_name: str = PLAN_NAME) -> bool:
+def needs_push(conn, today: date, plan_name: str | None = None) -> bool:
     """
     True when the remote calendar is out of step with the stored plan.
 
@@ -89,6 +89,7 @@ def needs_push(conn, today: date, plan_name: str = PLAN_NAME) -> bool:
     means the calendar already says what we would say, and pushing would delete fifteen events
     only to recreate them identically — every hour, forever.
     """
+    plan_name = plan_name or configured_plan_name()
     row = conn.execute(
         "SELECT COUNT(*) n FROM prescribed_sessions "
         "WHERE plan_name = ? AND date >= ? "
@@ -99,7 +100,7 @@ def needs_push(conn, today: date, plan_name: str = PLAN_NAME) -> bool:
 
 
 def run_cycle(today: date | None = None, push_enabled: bool = True,
-              plan_name: str = PLAN_NAME, silent: bool = True) -> dict:
+              plan_name: str | None = None, silent: bool = True) -> dict:
     """
     One full maintenance pass. Safe to call on a timer.
 
@@ -108,6 +109,7 @@ def run_cycle(today: date | None = None, push_enabled: bool = True,
     again. An unattended job that dies on a transient failure stops being unattended.
     """
     today = today or today_local()
+    plan_name = plan_name or configured_plan_name()
     result: dict = {"ran_at": utc_now_iso(), "errors": []}
 
     try:

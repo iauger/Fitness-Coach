@@ -6,7 +6,8 @@ This is what gets passed to Claude as the data payload.
 from datetime import date, timedelta
 from .fitness import current_fitness, ctl_trend, peak_ctl, ctl_history
 from .activities import recent_activities, sport_distribution, weekly_load_by_sport, yearly_volume
-from src.planning.constants import GOAL_DATE, GRAVEL_DATE, PLAN_NAME
+from src.config import config
+from src.planning.constants import dated_goals, plan_name
 from src.planning.outline import from_state as plan_outline
 from src.planning.progression import TIERS
 from src.planning.progression_store import current_state
@@ -137,21 +138,28 @@ def _active_goals() -> list[dict]:
     return [dict(r) for r in rows]
 
 
-ATHLETE_PROFILE = {
-    "name": "Ian Auger",
-    "history_start": "2017",
-    "primary_sport": "cycling",
-    "current_tools": ["TrainerRoad (plan generation)", "intervals.icu (data aggregation)"],
-    "goals": [
-        "Return to consistent training rhythm after 6-month gap",
-        "Gravel races spring/summer 2027",
-        "Cyclocross racing fall 2027 (primary target)",
-        "Baseline: 120-mile ride not an overreach",
-        "Introduce multi-sport variety (yoga, strength, running, swimming)",
-    ],
-    "equipment": "Garmin Epix Pro Gen 2",
-    "notes": "Finished grad program, started new job, two young kids — life load is high.",
-}
+def athlete_profile() -> dict:
+    """
+    Who the athlete is, from configuration — the block the coach prompt opens with.
+
+    This was a module-level dict with a real name, a real device and a real sentence about
+    small children in it. None of that is derivable from the data, which is why it was written
+    down; all of it is personal, which is why it now comes from a file that is not committed.
+
+    `goals` here is the configured list as text. `build_coaching_context` prefers the `goals`
+    table when it has rows, because that is the one an in-conversation edit writes to, and
+    falls back to this.
+    """
+    a = config().athlete
+    return {
+        "name": a.name,
+        "history_start": str(a.history_start) if a.history_start else None,
+        "primary_sport": a.primary_sport,
+        "current_tools": list(a.tools),
+        "goals": [g.description for g in config().goals],
+        "equipment": a.equipment,
+        "notes": a.notes,
+    }
 
 
 def _rolling_plan(today: date | None = None) -> dict | None:
@@ -172,7 +180,7 @@ def _rolling_plan(today: date | None = None) -> dict | None:
             upcoming = [dict(r) for r in conn.execute(
                 "SELECT date, role, prescription, minutes, tss, volume_tier, week_type "
                 "FROM prescribed_sessions WHERE plan_name = ? AND date >= ? "
-                "ORDER BY date LIMIT 10", (PLAN_NAME, today.isoformat()))]
+                "ORDER BY date LIMIT 10", (plan_name(), today.isoformat()))]
         return {
             "tier": state["tier"],
             "tier_hours": TIERS[state["tier"]].target_hours,
@@ -216,22 +224,24 @@ def build_coaching_context(
     plan_adherence = compliance_summary(weeks=8)
     recent_planned = recent_planned_workouts(days=14)
 
-    # Weeks until key events. CX autumn 2027 is the primary goal; the June 2027 gravel event is
-    # opt-in and the rotation does not taper for it — if it is wanted, a block gets inserted a few
-    # weeks out. The old plan peaked for gravel and tapered four months before CX, which is how a
-    # secondary goal ended up shaping the whole season. Both dates come from planning/constants.py
-    # so the plan generator and the report cannot disagree about them.
-    cx_target = date.fromisoformat(GOAL_DATE)
-    gravel_target = date.fromisoformat(GRAVEL_DATE)
+    # Weeks until each dated goal, soonest first, from the configuration file. This used to
+    # name two specific events in source — a CX date and a gravel date — and count down to
+    # them. Which events those are is the athlete's business, and an `opt_in` goal is one the
+    # rotation deliberately does not taper for: the old plan peaked for the secondary goal and
+    # tapered four months before the primary one, which is how a secondary goal ended up
+    # shaping a whole season. Saying the priority beside the count is what stops that.
     today_d = today_local()
-    weeks_to_cx = (cx_target - today_d).days // 7
-    weeks_to_gravel = (gravel_target - today_d).days // 7
+    goal_timeline = [
+        {"description": desc, "date": when.isoformat(), "priority": priority,
+         "weeks_away": (when - today_d).days // 7}
+        for desc, when, priority in dated_goals()
+    ]
 
     db_goals = _active_goals()
     goals_list = (
         [g["description"] for g in db_goals]
         if db_goals
-        else ATHLETE_PROFILE["goals"]
+        else athlete_profile()["goals"]
     )
 
     # Manually-maintained stats (src/athlete/profile.py) — source of truth over
@@ -240,11 +250,8 @@ def build_coaching_context(
 
     return {
         "generated": today,
-        "athlete": {**ATHLETE_PROFILE, "goals": goals_list, "stats": stats},
-        "timeline": {
-            "weeks_to_gravel_target": weeks_to_gravel,
-            "weeks_to_cx_target": weeks_to_cx,
-        },
+        "athlete": {**athlete_profile(), "goals": goals_list, "stats": stats},
+        "timeline": {"goals": goal_timeline},
         "fitness": {
             "current": fitness,
             "trend": trend,
@@ -298,15 +305,23 @@ def coaching_context_text(ctx: dict | None = None) -> str:
     annual = ctx["training"]["annual_volume"]
     flags = recovery["flags"]
 
+    # Only the fields that have something in them. These come from a configuration file now,
+    # where every one of them is optional, and "Life context:" followed by nothing tells the
+    # model less than the absent line does — it reads as an answer rather than as a gap.
+    who = ctx["athlete"]
     lines = [
         f"=== ATHLETE SNAPSHOT — {ctx['generated']} ===",
         "",
         "ATHLETE",
-        f"  Name: {ctx['athlete']['name']}",
-        f"  Training since: {ctx['athlete']['history_start']}",
-        f"  Life context: {ctx['athlete']['notes']}",
-        f"  Tools: {', '.join(ctx['athlete']['current_tools'])}",
+        f"  Name: {who['name']}",
     ]
+    for label, value in (("Training since", who.get("history_start")),
+                         ("Primary sport", who.get("primary_sport")),
+                         ("Equipment", who.get("equipment")),
+                         ("Life context", who.get("notes")),
+                         ("Tools", ", ".join(who.get("current_tools") or []))):
+        if value:
+            lines.append(f"  {label}: {value}")
     stats = ctx["athlete"].get("stats") or {}
     if stats.get("ftp"):
         parts = [f"FTP {stats['ftp']:.0f}W"]
@@ -321,11 +336,11 @@ def coaching_context_text(ctx: dict | None = None) -> str:
     ]
     for g in ctx["athlete"]["goals"]:
         lines.append(f"  - {g}")
+    for g in timeline["goals"]:
+        note = " — the rotation does not taper for it" if g["priority"] == "opt_in" else ""
+        lines.append(f"  Weeks to {g['description']} ({g['date']}, {g['priority']}{note}): "
+                     f"{g['weeks_away']}")
     lines += [
-        f"  Weeks to CX target ({GOAL_DATE}, primary): "
-        f"{timeline['weeks_to_cx_target']}",
-        f"  Weeks to gravel ({GRAVEL_DATE}, opt-in — no taper planned for it): "
-        f"{timeline['weeks_to_gravel_target']}",
         "",
         "FITNESS (PMC)",
         f"  CTL (fitness):  {cur.get('ctl')}",
