@@ -1244,3 +1244,115 @@ account flag is flipped; Karoo waits for hardware.
 3. **Timezone.** `date.today()` is correctly the athlete's day but is really the *server's*
    day. Fine on a laptop, wrong on a server left in UTC. Worth fixing in step 1 while the
    config is being built, or deferring until hosting is real.
+
+---
+
+## Resolved, 2026-11-04
+
+### Zwift delivery: done, and it deleted code
+
+Confirmed on the device: Zwift was showing every session twice. `zwift_upload_workouts` is
+enabled on this intervals.icu account, so pushing an event there already delivers the workout.
+Writing the same file into the Zwift folder was a second path to one destination.
+
+Removed: `supersede`, `prune_week_dirs`, `week_dir`, `zwift_workouts_dir`, `plan_prefix`,
+`display_name`, `ZWIFT_ROOTS`, and `plan_build`'s four `--zwo*` flags. `to_zwo` stays — it
+produces the `file_contents` intervals.icu parses into a `workout_doc`, which is also what
+Garmin will need.
+
+Two days of work deleted: the folder layout, the chronological naming, the superseding logic.
+All of it solved a problem that existed only because we were duplicating a delivery we were
+already getting for free. **`ZWIFT_ID` goes with it — 11 personal constants now, not 12, and
+one fewer integration to express in config.**
+
+### Identity: give everything an id
+
+Decision: lean in. The config file invites renaming, and a plan identified by its name loses
+every stored row the moment someone edits it.
+
+**The real gap is that a plan has no row.** `plan_name` is a string repeated across
+`prescribed_sessions`, `training_plan_weeks` and `plan_progression`, joined on by five readers.
+So:
+
+```sql
+CREATE TABLE plans (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug          TEXT NOT NULL UNIQUE,   -- stable, generated once, never edited
+    name          TEXT NOT NULL,          -- the label, free to change
+    started_on    TEXT NOT NULL,
+    goal_date     TEXT,
+    config_hash   TEXT,                   -- which config produced this plan
+    created_at    TEXT NOT NULL,
+    retired_at    TEXT                    -- a plan ends by being retired, not deleted
+);
+```
+
+The three plan tables take `plan_id` as a foreign key. `plan_name` stays as a denormalised
+column for one migration so nothing breaks mid-flight, then goes.
+
+`config_hash` is the part worth arguing for: it answers "which settings produced this
+prescription", which is the question that becomes unanswerable the moment config is editable.
+Same reasoning as `tier_applied` on `plan_progression` — store the inputs the decision was made
+under, because re-deriving them later gives you today's answer to yesterday's question.
+
+**What already has sufficient identity and should be left alone:**
+
+- `prescribed_sessions` — autoincrement `id` plus `external_id` (`<slug>-<date>-<role>`), which
+  is the stable key the remote calendar matches on. Worth noting it is *date-derived*: move a
+  session to another day and it becomes a different session, which is correct in this design
+  but should be stated rather than discovered.
+- `activities`, `events` — intervals.icu ids.
+- `wellness` — date is the natural key.
+- `goals`, `life_events`, `subjective_feel`, `chat_sessions` — all have ids.
+
+**What does not need one:** archetype variants are keyed by name (`long_reps`, `short_reps`),
+and that name is exactly what a config override targets. An opaque id would make overrides
+unreadable.
+
+**What a `tiers` table needs** (step 3): `plan_id`, `index`, the five dose columns, and
+`derived_from` — the window of history the bootstrap used. Without that, a ladder cannot be
+explained or regenerated.
+
+### Timezone: UTC underneath, athlete timezone on top
+
+Decision: UTC is the default and the storage format; an athlete timezone in config decides what
+"today" means.
+
+The split already exists in `src/clock.py` and is correct — `utc_now()` for audit timestamps,
+`today_local()` for anything a human would call a date. What is missing is that `today_local()`
+is `date.today()`, which is the *server's* day, not the athlete's. Fine on a laptop in one
+timezone; wrong on a server left in UTC, where an evening check-in in the Americas files under
+tomorrow and is then compared against activity dates intervals.icu reports in local time.
+
+```yaml
+athlete:
+  timezone: America/New_York     # IANA; defaults to UTC when unset
+```
+
+`clock.today_local()` becomes `datetime.now(ZoneInfo(tz)).date()` using stdlib `zoneinfo`, no
+dependency. `utc_now()` is unchanged.
+
+**The work is not the clock module, it is the 58 call sites.** `date.today()` is called 58
+times across 28 files, and every one that means "the athlete's day" has to route through
+`clock.today_local()` instead. Some genuinely mean "now" for a log line and should stay.
+Mechanical, but it needs reading each call rather than a blind replace — which is why it is its
+own step rather than a line in step 1.
+
+A guard makes it stick: a test that greps for `date.today()` outside `clock.py` and fails,
+the same shape as the real-database guard in `tests/conftest.py`.
+
+### Revised step order
+
+Steps renumber because identity has to land before config can rename anything safely.
+
+| Step | What | Why here |
+|---|---|---|
+| 0 | `src/config.py` loader, no consumers | nothing depends on it yet |
+| 1 | `plans` table, `plan_id` foreign keys, `config_hash` | **before** config can rename a plan |
+| 2 | Timezone: `clock.today_local()` + the 58 call sites | before dates come from config |
+| 3 | The 11 personal constants read from config | diff `prescribed_sessions` — byte-identical |
+| 4 | Deduplicate `SPORT_GROUPS` | keeps step 3's diff clean |
+| 5 | Tier ladder derived from history, `tiers` table | needs `plan_id` from step 1 |
+| 6 | Archetype overrides, validated | needs the loader and the safety rules |
+| 7 | First-run experience, README | needs all of the above |
+| 8 | Auth, then network binding | independent, but pointless before first-run works |
