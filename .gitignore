@@ -20,3 +20,6 @@ data/
 # accumulates real personal detail — email, intervals.icu athlete id, HRV/RHR/sleep/weight
 # figures — that doesn't belong in a public repo. ROADMAP.md carries the decisions themselves.
 devlog.md
+
+# The real config. athlete.example.yaml is committed; this one is yours.
+config/athlete.yaml

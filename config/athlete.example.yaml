@@ -1,0 +1,52 @@
+# Fitness Coach — athlete configuration.
+#
+# Copy to config/athlete.yaml and edit. That file is gitignored; this one is committed, so
+# keep anything private out of it. Secrets live in .env, never here — the split is that .env
+# is what must not be shared, and this is what you would paste when asking for help.
+
+athlete:
+  name: Your Name
+  # IANA timezone. Decides what "today" means for a check-in, a session, or a plan week.
+  # Everything is stored in UTC underneath; this only affects the athlete's day.
+  timezone: UTC
+  history_start: 2017            # optional; the first year you have data for
+
+goals:
+  - description: Cyclocross racing fall 2027
+    date: 2027-10-01
+    priority: primary            # primary | secondary | opt_in
+  - description: Gravel racing spring/summer 2027
+    date: 2027-06-18
+    priority: opt_in             # opt_in means the plan does not taper for it
+
+plan:
+  name: Sustainable rolling
+  # The first Monday the plan is of record. Must be a Monday: every week boundary in this
+  # project is Monday-to-Sunday, and an off-by-one here silently moves every decision.
+  start_monday: 2026-11-02
+  # Where the progression gate should climb to, in hours per week. This is intent, not a
+  # prescription — the tier ladder is derived from your own synced history, not from these
+  # numbers. See ROADMAP, "The tier ladder: derive, don't configure".
+  sustainable_band_hours: [3.5, 4.0]
+  # The long ride holds here and is extended on demand, never ramped.
+  long_ride_ceiling_min: 120
+  # How many weeks of dated sessions exist at a time. Beyond this is shape, not a schedule.
+  horizon_weeks: 3
+  goal_date: 2027-10-01          # labels stored plan rows; not a taper target
+
+integrations:
+  intervals_icu:
+    # Push the horizon to the intervals.icu calendar. intervals.icu then delivers to Zwift
+    # and Garmin if you have those connected there — this project does not write to devices
+    # itself, because doing so duplicated every workout.
+    push_calendar: true
+
+server:
+  # Loopback by default and for good reason: this process holds your intervals.icu and
+  # Anthropic keys and has no authentication. Do not expose it until auth exists.
+  host: 127.0.0.1
+  port: 8800
+
+coach:
+  enabled: true
+  model: claude-haiku-4-5

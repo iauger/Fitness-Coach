@@ -1356,3 +1356,24 @@ Steps renumber because identity has to land before config can rename anything sa
 | 6 | Archetype overrides, validated | needs the loader and the safety rules |
 | 7 | First-run experience, README | needs all of the above |
 | 8 | Auth, then network binding | independent, but pointless before first-run works |
+
+### Backlog, added 2026-11-04
+
+- **Shorter event names for the Zwift card.** Zwift prefixes delivered workouts with
+  "Intervals icu: " and then truncates, so the prefix eats the identifying part:
+  `Intervals icu: 6x 20s all-out,…`. Moving the event `name` to `session_name()`'s short form
+  (`Sprints 45min (medium)`) and leaving the prescription in the description reads better in
+  both Zwift and the intervals.icu calendar, where the date is already shown. Not a blocker.
+  Unknown whether Zwift keys its cloud copies on the name — if it does, renaming may strand
+  the old copies, so verify in the app rather than assuming.
+- **Karoo (Hammerhead).** For a friend; no device here to test against. The connection is
+  created from the Karoo rather than from intervals.icu, so it cannot be set up remotely, and
+  there is an unresolved report of planned workouts no longer reaching Hammerhead.
+
+### Measured, 2026-11-04
+
+The 7-day device window is now observed rather than quoted. intervals.icu delivered exactly
+our next three *rides* within seven days — Thu 60min, Sat 90min, Tue 6x20s — and correctly
+excluded the three strength days, which are `WeightTraining` rather than rides. It files them
+under its own `Intervals icu` folder in Zwift, which is the folder organisation we briefly
+built by hand and then deleted.
