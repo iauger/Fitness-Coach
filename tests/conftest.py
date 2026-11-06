@@ -30,6 +30,12 @@ import pytest
 import src.config
 from src.db.schema import DB_PATH
 
+# At import, not only per test. `@pytest.mark.parametrize(..., A.catalogue())` runs while the
+# test modules are being *collected*, which is before any fixture, and it reads the config. On a
+# fresh clone that created config/athlete.yaml from the example just by running `pytest`; the
+# fixture below could not prevent it because it had not run yet.
+src.config.CONFIG_PATH = src.config.EXAMPLE_PATH
+
 _REAL = DB_PATH.resolve()
 _real_connect = sqlite3.connect
 

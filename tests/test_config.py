@@ -478,3 +478,25 @@ def test_the_sport_table_is_defined_exactly_once():
     assert len(definitions) == 1, (
         f"the sport table is defined in {len(definitions)} places: {definitions}")
     assert definitions[0].replace(chr(92), "/").startswith("src/sports.py:")
+
+
+def test_collecting_the_suite_does_not_create_a_config(tmp_path):
+    """
+    Mutant: conftest sets CONFIG_PATH only inside the per-test fixture. Parametrize arguments
+    (`A.catalogue()`) are evaluated at collection, before any fixture, and read the config, so
+    `pytest` on a fresh clone wrote config/athlete.yaml. The path is pointed at somewhere that
+    does not exist; collecting must leave it that way.
+    """
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    target = tmp_path / "must_not_appear.yaml"
+    env = dict(os.environ, FITNESS_COACH_CONFIG=str(target))
+    root = Path(__file__).resolve().parent.parent
+    done = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "tests/test_zwo.py",
+         "-p", "no:cacheprovider"], cwd=root, env=env, capture_output=True, text=True)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert not target.exists()
