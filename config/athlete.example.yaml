@@ -52,6 +52,27 @@ plan:
   # read from what you actually ride; this only stops it climbing past the days you have. 7 is
   # allowed and is a bad idea for most people — that judgement is yours, not the code's.
   max_ride_days: 7
+  # Which weekdays you can train on, if that is fewer than all seven. Unset means any day, and
+  # the week is built exactly as it always has been. This is *which* days, not how many: how
+  # many you ride is still read from your history and capped by max_ride_days, so listing four
+  # days and riding three gives a three-day week placed inside those four. It limits
+  # everything, lifts included — a day you leave off gets nothing scheduled.
+  #
+  # Two limits follow from it. The long ride and the hard session never carry a lift, so you
+  # need two more available days than you have lifts (the default two lifts need four days),
+  # and you need at least two days for the lowest rung to ride twice. Both are checked when
+  # the file loads, with the number in the message.
+  #
+  # What it does not say is how long you have on each day. A session's length comes from your
+  # ladder, and honouring a per-day limit properly needs a hard session that can shrink to
+  # fit a day, which this plan does not have yet.
+  #
+  # available_days: [tue, thu, sat, sun]    # mon tue wed thu fri sat sun, or the full names
+  #
+  # Pins the long ride to one of those days. Unset, it goes on Saturday, or failing that the
+  # available day nearest the weekend — a guess, so say so here if your free days are
+  # midweek. The hard session then goes as far from it as the week allows, on both sides.
+  # long_ride_day: sat
   # Lifting days a week. Never trimmed by a tier, a recovery week or a re-entry week: in the
   # history this plan was designed from, lifting continued in 8 of the 21 weeks where cycling
   # stopped, which is why it is the anchor habit rather than an extra.

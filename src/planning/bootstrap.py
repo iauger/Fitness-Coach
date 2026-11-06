@@ -269,7 +269,8 @@ def _long_sequence(floor: int, cap: int) -> tuple[list[int], int]:
 
 
 def derive(weeks: list[dict], band_hours: tuple[float, float],
-           long_ceiling_min: int, max_rides: int) -> Ladder:
+           long_ceiling_min: int, max_rides: int,
+           ceiling_setting: str = "plan.max_ride_days") -> Ladder:
     """
     A ladder on this athlete's scale, from their history and their stated intent.
 
@@ -316,7 +317,7 @@ def derive(weeks: list[dict], band_hours: tuple[float, float],
     rides_floor = max(2, rides_cap - 1)
     if wanted_rides > max_rides:
         notes.append(
-            f"you ride {wanted_rides} days in a typical week but plan.max_ride_days is "
+            f"you ride {wanted_rides} days in a typical week but {ceiling_setting} allows "
             f"{max_rides}, so the ladder tops out there. Raise it if those days are really "
             f"available; otherwise the extra day stays yours and the plan will not claim it.")
 

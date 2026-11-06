@@ -518,3 +518,15 @@ def test_nothing_reads_the_module_ladder_where_a_plan_has_its_own():
     assert not offenders, (
         "read the plan's own ladder (tiers_store.load) rather than the module constant, or "
         f"the reader and the calendar will disagree:\n  {listed}")
+
+
+def test_the_note_names_the_setting_that_is_actually_the_limit():
+    """
+    When `plan.available_days` is what stops the ladder widening, a note telling the athlete to
+    raise `plan.max_ride_days` sends them to edit a line that changes nothing. Mutant this
+    catches: the note hardcoding the old setting name.
+    """
+    built = derive(weeks(12, ride_min=400.0, ride_days=5, longest=90.0), BAND, CEILING, 3,
+                   "plan.available_days")
+    assert any("plan.available_days" in n for n in built.notes), built.notes
+    assert not any("plan.max_ride_days" in n for n in built.notes), built.notes

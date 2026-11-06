@@ -31,7 +31,9 @@ from src.config import config
 from src.db.schema import migrate_db, read_connection, write_connection
 from src.planning import plans, tiers_store
 from src.planning.bootstrap import BootstrapError, derive, summarise
-from src.planning.constants import configured_slug, plan_name as configured_plan_name
+from src.planning.constants import (
+    configured_slug, max_ride_days, plan_name as configured_plan_name, ride_day_setting,
+)
 from src.planning.progression import TIERS
 
 
@@ -79,7 +81,7 @@ def main() -> int:
 
     try:
         ladder = derive(weeks, cfg.plan.sustainable_band_hours,
-                        cfg.plan.long_ride_ceiling_min, cfg.plan.max_ride_days)
+                        cfg.plan.long_ride_ceiling_min, max_ride_days(), ride_day_setting())
     except BootstrapError as exc:
         print(f"\n  cannot derive a ladder yet:\n    {exc}\n")
         return 1

@@ -92,15 +92,59 @@ def dated_goals() -> list[tuple[str, date, str]]:
     return sorted(goals, key=lambda g: g[1])
 
 
+def available_days() -> tuple[int, ...] | None:
+    """
+    The weekdays training can happen on, 0 (Monday) to 6 (Sunday), or None for every day.
+
+    `None` is not the same as a list of seven, though both mean the same week: it is what lets
+    a config that says nothing generate exactly what it always has. Parsed here rather than in
+    the generator so `blocks.py` deals in integers and never in the spellings someone typed.
+    """
+    from src.config import weekday
+
+    named = config().plan.available_days
+    if named is None:
+        return None
+    return tuple(sorted(weekday(d, "plan.available_days") for d in named))
+
+
+def long_ride_day() -> int | None:
+    """The weekday the long ride is pinned to, or None to let the generator choose."""
+    from src.config import weekday
+
+    named = config().plan.long_ride_day
+    return None if named is None else weekday(named, "plan.long_ride_day")
+
+
 def max_ride_days() -> int:
     """
-    How many days a week the athlete has available. A ceiling on the ladder, never a target.
+    The most days a week the ladder may ask for. A ceiling, never a target.
 
     History decides how many ride days a tier asks for; this only stops that climbing past the
-    days that exist. Seven is permitted — it is a bad idea for most people, and that is a
-    judgement for the athlete rather than for the code.
+    days that exist. Two things can be that limit — `plan.max_ride_days`, and the number of days
+    in `plan.available_days` — and the lower wins, because a ladder built for four days in a
+    week with three available would prescribe a week that cannot be placed. Seven is permitted
+    by the first and is a bad idea for most people; that is a judgement for the athlete.
+
+    Every reader that asks how many days there are goes through here. Reading the config field
+    directly would honour one limit and ignore the other, which is the same split between a
+    reader and a writer that the ladder had three times.
     """
-    return config().plan.max_ride_days
+    cap = config().plan.max_ride_days
+    days = available_days()
+    return cap if days is None else min(cap, len(days))
+
+
+def ride_day_setting() -> str:
+    """
+    Which setting is the one stopping the ride-day count climbing, for a message that has to
+    tell the athlete what to change. Naming the wrong one sends them to edit a line that does
+    nothing.
+    """
+    days = available_days()
+    if days is not None and len(days) < config().plan.max_ride_days:
+        return "plan.available_days"
+    return "plan.max_ride_days"
 
 
 def strength_days() -> int:

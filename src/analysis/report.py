@@ -151,7 +151,11 @@ def athlete_profile() -> dict:
     table when it has rows, because that is the one an in-conversation edit writes to, and
     falls back to this.
     """
+    from src.planning.constants import available_days, long_ride_day
+
     a = config().athlete
+    days, long_day = available_days(), long_ride_day()
+    names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     return {
         "name": a.name,
         "history_start": str(a.history_start) if a.history_start else None,
@@ -160,6 +164,11 @@ def athlete_profile() -> dict:
         "goals": [g.description for g in config().goals],
         "equipment": a.equipment,
         "notes": a.notes,
+        # Only when configured. Absent means every day, and a coach told "can train any day"
+        # would be saying something the athlete never said. Present, it is what stops a
+        # suggestion to "add an easy spin Monday" landing on someone who cannot train Mondays.
+        "available_days": [names[d] for d in days] if days is not None else None,
+        "long_ride_day": names[long_day] if long_day is not None else None,
     }
 
 
@@ -326,6 +335,8 @@ def coaching_context_text(ctx: dict | None = None) -> str:
                          ("Primary sport", who.get("primary_sport")),
                          ("Equipment", who.get("equipment")),
                          ("Life context", who.get("notes")),
+                         ("Can train on", ", ".join(who.get("available_days") or [])),
+                         ("Long ride day", who.get("long_ride_day")),
                          ("Tools", ", ".join(who.get("current_tools") or []))):
         if value:
             lines.append(f"  {label}: {value}")
@@ -568,7 +579,7 @@ def _outgrown(conn, plan, ladder: dict, today: date) -> dict | None:
     Wrapped in its own try: a failure here must not cost the coach the rest of the plan block,
     which is the part it reasons about every session.
     """
-    from src.planning.constants import max_ride_days
+    from src.planning.constants import max_ride_days, ride_day_setting
     from src.planning.progression_store import rows as progression_rows
     from src.planning.tiers_store import age_weeks, weeks_for
 
@@ -579,6 +590,7 @@ def _outgrown(conn, plan, ladder: dict, today: date) -> dict | None:
             decided=progression_rows(conn, plan.name),
             max_ride_days=max_ride_days(),
             ladder_age_weeks=age_weeks(conn, plan.id, today),
+            ceiling_setting=ride_day_setting(),
         )
     except Exception:
         return None

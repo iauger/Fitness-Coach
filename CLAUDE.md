@@ -86,6 +86,7 @@ behavioural test because both behaviours look plausible in isolation:
 | no `date.today()` outside `src/clock.py` | the server's day silently replacing the athlete's |
 | one definition of `SPORT_GROUPS` | an unrecognised activity type falling to `"other"` in three places independently |
 | no `TIERS[...]` outside the four modules that own it | a reader reporting 3.42h beside a calendar showing 3.5h |
+| no `rotation_for(` outside `blocks.py` — callers use `plan_rotation` | a preview or roller building a week that ignores the athlete's available days |
 
 ## Read the plan's own ladder, never the module constant
 

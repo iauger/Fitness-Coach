@@ -68,7 +68,8 @@ def _median(values: list[float]) -> float:
 
 
 def assess(weeks: list[dict], ladder: dict, decided: list[dict],
-           max_ride_days: int, ladder_age_weeks: float | None = None) -> Assessment:
+           max_ride_days: int, ladder_age_weeks: float | None = None,
+           ceiling_setting: str = "plan.max_ride_days") -> Assessment:
     """
     Whether this athlete's riding has moved past the ladder they are being prescribed from.
 
@@ -158,11 +159,11 @@ def assess(weeks: list[dict], ladder: dict, decided: list[dict],
         # "re-bootstrap" would quietly leave half the problem, and saying only "raise the
         # ceiling" would leave the other half.
         advice = (f"Re-deriving will lengthen the rungs, but it cannot add the extra day — "
-                  f"plan.max_ride_days is {max_ride_days}, which is already what the ladder "
+                  f"{ceiling_setting} allows {max_ride_days}, which is already what the ladder "
                   f"uses. If those days are genuinely available, raise that first, then "
                   f"re-derive: `python scripts/bootstrap_plan.py --write --replace`.")
     elif blocked:
-        advice = (f"Re-deriving will not change that on its own — plan.max_ride_days is "
+        advice = (f"Re-deriving will not change that on its own — {ceiling_setting} allows "
                   f"{max_ride_days}, which is already what the ladder uses. If those extra "
                   f"days are genuinely available, that setting is what needs raising first.")
     else:

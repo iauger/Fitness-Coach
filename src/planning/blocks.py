@@ -37,7 +37,8 @@ from src.planning.progression import TIERS
 # Called, not assigned to a module constant: a constant read into a default argument binds at
 # import and no later config change can reach it, which is the defect this step removes.
 from src.planning.constants import (
-    goal_date as configured_goal_date, plan_name as configured_plan_name)
+    available_days, goal_date as configured_goal_date, long_ride_day,
+    plan_name as configured_plan_name, strength_days as configured_strength_days)
 
 # Weekday roles a slot can take.
 ROLES = ("hard", "long", "lit", "strength")
@@ -143,14 +144,97 @@ HARD_DAY = 1          # Tuesday. Early enough to leave the long ride intact at t
 # then midweek, then the Monday and Friday that are rest days in a three-ride week.
 _RIDE_DAY_PREFERENCE = (3, 6, 2, 0, 4)
 
+# Where the long ride goes when Saturday is not available and none was asked for: the weekend
+# first, then backwards from it, so a free Friday beats a free Monday. This is a guess and the
+# only one in the placement — an athlete whose free days are midweek should say so with
+# `plan.long_ride_day` rather than rely on it.
+_LONG_DAY_PREFERENCE = (5, 6, 4, 3, 2, 1, 0)
 
-def build_pattern(ride_days: int, strength_days: int = 2, hard: bool = True
+# Tie-break among equally well-spaced days for an easy ride. The first five are the legacy
+# preference; the last two only matter once the long ride or the hard session has moved off
+# Saturday and Tuesday, which leaves those two days free to be chosen.
+_EASY_RANK = {day: i for i, day in enumerate(_RIDE_DAY_PREFERENCE + (1, 5))}
+
+
+def _apart(a: int, b: int) -> int:
+    """Days between two weekdays, going whichever way round the week is shorter."""
+    return min((a - b) % 7, (b - a) % 7)
+
+
+def _pool(days: tuple[int, ...] | None) -> list[int]:
+    """The weekdays training can happen on. `None` is every day, which is the legacy week."""
+    if days is None:
+        return list(range(7))
+    pool = sorted(set(days))
+    if len(pool) != len(tuple(days)):
+        raise ValueError(f"available days repeat a weekday: {sorted(days)}")
+    if any(not 0 <= d <= 6 for d in pool):
+        raise ValueError(f"available days must be weekdays 0-6, got {sorted(days)}")
+    return pool
+
+
+def _long_day(pool: list[int], requested: int | None) -> int:
+    if requested is not None:
+        if requested not in pool:
+            raise ValueError(
+                f"the long ride is set for weekday {requested}, which is not one of the "
+                f"available days {pool}")
+        return requested
+    return next(d for d in _LONG_DAY_PREFERENCE if d in pool)
+
+
+def _hard_day(pool: list[int], long_day: int) -> int | None:
+    """
+    The day for the one hard session: as far from the long ride as it can be on both sides.
+
+    Margin first, because a hard session the day before or after the long ride is the one
+    placement that costs one of them its quality. Ties go to the sooner-after-the-long-ride
+    day — the week's hard work early, so a missed session can still be recovered from before
+    the next long ride. With the long ride on Saturday that is Tuesday, which is where this
+    template has always put it.
+    """
+    others = [d for d in pool if d != long_day]
+    if not others:
+        return None
+
+    def key(day: int) -> tuple[int, int]:
+        after = (day - long_day) % 7
+        before = (long_day - day) % 7
+        return -min(after, before), after
+
+    return min(others, key=key)
+
+
+def _fill_rides(rides: list[int], pool: list[int], count: int) -> list[int]:
+    """Add easy-ride days one at a time, each as far as possible from the ones already chosen."""
+    rides = list(rides)
+    while len(rides) < count:
+        remaining = [d for d in pool if d not in rides]
+        rides.append(min(
+            remaining,
+            key=lambda d: (-min(_apart(d, r) for r in rides), _EASY_RANK[d])))
+    return rides
+
+
+def build_pattern(ride_days: int, strength_days: int = 2, hard: bool = True,
+                  days: tuple[int, ...] | None = None, long_day: int | None = None
                   ) -> list[tuple[int, str]]:
     """
     One week's slots as `(weekday, role)`, for an athlete who rides `ride_days` days.
 
     This is the *nominal* week at the top of the ladder. `pattern_for` reduces it for lower
     tiers, which is why it is built at the cap and never per tier.
+
+    `days` are the weekdays training can happen on, `None` meaning all seven, and `long_day`
+    pins the long ride to one of them. With neither, this is the week it has always been — the
+    long ride on Saturday, the hard session on Tuesday — and tests/test_availability.py holds
+    that to the previous implementation across every combination, because this template
+    decides every athlete's week.
+
+    Nothing is ever placed on a day outside `days`: not a ride, and not a lift. A pool too
+    small for the week asked for is refused rather than squeezed, for the same reason the
+    ladder refuses a ride-day count it was not derived for — a week that quietly differs from
+    the one prescribed fails the gate for reasons the athlete cannot see.
 
     Strength days are chosen rather than fixed, by preferring rest days, then maximum spacing,
     then the day after a ride. At six or seven ride days there are no rest days left and
@@ -162,20 +246,24 @@ def build_pattern(ride_days: int, strength_days: int = 2, hard: bool = True
     if not 0 <= strength_days <= 7:
         raise ValueError(f"strength_days must be 0-7, got {strength_days}")
 
-    rides = [LONG_DAY]
+    pool = _pool(days)
+    if len(pool) < ride_days:
+        raise ValueError(
+            f"the week asks for {ride_days} ride days but only {len(pool)} are available "
+            f"({', '.join(_DAY_NAMES[d] for d in pool)})")
+
+    long_ = _long_day(pool, long_day)
+    hard_day = _hard_day(pool, long_)
+    rides = [long_]
     if ride_days > 1:
-        rides.append(HARD_DAY)
-    for day in _RIDE_DAY_PREFERENCE:
-        if len(rides) >= ride_days:
-            break
-        rides.append(day)
-    rides = sorted(rides[:ride_days])
+        rides.append(hard_day)
+    rides = sorted(_fill_rides(rides, pool, ride_days))
 
     pattern = []
     for day in rides:
-        if day == LONG_DAY:
+        if day == long_:
             pattern.append((day, "long"))
-        elif day == HARD_DAY and hard and ride_days > 1:
+        elif day == hard_day and hard and ride_days > 1:
             pattern.append((day, "hard"))
         else:
             pattern.append((day, "lit"))
@@ -183,11 +271,16 @@ def build_pattern(ride_days: int, strength_days: int = 2, hard: bool = True
     # Appended, not merged: at six or seven ride days a lift shares a day with a ride, and both
     # are real sessions. `prescribed_sessions` is keyed on (plan, date, role), so two roles on
     # one day store and push correctly.
-    pattern += [(day, "strength") for day in _strength_days(rides, strength_days)]
+    pattern += [(day, "strength") for day in
+                _strength_days(rides, strength_days, pool, protected=(long_, hard_day))]
     return sorted(pattern)
 
 
-def _strength_days(rides: list[int], count: int) -> list[int]:
+_DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _strength_days(rides: list[int], count: int, pool: list[int] | None = None,
+                   protected: tuple[int | None, ...] = (LONG_DAY, HARD_DAY)) -> list[int]:
     """
     Which days carry a lift, given the ride days.
 
@@ -195,15 +288,24 @@ def _strength_days(rides: list[int], count: int) -> list[int]:
     first (a lift on an otherwise empty day is the cheapest place to put one), then spacing
     between the lifts, then landing the day after a ride. For three ride days that produces
     Wednesday and Sunday, which is what the hand-written template said.
+
+    `protected` are the long ride and the hard session, which never carry a lift — the hard
+    session's slot is held back even in a week that declares no hard session, because that is
+    what this has always done and nothing is gained by the exception. `pool` limits the
+    candidates to days training can happen on.
     """
     from itertools import combinations
 
     if count <= 0:
         return []
-    candidates = [d for d in range(7) if d not in (LONG_DAY, HARD_DAY)]
+    pool = list(range(7)) if pool is None else pool
+    candidates = [d for d in pool if d not in protected]
     if count > len(candidates):
+        others = len(candidates)
         raise ValueError(f"cannot place {count} strength days without using the long ride "
-                         f"or the hard session")
+                         f"or the hard session"
+                         + (f" — only {others} other available day{'' if others == 1 else 's'}"
+                            if len(pool) < 7 else ""))
 
     def gap(days: tuple[int, ...]) -> int:
         if len(days) < 2:
@@ -537,7 +639,25 @@ def intensity_split(sessions: list[dict]) -> dict:
     }
 
 
-def rotation_for(ride_days: int, strength_days: int = 2) -> list[Block]:
+def plan_rotation(ride_days: int) -> list[Block]:
+    """
+    The rotation for *this* athlete: their ride-day count, lifts, available days and long-ride
+    day, the last three read from configuration.
+
+    The one place a plan's week is built from settings. It exists because the roller and the
+    preview script each called `rotation_for` with their own idea of the arguments, and a
+    reader that builds the week differently from the writer is how the calendar and the
+    preview come to disagree — the same split that had to be fixed in the API, the coaching
+    report and `plan_build.py` for the tier ladder. `tests/test_availability.py` forbids
+    calling `rotation_for` anywhere else.
+    """
+    return rotation_for(ride_days, configured_strength_days(),
+                        days=available_days(), long_day=long_ride_day())
+
+
+def rotation_for(ride_days: int, strength_days: int = 2,
+                 days: tuple[int, ...] | None = None, long_day: int | None = None
+                 ) -> list[Block]:
     """
     The rotation, with its weekly template built for an athlete who rides `ride_days` days.
 
@@ -550,8 +670,8 @@ def rotation_for(ride_days: int, strength_days: int = 2) -> list[Block]:
     back a short week at that tier rather than failing. Only this function holds both the
     pattern and the ladder it is being built for, so only this function can check it.
     """
-    easy = build_pattern(ride_days, strength_days, hard=False)
-    emphasis = build_pattern(ride_days, strength_days, hard=True)
+    easy = build_pattern(ride_days, strength_days, hard=False, days=days, long_day=long_day)
+    emphasis = build_pattern(ride_days, strength_days, hard=True, days=days, long_day=long_day)
     return [
         Block(name=b.name, phase_label=b.phase_label, block_type=b.block_type, weeks=b.weeks,
               pattern=list(easy if b.block_type == "base" else emphasis),

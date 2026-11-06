@@ -179,6 +179,38 @@ def _ladder(conn) -> Check:
                  f"to T{max(ladder)} {ladder[max(ladder)].target_hours}h")
 
 
+def _week(conn) -> Check | None:
+    """
+    Whether the stored ladder's week can be placed inside the days the configuration allows.
+
+    Checked separately from the ladder because the two can disagree *after* a successful
+    bootstrap: the ladder says three rides a week, and someone later edits `available_days`
+    down to two. Nothing about the ladder is wrong and nothing about the config is invalid on
+    its own, but the next roll cannot build a week — and the roll runs unattended, hourly, so
+    the first anyone hears of it would be a calendar that stopped updating.
+    """
+    from src.planning import plans, tiers_store
+    from src.planning.blocks import plan_rotation
+    from src.planning.constants import available_days, long_ride_day, plan_name
+
+    # Nothing to report when nothing is configured: with every day available and no pinned
+    # long ride the week always builds, and a line that is `ok` for everyone who has not
+    # touched these settings is noise in the one output people read to find what is wrong.
+    if available_days() is None and long_ride_day() is None:
+        return None
+
+    plan = plans.by_name(conn, plan_name())
+    ladder = tiers_store.load(conn, plan.id)
+    try:
+        plan_rotation(max(t.rides for t in ladder.values()))
+    except ValueError as exc:
+        return Check("week", False, str(exc)[:160],
+                     "adjust plan.available_days, plan.long_ride_day or plan.strength_days in "
+                     "config/athlete.yaml, or re-derive the ladder for the days you have:\n"
+                     f"    {interpreter()} scripts/bootstrap_plan.py --write --replace")
+    return Check("week", True, "can be placed inside the available days")
+
+
 def _plan(conn) -> Check:
     from src.planning.constants import plan_name
 
@@ -238,8 +270,10 @@ def checks(db_path: Path | None = None) -> list[Check]:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        for step in (_history, _ftp, _ladder, _plan, _calendar):
+        for step in (_history, _ftp, _ladder, _week, _plan, _calendar):
             check = step(conn)
+            if check is None:
+                continue
             out.append(check)
             if not check.ok and check.blocking:
                 return out

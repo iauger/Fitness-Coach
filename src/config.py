@@ -44,6 +44,27 @@ class ConfigError(Exception):
     """A configuration file that cannot be used, with a message saying why."""
 
 
+WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+_WEEKDAYS_FULL = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+
+def weekday(name: Any, where: str) -> int:
+    """
+    A weekday name as 0 (Monday) to 6 (Sunday).
+
+    Names rather than numbers because `2` in a config file is ambiguous in a way nobody notices
+    until the plan lands on the wrong day: Monday-is-0 is a Python convention, and Sunday-is-0
+    is the other half of the world's. Three-letter or full, any case.
+    """
+    key = str(name).strip().lower()
+    for names in (WEEKDAYS, _WEEKDAYS_FULL):
+        if key in names:
+            return names.index(key)
+    raise ConfigError(
+        f"{where}: {name!r} is not a weekday. Use {', '.join(WEEKDAYS)} "
+        f"(or the full name).")
+
+
 # ── sections ──────────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -102,6 +123,19 @@ class Plan:
     # actually ride; this only stops it climbing past the days you have. Seven is allowed and
     # is a bad idea for most people, which is a judgement for the athlete rather than the code.
     max_ride_days: int = 7
+    # Which weekdays training can happen on, as day names. Unset means all seven, which is the
+    # week this plan has always generated. This is *which* days, not how many: how many you
+    # ride is still read from history and capped by `max_ride_days`, so listing four days and
+    # riding three gives a three-day week placed inside those four.
+    #
+    # It limits everything, lifts included — a day left off is a day nothing is scheduled.
+    # It does **not** say how long you have on each day; a session's length comes from the
+    # ladder, and honouring a per-day minute limit truthfully needs a hard session that can
+    # fit a day, which this plan does not yet have.
+    available_days: tuple[str, ...] | None = None
+    # Pins the long ride to one weekday. Unset, it goes on Saturday, or the nearest weekend-ish
+    # day among `available_days` when Saturday is not one of them.
+    long_ride_day: str | None = None
     strength_days: int = 2
     horizon_weeks: int = 3
     goal_date: date | None = None
@@ -303,6 +337,32 @@ def _validate(cfg: Config) -> None:
             f"plan.strength_days: {cfg.plan.strength_days} leaves no room for riding. The "
             f"long ride and the hard session are never given over to lifting, so at most 5 "
             f"days can carry one.")
+
+    days = None
+    if cfg.plan.available_days is not None:
+        days = [weekday(d, f"plan.available_days[{i}]")
+                for i, d in enumerate(cfg.plan.available_days)]
+        if len(set(days)) != len(days):
+            raise ConfigError("plan.available_days: a weekday is listed twice")
+        if len(days) < 2:
+            raise ConfigError(
+                f"plan.available_days: {len(days)} day(s) is fewer than the lowest rung of "
+                f"the ladder rides, which is twice a week")
+        # The long ride and the hard session never carry a lift, and the hard session's day is
+        # held back whether or not the week declares one. So two of the available days are
+        # spoken for before any lift is placed — checked here, where it is one subtraction,
+        # rather than at the first roll, where it is an unattended failure.
+        if len(days) - 2 < cfg.plan.strength_days:
+            raise ConfigError(
+                f"plan.available_days: {len(days)} days leave room for {len(days) - 2} "
+                f"lift(s), because the long ride and the hard session never carry one, but "
+                f"plan.strength_days is {cfg.plan.strength_days}. Add a day or lower it.")
+    if cfg.plan.long_ride_day is not None:
+        long_day = weekday(cfg.plan.long_ride_day, "plan.long_ride_day")
+        if days is not None and long_day not in days:
+            raise ConfigError(
+                f"plan.long_ride_day: {cfg.plan.long_ride_day} is not one of "
+                f"plan.available_days")
 
     if cfg.plan.horizon_weeks < 1:
         raise ConfigError(

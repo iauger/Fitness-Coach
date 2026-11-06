@@ -290,3 +290,19 @@ def _yielding(conn):
     def opener():
         yield conn
     return opener()
+
+
+def test_the_advice_names_the_setting_that_is_actually_the_limit():
+    """
+    Same defect as in bootstrap: with `plan.available_days` binding, "raise
+    plan.max_ride_days" is advice that does nothing. Covers both advice branches, since each
+    builds its own sentence. Mutant this catches: either branch hardcoding the old name.
+    """
+    days_only = assess([wk(CAP.target_min, 5)] * 8, LADDER, [], 3, OLD_ENOUGH,
+                       ceiling_setting="plan.available_days")
+    both = assess([wk(CAP.target_min * 1.5, 5)] * 8, LADDER, [], 3, OLD_ENOUGH,
+                  ceiling_setting="plan.available_days")
+    for found in (days_only, both):
+        assert found.blocked_by_config
+        assert "plan.available_days" in found.summary, found.summary
+        assert "plan.max_ride_days" not in found.summary, found.summary

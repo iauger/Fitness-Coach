@@ -32,11 +32,11 @@ from datetime import date, timedelta
 from src.analysis.dates import monday_of
 from src.clock import today_local, utc_now_iso
 from src.planning.blocks import (
-    ROTATION, advance_position, expand_week, plan_week_row, rotation_for,
+    ROTATION, advance_position, expand_week, plan_rotation, plan_week_row,
 )
 from src.planning import plans, tiers_store
 from src.planning.constants import (
-    configured_slug, goal_date, strength_days, plan_name as configured_plan_name, plan_start_monday,
+    configured_slug, goal_date, plan_name as configured_plan_name, plan_start_monday,
 )
 from src.planning.progression_store import current_state
 
@@ -147,7 +147,7 @@ def store_horizon(conn, today: date | None = None, plan_name: str | None = None,
     # stranger's measured practice and report nothing, and a plan that fits badly reads as the
     # plan being wrong about *you*. The refusal names the command that fixes it.
     ladder = tiers_store.require(conn, plan_id, plan_name)
-    rotation = rotation_for(max(t.rides for t in ladder.values()), strength_days())
+    rotation = plan_rotation(max(t.rides for t in ladder.values()))
 
     built = horizon(conn, today, plan_name, weeks, start_tier, tiers=ladder,
                     rotation=rotation)

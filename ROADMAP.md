@@ -46,8 +46,9 @@ and calendar, and the Claude coaching layer.
 | — | ladder versioning: a decision keeps the rungs it was graded against |
 | 6 | archetype overrides, with non-configurable safety rules |
 | 7 | a first run that says what to do next |
+| 8 | which days you can train: `available_days`, `long_ride_day` *(unplanned; a prerequisite for the UI)* |
 
-Schema at `user_version` 11. 720 tests.
+Schema at `user_version` 11. 856 tests.
 
 **The first run has been walked on a clean clone, 2026-11-06**, end to end by someone other
 than the code: clone, config, migrate, fetch, bootstrap, sync, seed FTP, serve. It worked,
@@ -62,6 +63,35 @@ overrode the setting on every ordinary run. A second copy of this project derive
 plan slug and therefore the same `external_id`s, so the sandbox overwrote all twelve events
 of the real horizon on its first sync. Nothing was lost, because both had derived the same
 plan from the same history; that is luck, not a safeguard.
+
+**Next: a UI, not hosting.** Decided 2026-11-06: the project has outgrown being a CLI, and the
+things a person has to do by hand — the first run, deriving a ladder, setting FTP, turning the
+push on, a check-in — are flows, which is where a real frontend pays and generated HTML does
+not. The shape is a JS frontend (Vite, React, TypeScript) built to static files and served by the
+same FastAPI process, over the API that already exists; the chart pages stay as they are and are
+embedded rather than rewritten. Streamlit was considered and rejected: it would be a second
+server beside the API, reruns its script on every interaction, and has no routing, which a
+resumable chat and a multi-step setup both want.
+
+The screens, taken from what TrainerRoad's plan builder does well and leaving out what it does
+not (billing, opaque progression): a setup wizard driven by `firstrun.checks()` so the CLI and
+UI cannot drift; a calendar as the home screen; a plan screen showing the tier *and why* from the
+decision log, the ladder, the horizon with frozen sessions marked, and regenerate-as-a-new-
+version behind a preview; the existing analytics embedded; the coach. Config stays the source of
+truth — the UI validates and writes it through the loader, and must preserve its comments, which
+are half the documentation, so `ruamel.yaml` rather than PyYAML.
+
+Two things come before the first write route: an Origin check and a token. Today the API is
+almost all `GET`; a browser on loopback with no-auth write routes lets any page you visit send a
+request to `127.0.0.1:8800`, and some of those requests are a calendar push or a billed chat
+call. That is a small slice of the authentication work, not the whole of it.
+
+**Per-day *minutes* is deliberately not built.** Which days is done. How long you have on each
+is a different problem: a session's real length comes from its archetype variant, and the hard
+sessions run 40–78 minutes (sweet spot 78, medium reps 68) against the 55–60 the ladder's
+`hard_min` claims. Honouring a 60-minute Tuesday means variants that can fit a day, and fixing
+the ladder's own arithmetic for the hard session, which currently understates it. The first is
+feature work and the second is a pre-existing discrepancy worth fixing on its own account.
 
 **What is left before this is safe to host:** authentication. `serve.py` holds the intervals.icu
 and Anthropic keys, has no login, and `/api/chat/ask` spends money per call, so it binds

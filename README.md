@@ -55,6 +55,28 @@ any:
 Seven is permitted and is a bad idea for most people. That judgement belongs to the athlete, not
 to the code.
 
+**Which days** is a separate setting from how many. Left alone, the long ride is Saturday and the
+hard session Tuesday, because that is when the athlete this plan was first built for rides. For
+anyone else:
+
+```yaml
+plan:
+  available_days: [mon, wed, fri, sun]     # days you can train; unset means any
+  long_ride_day: sun                       # optional; otherwise Saturday, or nearest the weekend
+```
+
+The week is then placed inside those days and nothing, lifts included, lands outside them. The
+hard session goes as far from the long ride as the week allows on both sides, and lifts keep
+away from both. With the days above that is Sunday long, Wednesday hard, Friday easy, lifts on
+Monday and Friday. The rules are checked when the file loads — a three-day week with two lifts
+is refused there, naming the arithmetic — and `status.py` re-checks them against your stored
+ladder, because you can edit the days after the ladder was derived and the next roll would
+otherwise fail without anyone watching.
+
+This says *which* days, not how long you have on each. A session's length comes from your
+ladder, and honouring a per-day limit needs a hard session that can shrink to fit a day, which
+this plan does not have yet.
+
 A week that hits ≥90% of its tier's volume *and* its ride-day count advances you one rung. A
 partial week holds. A gap steps you down one rung per week and produces a **re-entry week**
 rather than dropping you into week 4 of a block you were never in. T4 is a ceiling, not a
@@ -265,7 +287,7 @@ See [ROADMAP.md](ROADMAP.md) for the reasoning behind each, and the backlog.
 pytest
 ```
 
-720 tests. The convention worth knowing: new behaviour is checked by **mutation testing**, not
+856 tests. The convention worth knowing: new behaviour is checked by **mutation testing**, not
 only by a green suite. Breaking the code deliberately and confirming a test fails has
 repeatedly caught tests here that passed for the wrong reason — one asserting a constant's own
 value back at itself, a filter that worked only because of insert order. Several docstrings in
@@ -275,8 +297,9 @@ Several guards are greps or AST checks rather than behaviour, each added after t
 appeared twice: `date.today()` outside `src/clock.py` fails the suite, because it is the
 server's day and not the athlete's; so does a second definition of the sport table; so does
 reading the built-in tier ladder where a plan has its own, which had the dashboard reporting
-3.42h beside a calendar showing 3.5h. Tests cannot open the real database, and read the
-committed example config rather than yours.
+3.42h beside a calendar showing 3.5h; so does building the weekly template anywhere but
+`plan_rotation`, which would ignore the days the athlete said they can train. Tests cannot open
+the real database, and read the committed example config rather than yours.
 
 ## Stack
 

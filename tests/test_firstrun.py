@@ -520,3 +520,42 @@ def test_every_warning_is_shown_not_only_the_first(repo):
     text = firstrun.report(db)
     assert "2 things worth doing" in text
     assert "seed_profile" in text and "push_calendar" in text
+
+
+# ── the week has to fit the days, even after the config changes ──────────────
+
+def _config_with(extra: str) -> None:
+    C.CONFIG_PATH.write_text(
+        "athlete:\n  name: Real Person\n"
+        f"plan:\n  name: P\n  start_monday: 2026-11-02\n{extra}", encoding="utf-8")
+    C.reset()
+
+
+def test_a_config_edit_that_leaves_the_ladder_without_enough_days_blocks_and_says_so(repo):
+    """
+    The ladder was derived for three rides a week; the config is then edited down to two
+    available days. Neither is wrong alone, but the next roll cannot place the week — and the
+    roll is unattended and hourly, so without this the first sign is a calendar that quietly
+    stopped updating. Mutant this catches: `_week` dropped from the steps.
+    """
+    db = _ready_repo(repo, "false")
+    _config_with("  strength_days: 0\n  available_days: [sat, sun]\n")
+
+    week = named(firstrun.checks(db))["week"]
+    assert not week.ok and week.blocking
+    assert "3 ride days but only 2 are available" in week.detail
+    assert "plan.available_days" in week.fix and "--replace" in week.fix
+    assert first_blocked(firstrun.checks(db)).name == "week"
+
+
+def test_a_week_that_fits_the_days_is_reported_as_fitting(repo):
+    db = _ready_repo(repo, "false")
+    _config_with("  available_days: [mon, wed, fri, sun]\n")
+    assert named(firstrun.checks(db))["week"].ok
+
+
+def test_nothing_is_said_about_the_week_when_nothing_is_configured(repo):
+    """An `ok` line that every unconfigured user sees is noise in the one output people read to
+    find what is wrong."""
+    db = _ready_repo(repo, "false")
+    assert "week" not in named(firstrun.checks(db))
