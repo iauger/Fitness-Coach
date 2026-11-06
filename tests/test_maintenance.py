@@ -368,14 +368,74 @@ def test_push_calendar_false_actually_stops_the_push(monkeypatch, lock_path, tmp
     C.reset()
 
     assert pushed == [], "the push ran despite push_calendar: false"
-    assert result["push"] == {"skipped": "push disabled"}
+    assert result["push"] == {"skipped": "push_calendar is off"}
 
 
-def test_push_calendar_true_leaves_the_push_on(monkeypatch, lock_path):
+def test_push_calendar_true_leaves_the_push_on(monkeypatch, lock_path, tmp_path):
+    """The config is written rather than inherited: the committed example now says `false`."""
+    import src.config as C
+
+    path = tmp_path / "on.yaml"
+    path.write_text(
+        "athlete:\n  name: X\nplan:\n  name: P\n  start_monday: 2026-11-02\n"
+        "integrations:\n  intervals_icu:\n    push_calendar: true\n", encoding="utf-8")
+    monkeypatch.setattr(C, "CONFIG_PATH", path)
+    C.reset()
+
     pushed: list = []
     cycle = _cycle_without_network(monkeypatch, lock_path, pushed)
     cycle(TODAY)
+    C.reset()
     assert pushed == [True]
+
+
+def test_the_default_when_the_setting_is_absent_is_not_to_push(monkeypatch, lock_path,
+                                                               tmp_path):
+    """
+    A config with no `integrations` block at all must not push.
+
+    The dataclass default is the one that governs every fresh clone, and it governed wrongly:
+    at `True` the first `sync_now.py` of a brand-new install wrote to whatever that account's
+    calendar already held. Mutant this guards: `push_calendar: bool = True` in `config.py`.
+    """
+    import src.config as C
+
+    path = tmp_path / "bare.yaml"
+    path.write_text("athlete:\n  name: X\nplan:\n  name: P\n  start_monday: 2026-11-02\n",
+                    encoding="utf-8")
+    monkeypatch.setattr(C, "CONFIG_PATH", path)
+    C.reset()
+
+    pushed: list = []
+    cycle = _cycle_without_network(monkeypatch, lock_path, pushed)
+    cycle(TODAY)
+    C.reset()
+    assert pushed == [], "a config that says nothing about pushing pushed anyway"
+
+
+def test_the_committed_example_does_not_push():
+    """
+    `config/athlete.example.yaml` is copied verbatim to become someone's real config, so its
+    value *is* the default for every human being who follows the instructions, regardless of
+    what the dataclass says.
+    """
+    import yaml
+    from pathlib import Path
+
+    data = yaml.safe_load(Path("config/athlete.example.yaml").read_text(encoding="utf-8"))
+    assert data["integrations"]["intervals_icu"]["push_calendar"] is False
+
+
+def test_a_skipped_push_does_not_read_as_an_unchanged_calendar():
+    """
+    Mutant this catches: deleting the `skipped` branch in `summarise`, which makes a push that
+    never ran print the same line as a push that ran and found nothing to do. Those mean
+    opposite things to someone asking why their watch has no workouts on it.
+    """
+    skipped = summarise({"sync": {}, "push": {"skipped": "push_calendar is off"}})
+    unchanged = summarise({"sync": {}, "push": {}})
+    assert "push_calendar is off" in skipped
+    assert skipped != unchanged
 
 
 def test_an_explicit_argument_still_overrides_the_config(monkeypatch, lock_path):
@@ -384,3 +444,55 @@ def test_an_explicit_argument_still_overrides_the_config(monkeypatch, lock_path)
     cycle = _cycle_without_network(monkeypatch, lock_path, pushed)
     cycle(TODAY, push_enabled=False)
     assert pushed == []
+
+
+# ── sync_now.py must let the configuration decide ────────────────────────────
+
+def _run_sync_now(monkeypatch, argv: list[str]) -> dict:
+    """Invoke the script's main() with run_cycle stubbed, returning what it was passed."""
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "sync_now_under_test", Path("scripts/sync_now.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    seen: dict = {}
+
+    def fake_cycle(**kwargs):
+        seen.update(kwargs)
+        return {"errors": []}
+
+    monkeypatch.setattr("src.maintenance.run_cycle", fake_cycle)
+    monkeypatch.setattr("src.db.schema.migrate_db", lambda *a, **k: None)
+    monkeypatch.setattr(sys, "argv", ["sync_now.py", "--no-log"] + argv)
+    seen["_exit"] = module.main()
+    return seen
+
+
+def test_a_bare_sync_now_asks_the_configuration_rather_than_assuming(monkeypatch):
+    """
+    The defect this exists for: `push_enabled=not args.no_push` is `True` whenever the flag is
+    absent, so every ordinary run overrode `push_calendar` and the setting took effect nowhere
+    but `serve.py`'s loop. `sync_now.py` is the entry point the Scheduled Task runs and the one
+    the instructions name, so the setting was effectively unimplemented where it mattered.
+
+    `None` is the assertion, not `False`: the script must defer, not decide.
+    """
+    seen = _run_sync_now(monkeypatch, [])
+    assert seen["push_enabled"] is None
+
+
+def test_no_push_still_overrides_a_configuration_that_says_to_push(monkeypatch):
+    assert _run_sync_now(monkeypatch, ["--no-push"])["push_enabled"] is False
+
+
+def test_push_overrides_a_configuration_that_says_not_to(monkeypatch):
+    assert _run_sync_now(monkeypatch, ["--push"])["push_enabled"] is True
+
+
+def test_contradicting_flags_fail_rather_than_pick_one(monkeypatch):
+    seen = _run_sync_now(monkeypatch, ["--push", "--no-push"])
+    assert seen["_exit"] == 1
+    assert "push_enabled" not in seen, "the cycle ran despite contradictory flags"

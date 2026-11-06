@@ -147,6 +147,7 @@ run is: run it, do what it says, repeat.
   ok  database      22 tables
   ok  history       412 activities, 2019-03-02 to 2026-11-04
   --  ftp           no FTP on record — prescriptions will have no watts
+  --  calendar      push off — sessions stay on this machine
   ->  tier ladder   not derived yet
 
   next: python scripts/bootstrap_plan.py            # look at it
@@ -163,10 +164,29 @@ In order, that walks you through:
 | `python scripts/fetch_history.py` | backfill your riding; this is what the ladder is derived from |
 | `python scripts/seed_profile.py --ftp 250` | your FTP — every prescription is a percentage of it |
 | `python scripts/bootstrap_plan.py` | look at the derived ladder, then `--write` to keep it |
-| `python scripts/sync_now.py` | generate the first horizon and push it |
+| `python scripts/sync_now.py` | generate the first horizon |
 | `python scripts/serve.py --open` | dashboard, calendar, API |
 
-Two of those are worth knowing about in advance. **`fetch_history.py` is not optional** — the
+**Nothing reaches your intervals.icu calendar until you ask it to.** The push is the only
+thing here that writes anywhere but your own machine, and it writes to a calendar that may
+already hold a plan you are part-way through, so it is off until you turn it on:
+
+```yaml
+integrations:
+  intervals_icu:
+    push_calendar: true
+```
+
+Generate a horizon first, read it with `python scripts/plan_build.py`, and turn the push on
+when you want those sessions on your devices. `status.py` says which state you are in.
+
+Leave it off in any **second copy** of this project pointed at the same account. Every event
+id is derived from the plan slug, so two copies produce identical ids and the second
+overwrites the first one's calendar rather than adding to it — which is how this default was
+arrived at, after a sandbox clone replaced all twelve events of a real horizon on its first
+sync.
+
+Two more worth knowing about in advance. **`fetch_history.py` is not optional** — the
 tier ladder is derived from your own riding, and the generator refuses to build anything until
 it has been, rather than quietly falling back to someone else's rungs. And **`bootstrap_plan.py`
 is dry by default**: it prints the ladder it would derive and writes nothing until you pass
@@ -176,7 +196,7 @@ is dry by default**: it prints the ladder it would derive and writes nothing unt
 your calendar. To do one pass without the server:
 
 ```bash
-python scripts/sync_now.py         # sync, roll, push
+python scripts/sync_now.py         # sync, roll, push if configured to
 python scripts/plan_build.py       # preview the horizon without writing it
 python scripts/checkin.py          # weekly check-in with the coach
 python scripts/cycle_review.py     # 4-week block review
@@ -245,7 +265,7 @@ See [ROADMAP.md](ROADMAP.md) for the reasoning behind each, and the backlog.
 pytest
 ```
 
-704 tests. The convention worth knowing: new behaviour is checked by **mutation testing**, not
+720 tests. The convention worth knowing: new behaviour is checked by **mutation testing**, not
 only by a green suite. Breaking the code deliberately and confirming a test fails has
 repeatedly caught tests here that passed for the wrong reason — one asserting a constant's own
 value back at itself, a filter that worked only because of insert order. Several docstrings in

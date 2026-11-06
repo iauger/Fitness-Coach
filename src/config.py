@@ -109,7 +109,20 @@ class Plan:
 
 @dataclass(frozen=True)
 class IntervalsIcu:
-    push_calendar: bool = True
+    # **Off unless asked for.** The push is the only thing in this project that reaches
+    # outside the machine, and it writes to a calendar that may already hold a plan someone
+    # is part-way through. Worse, `external_id` is derived from the plan slug, so a second
+    # checkout of this project run against the same account produces *identical* ids and
+    # overwrites the first one's calendar rather than sitting beside it — measured, not
+    # theorised: a sandbox clone replaced all 12 events of the real horizon on its first
+    # `sync_now`, and the only reason nothing was lost is that both had derived the same
+    # plan from the same history.
+    #
+    # Defaulting to true made that the behaviour of every fresh clone, and made the
+    # precaution something you had to *remember*. The ladder is already dry-by-default for
+    # the same reason — `bootstrap_plan.py` needs `--write` — and this is the more
+    # consequential of the two, because it is the one that is visible to anyone else.
+    push_calendar: bool = False
 
 
 @dataclass(frozen=True)

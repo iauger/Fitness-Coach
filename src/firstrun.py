@@ -18,10 +18,40 @@ the trap `clock.today_local()` fell into.
 """
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
+
+
+def interpreter() -> str:
+    """
+    How to invoke Python, as text someone can paste into a shell.
+
+    The literal word `python` is wrong here more often than it is right. On this project's own
+    machine it resolves to a system interpreter carrying none of the dependencies, and with a
+    venv that has not been activated it resolves to nothing useful at all. A printed command
+    that does not run is worse than no command, because the person following it cannot tell a
+    stale instruction from their own mistake — this cost two attempts during the first real
+    walkthrough, on the two lines that are hardest to recover from being wrong about.
+
+    The in-repo venv is preferred over `sys.executable` deliberately. It is short, it contains
+    no spaces to quote, it is identical in PowerShell, cmd and bash, and it is still the right
+    answer when `status.py` itself was launched with the wrong interpreter — which is precisely
+    the situation where this output is being read.
+    """
+    for venv in (REPO_ROOT / ".venv" / "Scripts" / "python.exe",
+                 REPO_ROOT / ".venv" / "bin" / "python"):
+        if venv.exists():
+            return venv.relative_to(REPO_ROOT).as_posix()
+
+    current = str(Path(sys.executable))
+    if " " not in current:
+        return current
+    # Quoting alone is not enough in PowerShell, which needs the call operator to run a
+    # quoted path at all.
+    return f'& "{current}"' if os.name == "nt" else f'"{current}"'
 
 
 @dataclass(frozen=True)
@@ -87,7 +117,7 @@ def _config_file() -> Check:
 def _database(db_path: Path) -> Check:
     if not db_path.exists():
         return Check("database", False, "no database yet",
-                     "python scripts/migrate.py --apply")
+                     f"{interpreter()} scripts/migrate.py --apply")
     import sqlite3
 
     conn = sqlite3.connect(db_path)
@@ -99,7 +129,7 @@ def _database(db_path: Path) -> Check:
     missing = {"activities", "prescribed_sessions", "tiers"} - tables
     if missing:
         return Check("database", False, f"schema is behind ({', '.join(sorted(missing))})",
-                     "python scripts/migrate.py --apply")
+                     f"{interpreter()} scripts/migrate.py --apply")
     return Check("database", True, f"{len(tables)} tables")
 
 
@@ -107,7 +137,7 @@ def _history(conn) -> Check:
     rides = conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0]
     if not rides:
         return Check("history", False, "nothing synced yet",
-                     "python scripts/fetch_history.py")
+                     f"{interpreter()} scripts/fetch_history.py")
     span = conn.execute("SELECT MIN(date), MAX(date) FROM activities").fetchone()
     return Check("history", True, f"{rides} activities, {span[0][:10]} to {span[1][:10]}")
 
@@ -125,7 +155,7 @@ def _ftp(conn) -> Check:
         "ORDER BY effective_date DESC LIMIT 1").fetchone()
     if row is None:
         return Check("ftp", False, "no FTP on record — prescriptions will have no watts",
-                     "python scripts/seed_profile.py --ftp 250    # your number",
+                     f"{interpreter()} scripts/seed_profile.py --ftp 250    # your number",
                      blocking=False)
     return Check("ftp", True, f"{row[0]:.0f}W")
 
@@ -140,8 +170,8 @@ def _ladder(conn) -> Check:
         plan = None
     if plan is None or tiers_store.load(conn, plan.id) is None:
         return Check("tier ladder", False, "not derived yet",
-                     "python scripts/bootstrap_plan.py            # look at it\n"
-                     "    python scripts/bootstrap_plan.py --write    # keep it")
+                     f"{interpreter()} scripts/bootstrap_plan.py            # look at it\n"
+                     f"    {interpreter()} scripts/bootstrap_plan.py --write    # keep it")
     version = tiers_store.current_version(conn, plan.id)
     ladder = tiers_store.load(conn, plan.id)
     return Check("tier ladder", True,
@@ -157,8 +187,31 @@ def _plan(conn) -> Check:
         (plan_name(),)).fetchone()[0]
     if not rows:
         return Check("plan", False, "no sessions generated yet",
-                     "python scripts/sync_now.py")
+                     f"{interpreter()} scripts/sync_now.py")
     return Check("plan", True, f"{rows} sessions prescribed")
+
+
+def _calendar(conn) -> Check:
+    """
+    Whether the horizon actually reaches intervals.icu, and so the athlete's devices.
+
+    Non-blocking in both directions, because both answers are legitimate: the push is off by
+    default on purpose, and plenty of people will want to read the plan locally and never
+    turn it on. What is not legitimate is not knowing which — a plan that generates perfectly
+    and silently never appears on a watch is indistinguishable, from the saddle, from one
+    that is broken.
+
+    Reported after `_plan` rather than beside the other settings because it is only
+    meaningful once there are sessions that could be pushed.
+    """
+    from src.planning.constants import push_calendar
+
+    if not push_calendar():
+        return Check("calendar", False, "push off — sessions stay on this machine",
+                     "set integrations.intervals_icu.push_calendar: true in "
+                     "config/athlete.yaml    # then sync_now.py",
+                     blocking=False)
+    return Check("calendar", True, "pushing the horizon to intervals.icu")
 
 
 def checks(db_path: Path | None = None) -> list[Check]:
@@ -185,7 +238,7 @@ def checks(db_path: Path | None = None) -> list[Check]:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        for step in (_history, _ftp, _ladder, _plan):
+        for step in (_history, _ftp, _ladder, _plan, _calendar):
             check = step(conn)
             out.append(check)
             if not check.ok and check.blocking:
@@ -213,8 +266,13 @@ def report(db_path: Path | None = None) -> str:
     if blocked:
         lines += ["", f"  next: {blocked[0].fix}"]
     elif warnings:
-        lines += ["", "  ready, with one thing worth doing:",
-                  f"    {warnings[0].fix}"]
+        # All of them, not just the first. Warnings are independent — an FTP that was never
+        # recorded and a calendar push left off are unrelated, and showing one hides the
+        # other for as long as it takes to fix the first. Blocking checks are different and
+        # stay one at a time: those really are consequences of each other.
+        head = ("  ready, with one thing worth doing:" if len(warnings) == 1
+                else f"  ready, with {len(warnings)} things worth doing:")
+        lines += ["", head] + [f"    {w.fix}" for w in warnings]
     else:
-        lines += ["", "  ready. python scripts/serve.py --open"]
+        lines += ["", f"  ready. {interpreter()} scripts/serve.py --open"]
     return "\n".join(lines)

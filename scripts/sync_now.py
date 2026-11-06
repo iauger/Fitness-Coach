@@ -1,9 +1,13 @@
 """
 Run one maintenance cycle: pull from intervals.icu, roll the plan, push the horizon.
 
-    python scripts/sync_now.py              # the full cycle
+    python scripts/sync_now.py              # sync and roll; pushes only if configured to
     python scripts/sync_now.py --no-push    # pull and roll only, leave the calendar alone
+    python scripts/sync_now.py --push       # push regardless of the setting
     python scripts/sync_now.py --verbose    # show each step
+
+Whether the horizon reaches your intervals.icu calendar is `integrations.intervals_icu.
+push_calendar`, which is off until you turn it on. The two flags are overrides for one run.
 
 This is the entry point the Windows Scheduled Task runs, and it is the actual fix for the
 problem that started the rebuild: six weeks of unsynced data, because syncing was something a
@@ -88,6 +92,8 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--no-push", action="store_true",
                    help="pull and roll, but do not touch the intervals.icu calendar")
+    p.add_argument("--push", action="store_true",
+                   help="push even if integrations.intervals_icu.push_calendar is false")
     p.add_argument("--verbose", action="store_true", help="show each sync step")
     p.add_argument("--no-log", action="store_true", help="do not append to the log file")
     args = p.parse_args()
@@ -99,7 +105,16 @@ def main() -> int:
         # A scheduled run may be the first thing to execute after a code update, so the schema
         # cannot be assumed current.
         migrate_db()
-        result = run_cycle(push_enabled=not args.no_push, silent=not args.verbose)
+        # `None` means "ask the configuration" — `run_cycle` reads `push_calendar` only when
+        # nothing was passed. This used to be `not args.no_push`, which is `True` whenever
+        # the flag is absent, so the setting was overridden on every ordinary run and took
+        # effect nowhere but `serve.py`'s loop. A config key that the main entry point
+        # silently ignores is the same defect the key was added to fix.
+        if args.no_push and args.push:
+            _say("[maintenance] --push and --no-push contradict each other", log=False)
+            return 1
+        push_enabled = False if args.no_push else (True if args.push else None)
+        result = run_cycle(push_enabled=push_enabled, silent=not args.verbose)
         _say(summarise(result), log=not args.no_log)
         return 1 if result.get("errors") else 0
     except Exception:

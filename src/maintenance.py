@@ -120,6 +120,9 @@ def run_cycle(today: date | None = None, push_enabled: bool | None = None,
     plan_name = plan_name or configured_plan_name()
     if push_enabled is None:
         push_enabled = push_calendar()
+        off_because = "push_calendar is off"
+    else:
+        off_because = "asked not to"
     result: dict = {"ran_at": utc_now_iso(), "errors": []}
 
     try:
@@ -130,7 +133,7 @@ def run_cycle(today: date | None = None, push_enabled: bool | None = None,
             result["errors"] += result["sync"].get("errors", [])
 
             if not push_enabled:
-                result["push"] = {"skipped": "push disabled"}
+                result["push"] = {"skipped": off_because}
                 return result
 
             try:
@@ -180,6 +183,12 @@ def summarise(result: dict) -> str:
         bits.append(f"pushed {push.get('created', 0)} (replaced {push.get('deleted', 0)})")
     elif push.get("relinked"):
         bits.append(f"relinked {push['relinked']}")
+    elif push.get("skipped"):
+        # Named rather than folded into "calendar unchanged". Those two look identical in a
+        # log and mean opposite things: one is a push that found nothing to do, the other is
+        # a push that never ran. Someone wondering why their sessions are not on their watch
+        # needs to be able to tell which.
+        bits.append(f"no push ({push['skipped']})")
     else:
         bits.append("calendar unchanged")
     line = f"[maintenance] {', '.join(bits)}"

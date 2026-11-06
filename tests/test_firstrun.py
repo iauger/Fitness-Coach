@@ -19,6 +19,8 @@ import pytest
 
 import src.config as C
 from src import firstrun
+from conftest import seed_ladder
+
 from src.db.migrations import migrate
 
 EXAMPLE_NAME = "Your Name"
@@ -405,3 +407,116 @@ def test_the_readme_opens_with_the_status_command():
     readme = Path("README.md").read_text(encoding="utf-8")
     running = readme[readme.index("## Running it"):]
     assert "scripts/status.py" in running[:800], "status.py is not near the top of Running it"
+
+
+# ── the next command has to be runnable, not just readable ───────────────────
+
+def test_the_next_command_names_an_interpreter_that_exists(repo):
+    """
+    Every `fix` string used to begin with the literal word `python`, which is the one thing
+    that does not work on the machine this was written on: a bare `python` there is a system
+    interpreter with none of the dependencies, and under an unactivated venv it is nothing at
+    all. During the first real walkthrough two of these lines were pasted and failed — once
+    silently, because Windows handed the `.py` file to its file association instead.
+    """
+    found = firstrun.checks(repo / "none.db")
+    fixes = [c.fix for c in found if c.fix]
+    assert fixes
+    for fix in fixes:
+        for line in fix.splitlines():
+            assert not line.strip().startswith("python "), f"not runnable here: {line}"
+
+
+def test_the_in_repo_venv_is_preferred_to_whatever_is_running(repo, monkeypatch):
+    """
+    Short, no spaces to quote, identical across PowerShell, cmd and bash — and right even when
+    status.py itself was launched with the wrong interpreter, which is exactly when someone is
+    reading this output.
+    """
+    for parts in (("Scripts", "python.exe"), ("bin", "python")):
+        venv = repo / ".venv"
+        for leaf in (repo / ".venv" / "Scripts", repo / ".venv" / "bin"):
+            leaf.mkdir(parents=True, exist_ok=True)
+        (venv.joinpath(*parts)).write_text("", encoding="utf-8")
+    assert firstrun.interpreter() == ".venv/Scripts/python.exe"
+
+
+def test_a_path_with_spaces_is_made_runnable_rather_than_pasted_bare(repo, monkeypatch):
+    r"""`C:\Program Files\py\python.exe scripts/x.py` is four arguments, not a command."""
+    monkeypatch.setattr(firstrun.sys, "executable", r"C:\Program Files\py\python.exe")
+    monkeypatch.setattr(firstrun.os, "name", "nt")
+    out = firstrun.interpreter()
+    assert out.startswith("& \""), out
+    assert out.endswith("\"")
+
+
+# ── the calendar push is reported, in both directions ────────────────────────
+
+def _ready_repo(repo, push: str) -> Path:
+    """A fully set-up clone whose only open question is whether it pushes."""
+    write_env(repo)
+    C.CONFIG_PATH.write_text(
+        "athlete:\n  name: Real Person\n"
+        "plan:\n  name: P\n  start_monday: 2026-11-02\n"
+        f"integrations:\n  intervals_icu:\n    push_calendar: {push}\n", encoding="utf-8")
+    C.reset()
+    db = repo / "f.db"
+    seed_db(db, ftp=250)
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    with conn:
+        seed_ladder(conn, "p", "P")
+    conn.execute(
+        "INSERT INTO prescribed_sessions (plan_name, plan_id, date, weekday, block_index, "
+        "block_name, week_in_block, is_recovery_week, role, archetype, variant, "
+        "prescription, minutes, tss, intensity_factor, params_json, created_at) "
+        "VALUES ('P', 1, '2026-11-09', 0, 0, 'b', 1, 0, 'long', 'lit', 'steady', "
+        "'90min', 90, 58, 0.62, '{}', '2026-11-02')")
+    conn.commit()
+    conn.close()
+    return db
+
+
+def test_a_plan_that_never_reaches_the_calendar_says_so(repo):
+    """
+    A plan that generates perfectly and silently never appears on a watch is, from the
+    saddle, indistinguishable from one that is broken. Off is the default, so this is the
+    state most people are in, and it has to be visible rather than inferred.
+    """
+    db = _ready_repo(repo, "false")
+    calendar = named(firstrun.checks(db))["calendar"]
+    assert not calendar.ok
+    assert not calendar.blocking, "a local-only setup is a legitimate setup, not a failure"
+    assert "push_calendar" in calendar.fix
+
+
+def test_a_configured_push_is_reported_as_working(repo):
+    db = _ready_repo(repo, "true")
+    assert named(firstrun.checks(db))["calendar"].ok
+
+
+def test_every_warning_is_shown_not_only_the_first(repo):
+    """
+    Mutant this catches: `warnings[0]` in `report`. A missing FTP and a calendar left off are
+    unrelated, so showing one hides the other until the first is dealt with — and then the
+    second appears as if it had just happened.
+    """
+    write_env(repo)
+    C.CONFIG_PATH.write_text(
+        "athlete:\n  name: Real Person\n"
+        "plan:\n  name: P\n  start_monday: 2026-11-02\n"
+        "integrations:\n  intervals_icu:\n    push_calendar: false\n", encoding="utf-8")
+    C.reset()
+    db = _ready_repo(repo, "false")
+    conn = sqlite3.connect(db)
+    conn.execute("DELETE FROM athlete_profile WHERE metric = 'ftp'")
+    conn.commit()
+    conn.close()
+
+    found = firstrun.checks(db)
+    warnings = [c for c in found if not c.ok and not c.blocking]
+    assert {c.name for c in warnings} == {"ftp", "calendar"}
+
+    text = firstrun.report(db)
+    assert "2 things worth doing" in text
+    assert "seed_profile" in text and "push_calendar" in text
