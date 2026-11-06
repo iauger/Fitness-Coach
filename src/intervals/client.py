@@ -9,9 +9,23 @@ load_dotenv()
 BASE_URL = "https://intervals.icu/api/v1"
 
 
+class MissingCredentials(RuntimeError):
+    """No intervals.icu API key, with a message saying where to get one."""
+
+
 class IntervalsClient:
     def __init__(self, api_key: Optional[str] = None, athlete_id: Optional[str] = None):
-        self.api_key = api_key or os.environ["INTERVALS_API_KEY"]
+        # `os.environ[...]` raised a bare KeyError here, which is a complete diagnosis for
+        # someone who already knows this project and no help at all to someone who has just
+        # cloned it — and it was the very first thing a fresh clone hit.
+        self.api_key = api_key or os.environ.get("INTERVALS_API_KEY", "")
+        if not self.api_key.strip():
+            raise MissingCredentials(
+                "No intervals.icu API key.\n"
+                "  Get one from intervals.icu > Settings > Developer, then:\n"
+                "    cp .env.example .env     # if you have not already\n"
+                "    # paste the key as INTERVALS_API_KEY=...\n"
+                "  python scripts/status.py shows what else is outstanding.")
         self.athlete_id = athlete_id or os.environ.get("INTERVALS_ATHLETE_ID", "")
         self.session = requests.Session()
         # intervals.icu uses HTTP Basic Auth: username="API_KEY", password=<key>
@@ -24,10 +38,26 @@ class IntervalsClient:
             "User-Agent": "FitnessCoach/1.0 (personal training planner)",
         })
 
+    def _reject(self, resp) -> None:
+        """
+        Turn the two authentication failures into something actionable.
+
+        A bare `401 Client Error: Unauthorized for url: ...` is accurate and tells a newcomer
+        nothing about which of the two credentials is wrong — and on a first run it arrives
+        four times in one line, once per section of the sync.
+        """
+        if resp.status_code in (401, 403):
+            raise MissingCredentials(
+                f"intervals.icu rejected the credentials ({resp.status_code}).\n"
+                f"  Check INTERVALS_API_KEY and INTERVALS_ATHLETE_ID in .env.\n"
+                f"  The key is at intervals.icu > Settings > Developer; the athlete id is the "
+                f"i-number in your profile URL (currently {self.athlete_id or 'unset'}).")
+        resp.raise_for_status()
+
     def _get(self, path: str, params: Optional[dict] = None) -> dict | list:
         url = f"{BASE_URL}{path}"
         resp = self.session.get(url, params=params)
-        resp.raise_for_status()
+        self._reject(resp)
         return resp.json()
 
     def _send(self, method: str, path: str, params: dict | None = None,
@@ -39,7 +69,7 @@ class IntervalsClient:
         on success. Returns None in that case rather than pretending there was a payload.
         """
         resp = self.session.request(method, f"{BASE_URL}{path}", params=params, json=json)
-        resp.raise_for_status()
+        self._reject(resp)
         if not resp.content:
             return None
         try:

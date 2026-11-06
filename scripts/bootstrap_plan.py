@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.clock import today_local
 from src.config import config
-from src.db.schema import read_connection, write_connection
+from src.db.schema import migrate_db, read_connection, write_connection
 from src.planning import plans, tiers_store
 from src.planning.bootstrap import BootstrapError, derive, summarise
 from src.planning.constants import configured_slug, plan_name as configured_plan_name
@@ -66,6 +66,10 @@ def main() -> int:
     p.add_argument("--compare", action="store_true",
                    help="print the hand-written ladder beside the derived one")
     args = p.parse_args()
+
+    # Cheap and idempotent, and it has to happen before the first read: a fresh clone has no
+    # database at all, and `no such table: activities` is not a useful first impression.
+    migrate_db()
 
     cfg = config()
     name = configured_plan_name()

@@ -27,6 +27,7 @@ import uvicorn
 
 from src.config import config
 from src.db.schema import migrate_db
+from src.firstrun import ready, report
 
 # Loopback is the default in `src/config.py`, not here, so there is one answer to "what does
 # this bind to" rather than two that can disagree.
@@ -44,6 +45,15 @@ def main() -> None:
 
     # Cheap and idempotent; means a fresh clone can serve without running a seed script first.
     migrate_db()
+
+    # Serving an unfinished setup is allowed — the dashboard and calendar render fine with no
+    # data, and seeing them is part of deciding whether to bother. But doing it silently means
+    # the first thing someone meets is a set of empty charts with no indication that anything
+    # is outstanding, so the outstanding thing gets named before the URL.
+    if not ready():
+        print()
+        print(report())
+        print()
 
     if args.host not in ("127.0.0.1", "localhost", "::1"):
         print(f"  WARNING: binding to {args.host}, not loopback. This server has no auth and "

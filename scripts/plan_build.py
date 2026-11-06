@@ -11,8 +11,9 @@ The tier is *derived*, not chosen: measured weekly volume goes through the gate 
 `planning/progression.py`, which decides what next week should look like. Pass `--tier` to
 override it for a what-if.
 
-This does not yet write to the database or push to intervals.icu — that is the roller (step 4)
-and the export path (steps 5-7). What it does do is answer "what am I riding tomorrow".
+This writes nothing and pushes nothing — `scripts/sync_now.py` is what stores a horizon and
+puts it on your calendar. What this does is answer "what am I riding tomorrow", and let you
+try a tier or a date without recording anything.
 """
 
 import argparse
@@ -194,7 +195,7 @@ def main() -> int:
     print(f"  ride time by band: {pct['easy']}% easy / {pct['moderate']}% moderate / "
           f"{pct['hard']}% hard")
 
-    print("\n  preview only — the roller (step 4) is what stores and pushes this.\n")
+    print("\n  preview only — python scripts/sync_now.py stores and pushes a plan.\n")
     return 0
 
 

@@ -13,13 +13,18 @@ Nothing here touches the network; `session.request` is replaced with a recorder.
 
 import pytest
 
+from datetime import date
+
 from src.intervals.client import IntervalsClient
 
 
 class FakeResponse:
-    def __init__(self, payload=None, content=b"{}"):
+    def __init__(self, payload=None, content=b"{}", status_code=200):
         self._payload = payload
         self.content = content
+        # Every request now goes through `_reject`, which reads the status before deciding
+        # whether a failure is an authentication problem worth explaining or an ordinary one.
+        self.status_code = status_code
 
     def raise_for_status(self):
         return None
@@ -105,3 +110,48 @@ def test_an_empty_response_body_is_not_an_error(client, monkeypatch):
     monkeypatch.setattr(c := client.session, "request",
                         lambda *a, **k: FakeResponse(None, content=b""))
     assert client._delete("/whatever") is None
+
+
+# ── credentials, as a first-run problem ──────────────────────────────────────
+
+def test_no_api_key_says_where_to_get_one():
+    """
+    `os.environ["INTERVALS_API_KEY"]` raised a bare KeyError, which is a complete diagnosis
+    for someone who already knows this project and nothing at all for someone who has just
+    cloned it — and it was literally the first thing a fresh clone hit.
+    """
+    from src.intervals.client import MissingCredentials
+
+    with pytest.raises(MissingCredentials, match="Settings > Developer"):
+        IntervalsClient(api_key="   ")
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_a_rejected_key_names_both_credentials_and_where_they_come_from(client, status):
+    """
+    A bare `401 Client Error: Unauthorized for url: ...` does not say which of the two
+    credentials is wrong, and on a first run it arrives once per section of the sync — four
+    copies of an unactionable message in a single line.
+    """
+    from src.intervals.client import MissingCredentials
+
+    client.session.get = lambda *a, **k: FakeResponse(status_code=status)
+    with pytest.raises(MissingCredentials, match="INTERVALS_ATHLETE_ID"):
+        client.get_activities(date(2026, 11, 1), date(2026, 11, 7))
+
+
+def test_an_ordinary_http_error_is_left_alone(client):
+    """
+    Only authentication is translated. A 500 is not a credentials problem, and dressing it up
+    as one would send someone to re-paste a key that was fine.
+    """
+    import requests
+
+    def boom(*a, **k):
+        resp = FakeResponse(status_code=500)
+        resp.raise_for_status = lambda: (_ for _ in ()).throw(requests.HTTPError("500"))
+        return resp
+
+    client.session.get = boom
+    with pytest.raises(requests.HTTPError):
+        client.get_activities(date(2026, 11, 1), date(2026, 11, 7))

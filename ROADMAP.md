@@ -1778,3 +1778,50 @@ where the module ladder is the subject rather than a shortcut. Verified the guar
 17 mutants, all caught. One survived first — removing the unknown-archetype guard in
 `check_all`, which is reachable only when the misspelled block has *no* variants, since
 `violations` catches it otherwise.
+
+### Step 7 — the first run, done 2026-11-05
+
+Built the way the roadmap said to verify it: clone into an empty directory, follow the README,
+write down where it dead-ends. **Three of the first five commands ended in a raw traceback.**
+
+| command | what a newcomer saw |
+|---|---|
+| `fetch_history.py` | `KeyError: 'INTERVALS_API_KEY'` |
+| `bootstrap_plan.py` | `OperationalError: no such table: activities` |
+| `fetch_history.py`, bad key | `401 Client Error: Unauthorized for url: ...`, four times in one line |
+
+Each is a complete diagnosis for someone who already knows this project and useless to anyone
+else — which is the definition of the problem this step exists to fix.
+
+**`scripts/status.py` is the answer, and the first command in the README.** It reports where a
+setup has got to and prints the single next thing to run. The whole first run became: run it,
+do what it says, repeat. It is read-only — creates no files, migrates nothing, calls no API —
+because a status command that changed things is the opposite of what someone reaches for when
+they are lost.
+
+Two design points worth keeping:
+
+- **It stops at the first blocker.** Without a key there is no sync, so no history, no ladder
+  and no plan. Reporting all four buries the only one that can be acted on under three of its
+  own consequences.
+- **A missing FTP warns without blocking.** Every percentage in every prescription resolves
+  against it, so the sessions are shapes with no watts — but the plan does generate, and
+  halting there would hide the ladder and plan checks behind it.
+
+**Fixed along the way:** a missing API key now says where to get one; a rejected key names
+*which* of the two credentials to check and what the athlete id currently is;
+`bootstrap_plan.py` migrates before it reads; `fetch_history.py` prints the credentials
+message rather than a stack trace; `serve.py` prints outstanding items before the URL, so a
+half-set-up install does not open on empty charts with no explanation. And `plan_build.py`
+stopped telling people to wait for "the roller (step 4)", which meant nothing outside this
+file.
+
+**The derivation was validated on someone else's data for the first time.** A synthetic
+athlete riding 3×60min and a 90min weekend ride derived a ladder with a 90min long ride and
+T1 at 3.58h — genuinely different rungs from this athlete's, which is the thing step 5 could
+not demonstrate using only one person's history.
+
+14 mutants, 13 caught. The survivor is `create_if_missing=False` in the config check, which is
+unreachable behind an existence test — kept anyway, and now commented as such, because the
+flag is right independently of the guard and `clock.today_local()` generating a config as a
+side effect is a trap this project has already fallen into once.

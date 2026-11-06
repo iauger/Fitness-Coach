@@ -16,7 +16,7 @@ from datetime import date, timedelta
 # allow imports from project root
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.intervals.client import IntervalsClient
+from src.intervals.client import IntervalsClient, MissingCredentials
 from src.db.schema import migrate_db
 from src.db.store import upsert_activities, upsert_wellness, upsert_events, log_sync
 from src.db.schema import get_connection
@@ -43,8 +43,18 @@ def fetch_all(start: date, end: date, verbose: bool = True) -> None:
             print(msg)
 
     log(f"Checking connection to intervals.icu...")
-    if not client.ping():
-        print("ERROR: Could not authenticate with intervals.icu. Check your API key.")
+    # `ping` raises MissingCredentials rather than returning False when the key is rejected,
+    # so the message it carries is the one worth showing — and showing it as a message rather
+    # than a traceback, since this is the first command that talks to the network and the
+    # commonest first-run failure is a key that was pasted wrong.
+    try:
+        connected = client.ping()
+    except MissingCredentials as exc:
+        print(f"\n{exc}\n")
+        sys.exit(1)
+    if not connected:
+        print("ERROR: Could not reach intervals.icu. Check your network, then "
+              "python scripts/status.py")
         sys.exit(1)
     log("  Connected.\n")
 

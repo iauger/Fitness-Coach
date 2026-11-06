@@ -133,14 +133,44 @@ project *through* intervals.icu — none of them are integrated directly.
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env               # intervals.icu + Anthropic keys
-cp config/athlete.example.yaml config/athlete.yaml
-
-python scripts/fetch_history.py    # one-time backfill
-python scripts/seed_profile.py     # height / weight / FTP baseline
-python scripts/bootstrap_plan.py   # derive your tier ladder (add --write to keep it)
-python scripts/serve.py --open     # dashboard, calendar, API
+python scripts/status.py
 ```
+
+**`status.py` is the first command and the one to come back to.** It reports where your setup
+has got to and prints the single next thing to run — it creates nothing, changes nothing and
+calls no API, so it is also what to reach for when something stops working. The whole first
+run is: run it, do what it says, repeat.
+
+```
+  ok  secrets       intervals.icu key present
+  ok  config        Your Name, Europe/London
+  ok  database      22 tables
+  ok  history       412 activities, 2019-03-02 to 2026-11-04
+  --  ftp           no FTP on record — prescriptions will have no watts
+  ->  tier ladder   not derived yet
+
+  next: python scripts/bootstrap_plan.py            # look at it
+    python scripts/bootstrap_plan.py --write    # keep it
+```
+
+In order, that walks you through:
+
+| | |
+|---|---|
+| `cp .env.example .env` | your intervals.icu key, from **Settings > Developer** |
+| `cp config/athlete.example.yaml config/athlete.yaml` | then edit it — name, timezone, goals, plan start |
+| `python scripts/migrate.py --apply` | create the database |
+| `python scripts/fetch_history.py` | backfill your riding; this is what the ladder is derived from |
+| `python scripts/seed_profile.py --ftp 250` | your FTP — every prescription is a percentage of it |
+| `python scripts/bootstrap_plan.py` | look at the derived ladder, then `--write` to keep it |
+| `python scripts/sync_now.py` | generate the first horizon and push it |
+| `python scripts/serve.py --open` | dashboard, calendar, API |
+
+Two of those are worth knowing about in advance. **`fetch_history.py` is not optional** — the
+tier ladder is derived from your own riding, and the generator refuses to build anything until
+it has been, rather than quietly falling back to someone else's rungs. And **`bootstrap_plan.py`
+is dry by default**: it prints the ladder it would derive and writes nothing until you pass
+`--write`, because that ladder decides every session for months.
 
 `serve.py` runs a background loop that syncs, rolls the plan forward and pushes the horizon to
 your calendar. To do one pass without the server:
