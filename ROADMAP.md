@@ -90,7 +90,7 @@ a loopback `Host` and, if it sends one, this server's own `Origin`; every non-GE
 per-process `X-Fitness-Token` from `GET /api/session`. No CORS header is ever set, which is what
 keeps the token from other origins. A dev frontend on another port is therefore refused by design:
 serve the UI from this app, or widen deliberately with `FITNESS_COACH_ALLOWED_HOSTS`. A small slice
-of the authentication work, not the whole of it. `ruamel.yaml` for config writes is still to do.
+of the authentication work, not the whole of it. Config writes go through `src/config_write.py` (ruamel.yaml: comments survive, the result is validated before an atomic replace).
 
 **Ride limits are built** (`max_ride_min`, `day_max_ride_min`), as the second half of what the UI's
 setup wizard has to ask. The decision that matters is *derive inside, never clamp*: a rung is
