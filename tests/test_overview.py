@@ -16,7 +16,7 @@ import pytest
 
 from conftest import seed_ladder
 from src.db.migrations import migrate
-from src.planning.constants import dated_goals
+from src import goals as goals_store
 from src.planning.overview import overview
 from src.planning.progression import MET_FRACTION, TIERS, classify_week
 from src.planning.roller import FREEZE_DAYS, store_horizon
@@ -133,7 +133,7 @@ def test_opening_the_screen_records_no_decision(db):
 
 def test_goals_count_down_from_today_and_are_in_date_order(db):
     out = overview(db, TODAY)
-    assert [g["description"] for g in out["goals"]] == [g[0] for g in dated_goals()]
+    assert [g["description"] for g in out["goals"]] == [g[0] for g in goals_store.dated(db)]
     for g in out["goals"]:
         assert g["days"] == (date.fromisoformat(g["date"]) - TODAY).days
     assert [g["date"] for g in out["goals"]] == sorted(g["date"] for g in out["goals"])

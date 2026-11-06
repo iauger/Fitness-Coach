@@ -62,6 +62,13 @@
   .obs { display:flex; flex-wrap:wrap; gap:8px 24px; color:var(--sub); font-size:13px; margin-bottom:12px; }
   .obs b { color:var(--text); font-weight:600; }
   a.btnlink { text-decoration:none; }
+  .goalrow { display:grid; grid-template-columns:minmax(0,1fr) 150px 170px 36px; gap:8px; margin-bottom:8px; align-items:center; }
+  .goalrow button.x { padding:6px 0; font-size:18px; line-height:1; }
+  .inline-actions { display:flex; gap:8px; margin-top:4px; }
+  @media (max-width:620px) {
+    .goalrow { grid-template-columns:minmax(0,1fr) minmax(0,1fr) 36px; }
+    .goalrow input[type=text] { grid-column:1 / -1; }
+  }
   .act { margin-top:8px; }
   .act .inline { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
   .act .inline input { width:auto; min-width:0; flex:1 1 140px; max-width:220px; }
@@ -289,10 +296,53 @@ async function setupView() {
     h("a", {href: "#ladder", class: "btnlink"}, h("button", {}, "Review the ladder")));
 }
 
+// ---- goals ------------------------------------------------------------------------------------
+// Goals live in the database, not the config file, because the coach edits them too. They save on
+// their own button: they are not part of the settings form.
+const PRIORITY_LABEL = {primary: "Primary", secondary: "Secondary", opt_in: "Opt-in"};
+
+function goalsCard(initial) {
+  let rows = initial.goals.map(g => ({id: g.id, description: g.description, date: g.date || "", priority: g.priority}));
+  const list = h("div", {});
+  const status = h("div", {});
+  const draw = () => list.replaceChildren(...rows.map((g, i) => {
+    const text = h("input", {type: "text", value: g.description, placeholder: "What are you working toward?", "aria-label": "Goal " + (i + 1)});
+    text.addEventListener("input", () => { g.description = text.value; });
+    const date = h("input", {type: "date", value: g.date, "aria-label": "Date for goal " + (i + 1)});
+    date.addEventListener("input", () => { g.date = date.value; });
+    const prio = h("select", {"aria-label": "Priority for goal " + (i + 1)},
+      initial.priorities.map(p => h("option", {value: p, selected: g.priority === p}, PRIORITY_LABEL[p] || p)));
+    prio.addEventListener("change", () => { g.priority = prio.value; });
+    const del = h("button", {type: "button", class: "x", "aria-label": "Remove goal " + (i + 1), title: "Remove"}, "×");
+    del.addEventListener("click", () => { rows.splice(i, 1); draw(); });
+    return h("div", {class: "goalrow"}, text, date, prio, del);
+  }));
+  draw();
+  const add = h("button", {type: "button"}, "Add a goal");
+  add.addEventListener("click", () => { rows.push({id: null, description: "", date: "", priority: "secondary"}); draw(); });
+  const save = h("button", {class: "primary"}, "Save goals");
+  save.addEventListener("click", async () => {
+    save.disabled = true;
+    try {
+      const out = await api("PUT", "/api/goals", {goals: rows.filter(g => g.description.trim() || g.id !== null)
+        .map(g => ({id: g.id, description: g.description, date: g.date || null, priority: g.priority}))});
+      rows = out.goals.map(g => ({id: g.id, description: g.description, date: g.date || "", priority: g.priority}));
+      draw();
+      status.replaceChildren(h("div", {class: "msg good"}, "Goals saved. The coach sees the same list."));
+    } catch (e) {
+      status.replaceChildren(h("div", {class: "msg bad", role: "alert"}, e.message));
+    } finally { save.disabled = false; }
+  });
+  return h("div", {class: "card"}, h("h3", {}, "Goals"),
+    h("p", {class: "hint"}, "Primary goals shape the season. Opt-in goals are events you may do but the plan does not taper for. The coach can add and change these in conversation too, so this is the same list."),
+    list, h("div", {class: "inline-actions"}, add, save), status);
+}
+
 // ---- settings ---------------------------------------------------------------------------------
 async function settingsView() {
   main.replaceChildren(h("p", {class: "lede"}, "Loading…"));
   const {values: v} = await api("GET", "/api/settings");
+  const goalsData = await api("GET", "/api/goals");
   const limits = v["plan.day_max_ride_min"] || {};
   const open = v["plan.available_days"] || DAYS;
 
@@ -381,6 +431,7 @@ async function settingsView() {
       num("plan.max_ride_min", "Longest any single ride may be, in minutes", "blank for no limit", 30),
       h("label", {class: "f"}, h("span", {}, "Long ride day"), longDay),
       num("plan.strength_days", "Lifting days a week", "never trimmed by a tier", 0)),
+    goalsCard(goalsData),
     h("div", {class: "card"}, h("h3", {}, "intervals.icu calendar"),
       h("p", {class: "hint"}, "Off by default. When on, each sync writes your next few weeks to your real intervals.icu calendar, and from there to Zwift and Garmin. A second copy of this project pointed at the same account will overwrite the first one's events."),
       h("div", {class: "toggle"}, push, h("label", {for: "push"}, "Push the plan to my intervals.icu calendar"))),

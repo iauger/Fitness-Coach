@@ -360,32 +360,37 @@ def calculate_ramp_target(target_ctl: float, target_date: str) -> dict:
 
 
 def update_goal(action: str, description: str = None, target_date: str = None,
-                priority: str = "secondary", goal_id: int = None) -> dict:
-    now = NOW()
-    with write_connection() as conn:
-        if action == "add":
-            conn.execute("""
-                INSERT INTO goals (description, target_date, priority, status, created_at, updated_at)
-                VALUES (?, ?, ?, 'active', ?, ?)
-            """, (description, target_date, priority, now, now))
-            return {"status": "added", "description": description}
+                priority: str = None, goal_id: int = None) -> dict:
+    """
+    Add, change, achieve or drop a goal. The rules live in `src/goals.py`, shared with the
+    app's goals screen, so the two cannot disagree about what a goal is.
 
-        elif action == "update" and goal_id:
-            conn.execute("""
-                UPDATE goals SET description=COALESCE(?,description),
-                target_date=COALESCE(?,target_date), priority=COALESCE(?,priority),
-                updated_at=? WHERE id=?
-            """, (description, target_date, priority, now, goal_id))
-            return {"status": "updated", "goal_id": goal_id}
+    `priority` defaults to None, not "secondary": an update only changes what it is given. With
+    a "secondary" default, renaming a goal quietly reset its priority.
+    """
+    from src import goals
 
-        elif action in ("achieve", "drop") and goal_id:
-            # Spelled out rather than `action + "d"`, which produced "dropd" and put a typo
-            # in the status column for anything later filtering on it.
-            status = {"achieve": "achieved", "drop": "dropped"}[action]
-            conn.execute("""
-                UPDATE goals SET status=?, updated_at=? WHERE id=?
-            """, (status, now, goal_id))
-            return {"status": status, "goal_id": goal_id}
+    try:
+        with write_connection() as conn:
+            if action == "add":
+                goals.add(conn, description, target_date, priority or "secondary")
+                return {"status": "added", "description": description}
+
+            elif action == "update" and goal_id:
+                changes = {k: v for k, v in (("description", description),
+                                              ("date", target_date), ("priority", priority))
+                           if v is not None}
+                goals.update(conn, goal_id, **changes)
+                return {"status": "updated", "goal_id": goal_id}
+
+            elif action in ("achieve", "drop") and goal_id:
+                # Spelled out rather than `action + "d"`, which produced "dropd" and put a typo
+                # in the status column for anything later filtering on it.
+                status = {"achieve": "achieved", "drop": "dropped"}[action]
+                goals.set_status(conn, goal_id, status)
+                return {"status": status, "goal_id": goal_id}
+    except goals.GoalError as exc:
+        return {"status": "error", "error": str(exc)}
 
     return {"status": "no_op"}
 

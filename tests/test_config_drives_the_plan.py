@@ -138,7 +138,7 @@ def test_the_athlete_block_is_the_configured_one(other_config):
     assert who["name"] == "Someone Else"
     assert who["notes"] == "Works nights."
     assert who["history_start"] == "2019"
-    assert who["goals"] == ["A hill climb"]
+    assert "goals" not in who          # goals live in the table now (src/goals.py)
 
 
 def test_the_generators_resolve_the_name_themselves_when_not_given_one(other_config):
@@ -168,8 +168,11 @@ def test_dated_goals_come_back_soonest_first(other_config, tmp_path, monkeypatch
     The report counts down to each one in order. Unsorted, the nearest event can be listed
     last, which is the one line of that block anyone reads first.
     """
+    import sqlite3
+
     import src.config
-    from src.planning.constants import dated_goals
+    from src import goals as goals_store
+    from src.db.migrations import migrate
 
     path = tmp_path / "goals.yaml"
     path.write_text(
@@ -183,4 +186,10 @@ def test_dated_goals_come_back_soonest_first(other_config, tmp_path, monkeypatch
     monkeypatch.setattr(src.config, "CONFIG_PATH", path)
     src.config.reset()
 
-    assert [g[0] for g in dated_goals()] == ["Early", "Middle", "Late"]
+    # An empty goals table is a first run, so the configured goals stand in.
+    db_path = tmp_path / "g.db"
+    migrate(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    assert [g[0] for g in goals_store.dated(conn)] == ["Early", "Middle", "Late"]
+    conn.close()

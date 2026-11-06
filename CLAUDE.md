@@ -87,6 +87,7 @@ behavioural test because both behaviours look plausible in isolation:
 | one definition of `SPORT_GROUPS` | an unrecognised activity type falling to `"other"` in three places independently |
 | no `TIERS[...]` outside the four modules that own it | a reader reporting 3.42h beside a calendar showing 3.5h |
 | no `rotation_for(` outside `blocks.py` — callers use `plan_rotation` | a preview or roller building a week that ignores the athlete's available days |
+| nothing outside `src/goals.py` reads `config().goals` | the plan screen and the coach counting down to different days (they had drifted: the gravel race was in two places with two dates) |
 
 ## Every write route is guarded by method, in one place
 

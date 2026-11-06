@@ -17,6 +17,8 @@ from pydantic import BaseModel
 from src import config as cfg
 from src import config_write, firstrun
 from src import maintenance
+from src import goals as goals_store
+from src.db.schema import read_connection, write_connection
 from src.api import jobs
 from src.clock import today_local
 from src.planning import ladder_ops
@@ -198,3 +200,30 @@ def fetch_history(body: HistoryBody) -> dict:
 @router.get("/history")
 def history_status() -> dict:
     return jobs.HISTORY.snapshot()
+
+
+# ── goals ─────────────────────────────────────────────────────────────────────
+
+class GoalsBody(BaseModel):
+    goals: list[dict[str, Any]]
+
+
+@router.get("/goals")
+def goals_list() -> dict:
+    with read_connection() as conn:
+        return {"goals": goals_store.active(conn), "priorities": list(goals_store.PRIORITIES)}
+
+
+@router.put("/goals")
+def goals_save(body: GoalsBody) -> dict:
+    """
+    Make the live goals equal this list (see `goals.sync`). All or nothing: one bad row and the
+    table is as it was. A goal left out is dropped, not deleted, so the coach still sees it as
+    history.
+    """
+    try:
+        with write_connection() as conn:
+            live = goals_store.sync(conn, body.goals)
+    except goals_store.GoalError as exc:
+        raise HTTPException(422, str(exc))
+    return {"goals": live, "priorities": list(goals_store.PRIORITIES)}

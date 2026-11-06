@@ -14,26 +14,16 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.config import config
+from src import goals as goals_store
 from src.db.schema import get_connection
 
 def goals_from_config() -> list[dict]:
     """
-    The configured goals, in the shape the `goals` table wants.
-
-    This was a hardcoded list of five of the athlete's own targets. The table is still the
-    source of truth once seeded — it is what an in-conversation edit writes to and what
-    `_active_goals` reads — so this only ever fills an empty one.
+    The configured goals, in the shape the `goals` table wants. They only ever fill an empty
+    table: once seeded, the table is the source of truth (`src/goals.py`).
     """
-    return [
-        {"description": g.description,
-         "target_date": g.date.isoformat() if g.date else None,
-         # The table predates `opt_in` and stores a two-valued priority. An opt-in goal is one
-         # the rotation does not taper for, which is a planning distinction rather than an
-         # importance one, so it lands as secondary here.
-         "priority": "secondary" if g.priority == "opt_in" else g.priority}
-        for g in config().goals
-    ]
+    return [{"description": g["description"], "target_date": g["date"], "priority": g["priority"]}
+            for g in goals_store.from_config()]
 
 
 def seed(reset: bool = False) -> None:

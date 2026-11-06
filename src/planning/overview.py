@@ -13,8 +13,9 @@ from datetime import date, timedelta
 
 from src.analysis.activities import week_volume
 from src.analysis.dates import monday_of
+from src import goals as goals_store
 from src.planning import plans, tiers_store
-from src.planning.constants import dated_goals, plan_name
+from src.planning.constants import plan_name
 from src.planning.outline import from_state as plan_outline
 from src.planning.progression import MET_FRACTION, PARTIAL_FRACTION, classify_week
 from src.planning.progression_store import current_state
@@ -96,5 +97,5 @@ def overview(conn, today: date) -> dict:
         "frozen_before": (today + timedelta(days=FREEZE_DAYS)).isoformat(),
         "outline": outline,
         "goals": [{"description": d, "date": when.isoformat(), "priority": p,
-                   "days": (when - today).days} for d, when, p in dated_goals()],
+                   "days": (when - today).days} for d, when, p in goals_store.dated(conn)],
     }

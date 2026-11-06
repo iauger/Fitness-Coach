@@ -8,7 +8,8 @@ from .fitness import current_fitness, ctl_trend, peak_ctl, ctl_history
 from .activities import recent_activities, sport_distribution, weekly_load_by_sport, yearly_volume
 from src.config import config
 from src.planning import outgrown as outgrown_check, plans, tiers_store
-from src.planning.constants import dated_goals, plan_name
+from src import goals as goals_store
+from src.planning.constants import plan_name
 from src.planning.outline import from_state as plan_outline
 from src.planning.progression import TIERS
 from src.planning.progression_store import current_state
@@ -129,16 +130,6 @@ def _recent_subjective_feel(days: int = 14) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def _active_goals() -> list[dict]:
-    """Goals from the goals table (falls back to profile defaults if empty)."""
-    with read_connection() as conn:
-        rows = conn.execute("""
-            SELECT description, target_date, priority FROM goals
-            WHERE status = 'active' ORDER BY priority, target_date
-        """).fetchall()
-    return [dict(r) for r in rows]
-
-
 def athlete_profile() -> dict:
     """
     Who the athlete is, from configuration — the block the coach prompt opens with.
@@ -147,9 +138,8 @@ def athlete_profile() -> dict:
     small children in it. None of that is derivable from the data, which is why it was written
     down; all of it is personal, which is why it now comes from a file that is not committed.
 
-    `goals` here is the configured list as text. `build_coaching_context` prefers the `goals`
-    table when it has rows, because that is the one an in-conversation edit writes to, and
-    falls back to this.
+    Goals are not here: they live in the `goals` table (src/goals.py), which is the one an edit
+    from the app or from a conversation writes to.
     """
     from src.planning.constants import available_days, long_ride_day
 
@@ -161,7 +151,6 @@ def athlete_profile() -> dict:
         "history_start": str(a.history_start) if a.history_start else None,
         "primary_sport": a.primary_sport,
         "current_tools": list(a.tools),
-        "goals": [g.description for g in config().goals],
         "equipment": a.equipment,
         "notes": a.notes,
         # Only when configured. Absent means every day, and a coach told "can train any day"
@@ -240,25 +229,22 @@ def build_coaching_context(
     plan_adherence = compliance_summary(weeks=8)
     recent_planned = recent_planned_workouts(days=14)
 
-    # Weeks until each dated goal, soonest first, from the configuration file. This used to
+    # Weeks until each dated goal, soonest first, from the goals table. This used to
     # name two specific events in source — a CX date and a gravel date — and count down to
     # them. Which events those are is the athlete's business, and an `opt_in` goal is one the
     # rotation deliberately does not taper for: the old plan peaked for the secondary goal and
     # tapered four months before the primary one, which is how a secondary goal ended up
     # shaping a whole season. Saying the priority beside the count is what stops that.
     today_d = today_local()
+    with read_connection() as conn:
+        live_goals = goals_store.active(conn)
+        dated_goals = goals_store.dated(conn)
     goal_timeline = [
         {"description": desc, "date": when.isoformat(), "priority": priority,
          "weeks_away": (when - today_d).days // 7}
-        for desc, when, priority in dated_goals()
+        for desc, when, priority in dated_goals
     ]
-
-    db_goals = _active_goals()
-    goals_list = (
-        [g["description"] for g in db_goals]
-        if db_goals
-        else athlete_profile()["goals"]
-    )
+    goals_list = [g["description"] for g in live_goals]
 
     # Manually-maintained stats (src/athlete/profile.py) — source of truth over
     # intervals.icu's icu_ftp, which has no user-facing edit path and lags real changes.

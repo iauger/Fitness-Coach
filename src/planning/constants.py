@@ -80,18 +80,6 @@ def goal_date() -> str | None:
     return d.isoformat() if d else None
 
 
-def dated_goals() -> list[tuple[str, date, str]]:
-    """
-    Configured goals that have a date, soonest first, as `(description, date, priority)`.
-
-    Replaces a hardcoded `GRAVEL_DATE`. The report used to name two events it had been told
-    about in source; it now counts down to whatever the athlete listed, which is the only
-    version of that line that means anything to a second user.
-    """
-    goals = [(g.description, g.date, g.priority) for g in config().goals if g.date]
-    return sorted(goals, key=lambda g: g[1])
-
-
 def available_days() -> tuple[int, ...] | None:
     """
     The weekdays training can happen on, 0 (Monday) to 6 (Sunday), or None for every day.

@@ -29,6 +29,8 @@ profile:
   weight_lbs:
   ftp:
 
+# A first-run seed only. Once the app has them, the goals live in the database (Settings, or tell
+# the coach), because the coach edits them too. Editing this list later changes nothing.
 goals:
   - description: Cyclocross racing fall 2027
     date: 2027-10-01

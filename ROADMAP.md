@@ -115,7 +115,10 @@ read-only call, `GET /api/plan/overview`, built in `src/planning/overview.py`. T
 does the steps that were commands: database, history (a background job with progress,
 `src/history_fetch.py`, which takes the maintenance lock), FTP (range-checked, a dated entry) and
 building the plan (never pushes). Walked end to end on a fresh clone in a browser. The API key stays
-in `.env` on purpose. Still to build: goals editing, the calendar as the home.
+in `.env` on purpose. Goals are edited on the Settings screen and live in the `goals` table
+(`src/goals.py`), the same rows the coach reads and writes; the config's `goals:` is a first-run
+seed. That removed a drift where the plan screen and the coach counted down to different dates.
+Still to build: the calendar as the home.
 
 **Ride limits are built** (`max_ride_min`, `day_max_ride_min`), as the second half of what the UI's
 setup wizard has to ask. The decision that matters is *derive inside, never clamp*: a rung is
