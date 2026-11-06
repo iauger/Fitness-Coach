@@ -118,7 +118,16 @@ building the plan (never pushes). Walked end to end on a fresh clone in a browse
 in `.env` on purpose. Goals are edited on the Settings screen and live in the `goals` table
 (`src/goals.py`), the same rows the coach reads and writes; the config's `goals:` is a first-run
 seed. That removed a drift where the plan screen and the coach counted down to different dates.
-Still to build: the calendar as the home.
+The *Coach* screen (`/app#coach`) streams the conversation over the existing SSE route: past
+conversations resume, tool use is shown, and a tool that *changes* something (goals, life events,
+how you feel) is marked with what it did so a change made in chat is never invisible. Everything
+the model writes is rendered as text nodes, never HTML. `coach.enabled` and `coach.model` are now
+actually read (`src/coach/settings.py`): they were declared and used by nothing. Asking it why the
+plan says what it does found the coach telling the athlete that promotion needs "three times in a
+row"; the gate needs one met week, so the snapshot now states the rule exactly from the gate's own
+numbers (`gate_thresholds`). Still to build: the weekly check-in as a button (it has its own
+prompt mode and writes a weekly summary), ending a conversation with a saved summary as the CLI
+does, and suggestions the coach makes as buttons (raise the limit, add a day) instead of text.
 
 **Ride limits are built** (`max_ride_min`, `day_max_ride_min`), as the second half of what the UI's
 setup wizard has to ask. The decision that matters is *derive inside, never clamp*: a rung is

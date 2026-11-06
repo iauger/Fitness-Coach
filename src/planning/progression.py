@@ -23,6 +23,7 @@ Two deliberate exclusions:
   sensitivity and the wrong specificity for this failure mode.
 """
 
+import math
 from dataclasses import dataclass
 
 # Fractions of the week's target that define each outcome. The 0.90 band is one short session's
@@ -54,6 +55,20 @@ ADVANCE_MET_WEEKS = 1
 STRENGTH_GATED_TIER = 3
 STRENGTH_GATED_WEEKS = 3
 STRENGTH_WINDOW = 4
+
+
+def gate_thresholds(spec) -> dict:
+    """
+    What a week has to reach to count, in minutes and rides, for one rung.
+
+    The one place these numbers are worked out: the plan screen shows them to the athlete and
+    the coach is told them, and each used to be free to word the rule its own way. The coach,
+    given only "the tier moves when a completed week meets what was asked", told the athlete
+    they would need to hit it three times in a row; the gate needs one week.
+    """
+    return {"met_min": math.ceil(MET_FRACTION * spec.target_min),
+            "partial_min": math.ceil(PARTIAL_FRACTION * spec.target_min),
+            "rides": spec.rides}
 
 
 @dataclass(frozen=True)

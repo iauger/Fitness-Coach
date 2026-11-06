@@ -8,7 +8,6 @@ and the coaching report use (the stored ladder, `classify_week`, `plan_outline`)
 cannot say 3.5 hours while the calendar says 3.25.
 """
 
-import math
 from datetime import date, timedelta
 
 from src.analysis.activities import week_volume
@@ -17,7 +16,7 @@ from src import goals as goals_store
 from src.planning import plans, tiers_store
 from src.planning.constants import plan_name
 from src.planning.outline import from_state as plan_outline
-from src.planning.progression import MET_FRACTION, PARTIAL_FRACTION, classify_week
+from src.planning.progression import classify_week, gate_thresholds
 from src.planning.progression_store import current_state
 from src.planning.roller import FREEZE_DAYS
 
@@ -80,11 +79,7 @@ def overview(conn, today: date) -> dict:
         "reason": state["reason"],
         "seeded_from": state["seeded_from"],
         "decided_weeks": state["decided_weeks"],
-        "gate": {
-            "met_min": math.ceil(MET_FRACTION * spec.target_min),
-            "partial_min": math.ceil(PARTIAL_FRACTION * spec.target_min),
-            "rides": spec.rides,
-        },
+        "gate": gate_thresholds(spec),
         "this_week": {
             "week_start": monday.isoformat(),
             "ride_min": round(volume["ride_min"]),

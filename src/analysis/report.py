@@ -11,7 +11,10 @@ from src.planning import outgrown as outgrown_check, plans, tiers_store
 from src import goals as goals_store
 from src.planning.constants import plan_name
 from src.planning.outline import from_state as plan_outline
-from src.planning.progression import TIERS
+from src.planning.progression import (
+    ADVANCE_MET_WEEKS, STRENGTH_GATED_TIER, STRENGTH_GATED_WEEKS, STRENGTH_WINDOW, TIERS,
+    gate_thresholds,
+)
 from src.planning.progression_store import current_state
 from .wellness import hrv_summary, sleep_summary, rhr_trend, recovery_flags
 from .compliance import compliance_summary, recent_planned_workouts
@@ -191,6 +194,7 @@ def _rolling_plan(today: date | None = None) -> dict | None:
             "outgrown": outgrown,
             "week_type": state["week_type"],
             "reason": state["reason"],
+            "gate": gate_thresholds((ladder or TIERS)[state["tier"]]),
             "decided_through": state["decided_through"],
             "upcoming": upcoming,
             "outline": plan_outline(state, today, tiers=ladder),
@@ -427,6 +431,17 @@ def coaching_context_text(ctx: dict | None = None) -> str:
         lines.append("  Volume is earned, not scheduled: the tier moves only when a completed"
                      " week meets what was asked,")
         lines.append("  so there is no such thing as being behind schedule on this plan.")
+        gate = plan.get("gate")
+        if gate:
+            lines.append(
+                f"  The rule, exactly: a week is MET at {gate['met_min']}+ ride minutes and "
+                f"{gate['rides']}+ ride days (90% of the ask); {ADVANCE_MET_WEEKS} met week "
+                f"moves the athlete up one rung. {gate['partial_min']}-{gate['met_min'] - 1} "
+                f"minutes is PARTIAL: the tier holds. Under {gate['partial_min']} is MISSED: one "
+                f"missed week holds the tier and eases the next week, and each further week "
+                f"in a row steps down one rung. Entering tier {STRENGTH_GATED_TIER} also needs "
+                f"strength in {STRENGTH_GATED_WEEKS} of the last {STRENGTH_WINDOW} weeks. Do not "
+                f"describe it any other way (it is not a streak of several weeks).")
         if plan["upcoming"]:
             lines.append("  Next sessions:")
             for s_ in plan["upcoming"][:7]:

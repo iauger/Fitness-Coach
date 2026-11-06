@@ -24,7 +24,8 @@ from src.analysis.report import coaching_context_text
 from src.api.cache import freshness_key
 from src.coach import chat_store
 from src.coach.prompt import build_system_prompt
-from src.coach.session import DEFAULT_MODEL, MAX_TOKENS, _client
+from src.coach import settings as coach_settings
+from src.coach.session import MAX_TOKENS, _client
 from src.coach.stream import Event, stream_turn
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -81,7 +82,7 @@ def _run_and_enqueue(session_id: str, question: str, queue: Queue) -> None:
         history.append({"role": "user", "content": question})
         system = _system_for(session_id)
 
-        for event in stream_turn(_client(), DEFAULT_MODEL, system, history, MAX_TOKENS):
+        for event in stream_turn(_client(), coach_settings.model(), system, history, MAX_TOKENS):
             queue.put(event)
 
         # Persisted after the turn completes, so a failed turn does not leave a half-written
@@ -97,9 +98,14 @@ def _run_and_enqueue(session_id: str, question: str, queue: Queue) -> None:
 @router.post("/ask")
 async def ask(req: AskRequest) -> StreamingResponse:
     """Stream one turn as SSE. Creates a session when `session_id` is omitted."""
+    # Refused before a session is created or a stream opened, so a switched-off coach or a missing
+    # key is a plain error the page can show, not a half-open stream that ends in a stack trace.
+    refused = coach_settings.refusal()
+    if refused:
+        raise HTTPException(*refused)
     session_id = req.session_id
     if session_id is None:
-        session_id = chat_store.new_session(DEFAULT_MODEL)
+        session_id = chat_store.new_session(coach_settings.model())
     elif not chat_store.session_exists(session_id):
         raise HTTPException(404, f"unknown session {session_id}")
 
@@ -128,6 +134,12 @@ async def ask(req: AskRequest) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.get("/status")
+def status() -> dict:
+    """Whether the coach can run, and on what: the page reads this before offering a chat."""
+    return coach_settings.status()
 
 
 @router.get("/sessions")

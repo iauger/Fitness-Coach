@@ -69,6 +69,23 @@
     .goalrow { grid-template-columns:minmax(0,1fr) minmax(0,1fr) 36px; }
     .goalrow input[type=text] { grid-column:1 / -1; }
   }
+  .coachbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:12px; }
+  .coachbar select { width:auto; min-width:0; flex:1 1 160px; max-width:360px; }
+  .chatlog { display:flex; flex-direction:column; gap:10px; padding-bottom:12px; min-height:30vh; }
+  .bubble { max-width:92%; padding:10px 14px; border-radius:12px; font-size:15px; overflow-wrap:anywhere; }
+  .bubble.you { align-self:flex-end; background:rgba(96,165,250,.18); border:1px solid var(--accent); white-space:pre-wrap; }
+  .bubble.coach { align-self:flex-start; background:var(--surface); border:1px solid var(--border); }
+  .md p { margin:0 0 8px; } .md p:last-child, .md ul:last-child, .md ol:last-child { margin-bottom:0; }
+  .md ul, .md ol { margin:0 0 8px; padding-left:22px; } .md li { margin:2px 0; }
+  .md h5 { margin:10px 0 4px; font-size:14px; } .md h5:first-child { margin-top:0; }
+  code.ic { background:#0b1220; padding:1px 5px; border-radius:4px; font:13px ui-monospace, monospace; }
+  .tool { align-self:flex-start; font-size:12px; color:var(--sub); border:1px dashed var(--border); border-radius:10px; padding:3px 10px; }
+  .tool small { display:block; color:var(--text); margin-top:2px; }
+  .tool.write { border-color:var(--ok); color:var(--ok); }
+  .starters { display:flex; flex-direction:column; gap:8px; align-items:flex-start; }
+  .starters button { text-align:left; }
+  .composer { align-items:flex-end; }
+  .composer textarea { flex:1; resize:none; width:auto; }
   .act { margin-top:8px; }
   .act .inline { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
   .act .inline input { width:auto; min-width:0; flex:1 1 140px; max-width:220px; }
@@ -140,6 +157,7 @@
   <h1>Fitness Coach</h1>
   <nav aria-label="Main">
     <a href="#plan" data-view="plan">Plan</a>
+    <a href="#coach" data-view="coach">Coach</a>
     <a href="#setup" data-view="setup">Setup</a>
     <a href="#settings" data-view="settings">Settings</a>
     <a href="#ladder" data-view="ladder">Ladder</a>
@@ -540,6 +558,177 @@ async function planView() {
     hero, week, horizon, outline, recent, goals);
 }
 
+// ---- coach ------------------------------------------------------------------------------------
+// Chat with the coach. The server streams Server-Sent Events over a POST, so this reads the body
+// with fetch (EventSource cannot POST). Everything the model writes reaches the page as text
+// nodes through the small renderer below; nothing is ever assigned as HTML.
+const TOOL_LABEL = {
+  query_history: "Looked at your history",
+  calculate_ramp_target: "Worked out a ramp target",
+  log_life_event: "Saved a life event",
+  log_subjective_feel: "Saved how you feel",
+  update_goal: "Updated your goals",
+};
+// Tools that change something. They are marked, and what they did is shown, so a change made in
+// conversation is never invisible.
+const WRITES = new Set(["log_life_event", "log_subjective_feel", "update_goal"]);
+const STARTERS = [
+  "How is my week going?",
+  "Why am I on this rung, and what moves me up?",
+  "What should I focus on this week?",
+  "I am feeling run down. What should I change?",
+];
+const SESSION_KEY = "fc.coach.session";
+function remembered() { try { return localStorage.getItem(SESSION_KEY); } catch (e) { return null; } }
+function remember(id) { try { id ? localStorage.setItem(SESSION_KEY, id) : localStorage.removeItem(SESSION_KEY); } catch (e) {} }
+
+// Inline: **bold**, *italic*, `code`. Block: # headings, - / * / 1. lists, blank-line paragraphs.
+function inline(text) {
+  const out = []; const re = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*\s][^*]*\*)/g; let last = 0, m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const t = m[0];
+    out.push(t.startsWith("**") ? h("strong", {}, t.slice(2, -2)) : t.startsWith("`") ? h("code", {class: "ic"}, t.slice(1, -1)) : h("em", {}, t.slice(1, -1)));
+    last = m.index + t.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+function markdown(text) {
+  const box = h("div", {class: "md"}); let list = null, para = [];
+  const flush = () => { if (para.length) { box.append(h("p", {}, inline(para.join(" ")))); para = []; } };
+  for (const raw of text.split("\n")) {
+    const line = raw.trimEnd(); let m;
+    if (!line.trim()) { flush(); list = null; continue; }
+    if ((m = line.match(/^#{1,4}\s+(.*)$/))) { flush(); list = null; box.append(h("h5", {}, inline(m[1]))); continue; }
+    if ((m = line.match(/^\s*([-*]|\d+[.)])\s+(.*)$/))) {
+      flush(); const ordered = /\d/.test(m[1]);
+      if (!list || list.ordered !== ordered) { list = {el: h(ordered ? "ol" : "ul", {}), ordered}; box.append(list.el); }
+      list.el.append(h("li", {}, inline(m[2]))); continue;
+    }
+    list = null; para.push(line.trim());
+  }
+  flush(); return box;
+}
+
+async function streamAsk(question, sessionId, on) {
+  const r = await fetch("/api/chat/ask", {method: "POST",
+    headers: {"Content-Type": "application/json", "X-Fitness-Token": await getToken()},
+    body: JSON.stringify({question, session_id: sessionId})});
+  if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(typeof d.detail === "string" ? d.detail : "request failed (" + r.status + ")"); }
+  const reader = r.body.getReader(), dec = new TextDecoder(); let buf = "";
+  for (;;) {
+    const {done, value} = await reader.read(); if (done) break;
+    buf += dec.decode(value, {stream: true});
+    const frames = buf.split("\n\n"); buf = frames.pop();
+    for (const f of frames) if (f.startsWith("data: ")) { try { on(JSON.parse(f.slice(6))); } catch (e) {} }
+  }
+}
+
+async function coachView() {
+  main.replaceChildren(h("p", {class: "lede"}, "Loading…"));
+  const st = await api("GET", "/api/chat/status");
+  const head = [h("h2", {}, "Coach"), h("p", {class: "lede"}, st.available
+    ? "Ask about your week, your plan, or how you are feeling. It reads your training data and can record things you tell it."
+    : "The coach is not available right now.")];
+  if (!st.available) {
+    main.replaceChildren(...head, h("div", {class: "msg note"}, !st.enabled
+      ? "It is switched off (coach.enabled is false in your config)."
+      : "It needs an Anthropic API key: add ANTHROPIC_API_KEY to your .env file and restart the server. The key stays out of this page on purpose."));
+    return;
+  }
+
+  let sessionId = remembered(), busy = false;
+  const log = h("div", {class: "chatlog", "aria-live": "polite"});
+  const box = h("textarea", {rows: 2, placeholder: "Ask the coach…", "aria-label": "Message to the coach"});
+  const send = h("button", {class: "primary"}, "Send");
+  const picker = h("select", {"aria-label": "Past conversations"});
+  const fresh = h("button", {}, "New conversation");
+
+  const bubble = (who, ...kids) => h("div", {class: "bubble " + who}, ...kids);
+  const toBottom = () => { const el = document.scrollingElement; el.scrollTop = el.scrollHeight; };
+  const nearBottom = () => { const el = document.scrollingElement; return el.scrollHeight - el.scrollTop - innerHeight < 160; };
+  const empty = () => log.replaceChildren(h("div", {class: "starters"},
+    h("p", {class: "hint"}, "Try one of these, or ask anything:"),
+    STARTERS.map(q => { const b = h("button", {type: "button"}, q); b.addEventListener("click", () => ask(q)); return b; })));
+
+  function chip(name, input) {
+    const write = WRITES.has(name);
+    const el = h("div", {class: "tool" + (write ? " write" : "")}, h("span", {}, (TOOL_LABEL[name] || name) + "…"));
+    el.dataset.name = name; return el;
+  }
+  function finishChip(el, result) {
+    const name = el.dataset.name, write = WRITES.has(name);
+    const span = el.querySelector("span"); span.textContent = TOOL_LABEL[name] || name;
+    if (write && result) el.append(h("small", {}, String(result).slice(0, 200)));
+  }
+
+  async function ask(question) {
+    if (busy || !question.trim()) return;
+    busy = true; send.disabled = true; box.value = "";
+    if (log.querySelector(".starters")) log.replaceChildren();
+    log.append(bubble("you", question));
+    let text = "", answer = null, chips = [], current = null;
+    const paint = () => { if (!answer) { answer = bubble("coach"); log.append(answer); } answer.replaceChildren(markdown(text)); };
+    try {
+      await streamAsk(question, sessionId, ev => {
+        const stick = nearBottom();
+        if (ev.type === "session") { sessionId = ev.session_id; remember(sessionId); }
+        else if (ev.type === "text") { text += ev.text; paint(); }
+        else if (ev.type === "tool_start") { current = chip(ev.name, ev.input); chips.push(current); log.append(current); answer = null; text = ""; }
+        else if (ev.type === "tool_end") { const c = chips.find(x => x.dataset.name === ev.name && !x.dataset.done) || current; if (c) { c.dataset.done = "1"; finishChip(c, ev.result); } }
+        else if (ev.type === "error") { log.append(h("div", {class: "msg bad", role: "alert"}, ev.message)); }
+        if (stick) toBottom();
+      });
+      if (!text && !answer && !chips.length) log.append(h("div", {class: "msg note"}, "The coach sent no reply."));
+    } catch (e) {
+      log.append(h("div", {class: "msg bad", role: "alert"}, e.message));
+    } finally { busy = false; send.disabled = false; box.focus(); loadPast(); }
+  }
+
+  function showHistory(messages) {
+    log.replaceChildren();
+    for (const m of messages) {
+      if (m.role === "user" && typeof m.content === "string") log.append(bubble("you", m.content));
+      else if (Array.isArray(m.content)) for (const b of m.content) {
+        if (m.role === "assistant" && b.type === "text" && b.text) log.append(bubble("coach", markdown(b.text)));
+        else if (b.type === "tool_use") { const c = chip(b.name, b.input); finishChip(c, null); log.append(c); }
+        else if (m.role === "assistant" && typeof b === "string") log.append(bubble("coach", markdown(b)));
+      }
+      else if (m.role === "assistant" && typeof m.content === "string") log.append(bubble("coach", markdown(m.content)));
+    }
+    if (!log.children.length) empty();
+  }
+
+  async function open(id) {
+    sessionId = id || null; remember(sessionId);
+    if (!id) { empty(); picker.value = ""; return; }
+    try { showHistory((await api("GET", "/api/chat/sessions/" + id)).messages); toBottom(); }
+    catch (e) { sessionId = null; remember(null); empty(); }
+  }
+
+  async function loadPast() {
+    try {
+      const list = await api("GET", "/api/chat/sessions?limit=25");
+      picker.replaceChildren(h("option", {value: ""}, list.length ? "Past conversations…" : "No past conversations"),
+        ...list.map(s => h("option", {value: s.session_id, selected: s.session_id === sessionId},
+          (s.title || "Untitled") + " · " + (s.updated_at || "").slice(0, 10))));
+      picker.disabled = !list.length;
+    } catch (e) { /* the list is a convenience; the chat works without it */ }
+  }
+
+  send.addEventListener("click", () => ask(box.value));
+  box.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(box.value); } });
+  fresh.addEventListener("click", () => { if (!busy) open(null); });
+  picker.addEventListener("change", () => { if (!busy && picker.value) open(picker.value); });
+
+  main.replaceChildren(...head,
+    h("div", {class: "coachbar"}, picker, fresh, h("span", {class: "detail"}, st.model)),
+    log, h("div", {class: "bar composer"}, box, send));
+  await loadPast();
+  if (sessionId) await open(sessionId); else empty();
+}
+
 // ---- ladder -----------------------------------------------------------------------------------
 // The tier ladder decides every session for months, so this screen shows what a re-derive would
 // change, rung by rung and field by field, before anything is kept.
@@ -625,7 +814,7 @@ async function ladderView() {
 }
 
 // ---- routing ----------------------------------------------------------------------------------
-const views = {plan: planView, setup: setupView, settings: settingsView, ladder: ladderView};
+const views = {plan: planView, coach: coachView, setup: setupView, settings: settingsView, ladder: ladderView};
 async function route() {
   const name = views[(location.hash || "#plan").slice(1)] ? (location.hash || "#plan").slice(1) : "plan";
   const view = views[name];

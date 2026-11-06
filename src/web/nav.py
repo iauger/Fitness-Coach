@@ -13,6 +13,7 @@ import re
 # (label, href, key). `key` is what a page passes as `active`.
 ITEMS = (
     ("Plan", "/app#plan", "plan"),
+    ("Coach", "/app#coach", "coach"),
     ("Setup", "/app#setup", "setup"),
     ("Settings", "/app#settings", "settings"),
     ("Ladder", "/app#ladder", "ladder"),

@@ -287,6 +287,27 @@ def _calendar(conn) -> Check:
     return Check("calendar", True, "pushing the horizon to intervals.icu")
 
 
+def _coach() -> Check:
+    """
+    Non-blocking: everything but the chat works without it, and a key is something a person
+    decides to add. Reads `.env` the way `_env_file` does, without touching the environment.
+    """
+    from dotenv import dotenv_values
+
+    from src.config import config
+
+    if not config().coach.enabled:
+        return Check("coach", True, "switched off (coach.enabled is false)")
+    path = REPO_ROOT / ".env"
+    from_file = dotenv_values(path) if path.exists() else {}
+    key = os.environ.get("ANTHROPIC_API_KEY") or (from_file.get("ANTHROPIC_API_KEY") or "")
+    if not key.strip():
+        return Check("coach", False, "no Anthropic key, so the coach chat is unavailable",
+                     "add ANTHROPIC_API_KEY to .env, then restart the server", blocking=False)
+    model = os.environ.get("COACH_MODEL") or config().coach.model
+    return Check("coach", True, f"ready on {model}")
+
+
 def checks(db_path: Path | None = None) -> list[Check]:
     """
     Every prerequisite, in dependency order, stopping at the first unsatisfied one.
@@ -320,6 +341,7 @@ def checks(db_path: Path | None = None) -> list[Check]:
                 return out
     finally:
         conn.close()
+    out.append(_coach())
     return out
 
 

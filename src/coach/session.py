@@ -1,6 +1,6 @@
 """
 Claude coaching layer — check-in and conversational modes with tool use.
-Model controlled by COACH_MODEL env var (default: claude-haiku-4-5).
+Model: the COACH_MODEL environment variable if set, else coach.model in the config (src/coach/settings.py).
 """
 
 import os
@@ -21,6 +21,7 @@ from src.analysis.weekly import (
 )
 from src.coach.summarize import weekly_narrative
 from src.coach.prompt import build_system_prompt
+from src.coach.settings import model as coach_model
 from src.coach.stream import run_turn
 from src.db.schema import write_connection
 from src.sync import incremental_sync
@@ -28,7 +29,6 @@ from src.clock import today_local_iso, utc_now_iso
 
 load_dotenv()
 
-DEFAULT_MODEL = os.environ.get("COACH_MODEL", "claude-haiku-4-5")
 TRANSCRIPT_DIR = Path(__file__).parent.parent.parent / "data" / "transcripts"
 # Headroom for the 500-700 word check-in target set in prompt.py. The old 1024 ceiling
 # (~750 words) left almost no margin — a longer reasoned answer would have been cut mid-sentence.
@@ -60,7 +60,7 @@ def checkin(feel_context: str = "", verbose: bool = False) -> str:
     ctx = build_coaching_context()
     snapshot = coaching_context_text(ctx)
     system = build_system_prompt(snapshot, mode="checkin")
-    model = DEFAULT_MODEL
+    model = coach_model()
 
     incremental_sync(silent=not verbose)
 
@@ -153,7 +153,7 @@ def cycle_review(on: date | None = None, verbose: bool = False) -> str | None:
         f"{snapshot}\n\n{'=' * 70}\n\n{cycle_context_text(metrics, prev)}",
         mode="cycle_review",
     )
-    model = DEFAULT_MODEL
+    model = coach_model()
 
     if verbose:
         print(f"[coach] model: {model}")
@@ -184,7 +184,7 @@ class CoachSession:
     """
 
     def __init__(self, model: str = None, verbose: bool = False):
-        self.model = model or DEFAULT_MODEL
+        self.model = model or coach_model()
         self.verbose = verbose
         self.client = _client()
         self.session_id = str(uuid.uuid4())[:8]

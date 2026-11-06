@@ -462,19 +462,13 @@ def build_dashboard() -> str:
   <!-- Chat panel -->
   <div class="chat-panel">
     <div class="chat-header">
-      <h2>Coach <span class="coming-soon-badge">coming soon</span></h2>
+      <h2>Coach</h2>
       <p>Weekly check-ins &amp; conversational coaching</p>
     </div>
     <div class="chat-placeholder">
       <div class="icon">&#x1F4AC;</div>
-      <p>The coaching chat interface will live here.<br>
-         Run <code style="font-size:0.75rem; color:#60a5fa">scripts/ask.py</code> in the terminal for now.</p>
-    </div>
-    <div class="chat-input-area">
-      <div class="chat-input-row">
-        <input class="chat-input" type="text" placeholder="Chat interface coming soon..." disabled>
-        <button class="chat-send" disabled>Send</button>
-      </div>
+      <p>The coach has its own screen in the app.<br>
+         <a href="/app#coach" style="color:#60a5fa">Open the coach &rarr;</a></p>
     </div>
   </div>
 
