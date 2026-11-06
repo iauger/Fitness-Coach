@@ -62,15 +62,14 @@ def update(metric: str, value: float, effective_date: str = None, note: str = No
 
 
 if __name__ == "__main__":
-    migrate_db()
-    migrate_db()
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--height-in", type=float, help="Height in inches")
     parser.add_argument("--weight", type=float, help="Weight in lbs")
     parser.add_argument("--ftp", type=float, help="FTP in watts")
     parser.add_argument("--effective-date", help="YYYY-MM-DD (default: today)")
     args = parser.parse_args()
+    # After the parse: `--help` and a bad flag must not create a database as a side effect.
+    migrate_db()
 
     overrides = {
         "height_in": args.height_in,

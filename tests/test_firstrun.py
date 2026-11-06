@@ -360,7 +360,7 @@ def test_bootstrap_migrates_before_it_reads(monkeypatch, tmp_path):
 
 # ── the README is part of the first run ──────────────────────────────────────
 
-def test_every_command_the_readme_tells_you_to_run_exists_and_parses():
+def test_every_command_the_readme_tells_you_to_run_exists_and_parses(tmp_path):
     """
     The documented first run *is* the feature here, so a stale command in it is a bug in the
     same way a stale code path is. This fails on a renamed script, a removed flag, or a
@@ -369,25 +369,36 @@ def test_every_command_the_readme_tells_you_to_run_exists_and_parses():
 
     `--help` rather than execution: it proves the entry point imports, argparse builds, and
     every flag the README names is real, without touching a database or the network.
+
+    Run from a throwaway copy of the project, which is what makes "without touching a database"
+    checkable: `serve.py --help` once generated config/athlete.yaml and `seed_profile.py --help`
+    once created data/fitness.db, on a fresh clone, and both went unnoticed because the real
+    checkout already had both files.
     """
     import re
+    import shutil
     import subprocess
     import sys
     from pathlib import Path
 
-    readme = Path("README.md").read_text(encoding="utf-8")
+    repo = Path(__file__).resolve().parent.parent
+    work = tmp_path / "clone"
+    shutil.copytree(repo, work, ignore=shutil.ignore_patterns(
+        ".git", ".venv", "data", "__pycache__", "tests", ".playwright-mcp", "athlete.yaml*"))
+
+    readme = (work / "README.md").read_text(encoding="utf-8")
     commands = sorted(set(re.findall(r"`(python scripts/[^`]+)`", readme)))
     assert len(commands) >= 6, f"only found {len(commands)} commands; has the README moved?"
 
     problems = []
     for command in commands:
         parts = command.split()
-        script = Path(parts[1])
+        script = work / parts[1]
         if not script.exists():
             problems.append(f"{command}: {script} does not exist")
             continue
         result = subprocess.run([sys.executable, str(script), "--help"],
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, cwd=work)
         if result.returncode != 0:
             problems.append(f"{command}: --help exited {result.returncode}")
             continue
@@ -395,6 +406,8 @@ def test_every_command_the_readme_tells_you_to_run_exists_and_parses():
             if flag not in result.stdout:
                 problems.append(f"{command}: {script.name} has no {flag}")
     assert not problems, "\n  ".join([""] + problems)
+    assert not (work / "data").exists(), "a --help created a database"
+    assert not (work / "config" / "athlete.yaml").exists(), "a --help created a config"
 
 
 def test_the_readme_opens_with_the_status_command():

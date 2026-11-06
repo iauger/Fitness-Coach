@@ -38,14 +38,19 @@ from src.firstrun import ready, report
 
 
 def main() -> None:
-    server = config().server
+    # The defaults come from the config, which is read only after the parse: reading it first
+    # meant `serve.py --help` generated config/athlete.yaml on a fresh clone.
     p = argparse.ArgumentParser()
-    p.add_argument("--host", default=server.host,
-                   help=f"interface to bind (default {server.host}; see the warning above)")
-    p.add_argument("--port", type=int, default=server.port)
+    p.add_argument("--host", default=None,
+                   help="interface to bind (default: server.host in the config, 127.0.0.1; "
+                        "see the warning above)")
+    p.add_argument("--port", type=int, default=None, help="default: server.port in the config")
     p.add_argument("--reload", action="store_true", help="auto-restart on code changes")
     p.add_argument("--open", action="store_true", dest="open_browser")
     args = p.parse_args()
+    server = config().server
+    args.host = args.host or server.host
+    args.port = args.port or server.port
 
     # Cheap and idempotent; means a fresh clone can serve without running a seed script first.
     migrate_db()
