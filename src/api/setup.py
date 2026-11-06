@@ -17,6 +17,8 @@ from pydantic import BaseModel
 from src import config as cfg
 from src import config_write, firstrun
 from src import maintenance
+from src.api import jobs
+from src.clock import today_local
 from src.planning import ladder_ops
 from src.planning.bootstrap import BootstrapError
 
@@ -137,3 +139,62 @@ def regenerate() -> dict:
     """
     result = maintenance.run_cycle(push_enabled=False)
     return {"summary": maintenance.summarise(result), "errors": result.get("errors", [])}
+
+
+# ── first-run steps that used to be commands ─────────────────────────────────
+
+@router.post("/database")
+def set_up_database() -> dict:
+    """`scripts/migrate.py --apply`. Idempotent; creates the file if there is none."""
+    from src.db.schema import migrate_db
+    migrate_db()
+    return _checks()
+
+
+FTP_RANGE = (50, 600)
+
+
+class FtpBody(BaseModel):
+    watts: float
+    effective_date: date | None = None
+
+
+@router.post("/profile/ftp")
+def record_ftp(body: FtpBody) -> dict:
+    """
+    A new FTP is an event on a date, not an edit (see `src/athlete/profile.py`), so this adds a
+    dated entry and leaves the history alone. Every zone in every prescription is a percentage
+    of it, hence the range check: a typo here is a plan of the wrong size.
+    """
+    lo, hi = FTP_RANGE
+    if not lo <= body.watts <= hi:
+        raise HTTPException(422, f"{body.watts:g} W is outside {lo}-{hi} W; check the number")
+    if body.effective_date and body.effective_date > today_local():
+        raise HTTPException(422, "an FTP cannot take effect in the future")
+    from src.athlete.profile import set_metric
+    set_metric("ftp", body.watts, body.effective_date.isoformat() if body.effective_date else None)
+    return {"ftp": body.watts, **_checks()}
+
+
+class HistoryBody(BaseModel):
+    start: date | None = None
+
+
+@router.post("/history")
+def fetch_history(body: HistoryBody) -> dict:
+    """Start the backfill in the background; poll `GET /api/history` for progress."""
+    from src.history_fetch import fetch_all
+    start = body.start or date(2017, 1, 1)
+    end = today_local()
+    if start > end:
+        raise HTTPException(422, "the start date is in the future")
+    try:
+        jobs.HISTORY.start(lambda progress: fetch_all(start, end, progress))
+    except jobs.JobBusy as exc:
+        raise HTTPException(409, str(exc))
+    return jobs.HISTORY.snapshot()
+
+
+@router.get("/history")
+def history_status() -> dict:
+    return jobs.HISTORY.snapshot()

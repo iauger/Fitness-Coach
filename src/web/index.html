@@ -62,6 +62,13 @@
   .obs { display:flex; flex-wrap:wrap; gap:8px 24px; color:var(--sub); font-size:13px; margin-bottom:12px; }
   .obs b { color:var(--text); font-weight:600; }
   a.btnlink { text-decoration:none; }
+  .act { margin-top:8px; }
+  .act .inline { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .act .inline input { width:auto; min-width:0; flex:1 1 140px; max-width:220px; }
+  .act .inline label { display:flex; gap:8px; align-items:center; color:var(--sub); font-size:13px; flex:1 1 200px; }
+  .act .hint { color:var(--sub); font-size:13px; margin:8px 0 0; }
+  pre.joblog { margin:8px 0 0; padding:8px 10px; background:#0b1220; border-radius:6px; font:12px ui-monospace, monospace;
+               color:#d1d5db; overflow-x:auto; max-height:11em; }
   .hero { display:flex; flex-wrap:wrap; gap:8px 24px; align-items:baseline; }
   .hero .big { font-size:28px; font-weight:700; }
   .hero .sub { color:var(--sub); }
@@ -181,6 +188,74 @@ function h(tag, attrs, ...kids) {
 const LADDER_CHECKS = ["tier ladder", "week", "limits"];
 
 // ---- setup ------------------------------------------------------------------------------------
+// The first-run steps that used to be a command to paste. Each does what the command did, through
+// the same code, and then re-runs the checklist. The command stays visible beside it.
+function busyButton(label, onclick, cls) {
+  const b = h("button", {class: cls || "primary"}, label);
+  b.addEventListener("click", async () => {
+    b.disabled = true;
+    try { await onclick(); } finally { b.disabled = false; }
+  });
+  return b;
+}
+
+function rowAction(c) {
+  const out = h("div", {class: "act"});
+  const say = (cls, text) => out.replaceChildren(h("div", {class: "msg " + cls, role: cls === "bad" ? "alert" : null}, text));
+
+  if (c.name === "database") {
+    out.append(busyButton("Set up the database", async () => {
+      try { await api("POST", "/api/database"); await setupView(); } catch (e) { say("bad", e.message); }
+    }));
+  } else if (c.name === "history") {
+    const since = h("input", {type: "date", value: "2017-01-01", "aria-label": "Fetch history from"});
+    const log = h("pre", {class: "joblog", hidden: true});
+    const go = busyButton("Fetch my history", async () => {
+      try {
+        let s = await api("POST", "/api/history", {start: since.value || null});
+        log.hidden = false;
+        while (s.running) {
+          log.textContent = s.log.slice(-8).join("\n") || "Starting…";
+          await new Promise(r => setTimeout(r, 1500));
+          s = await api("GET", "/api/history");
+        }
+        log.textContent = s.log.slice(-8).join("\n");
+        if (s.error) { say("bad", s.error); out.append(log); return; }
+        const r = s.result;
+        say(r.errors ? "note" : "good", "Fetched " + r.activities + " activities and " + r.wellness + " wellness days" +
+            (r.errors ? ", with " + r.errors + " window(s) that failed. Run it again to retry them." : "."));
+        setTimeout(setupView, 1500);
+      } catch (e) { say("bad", e.message); }
+    });
+    out.append(h("div", {class: "inline"}, h("label", {}, "from ", since), go),
+      h("p", {class: "hint"}, "Pulls your riding, sleep and HRV from intervals.icu. Nine years takes a few minutes; you can leave this page open."), log);
+  } else if (c.name === "ftp") {
+    const watts = h("input", {type: "number", min: 50, max: 600, step: 1, placeholder: "watts", "aria-label": "FTP in watts"});
+    out.append(h("div", {class: "inline"}, watts, busyButton("Save FTP", async () => {
+      if (!watts.value) { say("bad", "Enter your FTP in watts."); return; }
+      try { await api("POST", "/api/profile/ftp", {watts: Number(watts.value)}); await setupView(); }
+      catch (e) { say("bad", e.message); }
+    })), h("p", {class: "hint"}, "Recorded as of today. Later changes are new dated entries, so your earlier rides keep the FTP they were scored against."));
+  } else if (c.name === "plan") {
+    out.append(busyButton("Build my plan", async () => {
+      say("note", "Working…");
+      try {
+        const r = await api("POST", "/api/plan/regenerate");
+        say(r.errors.length ? "bad" : "good", r.summary);
+        setTimeout(setupView, 1500);
+      } catch (e) { say("bad", e.message); }
+    }), h("p", {class: "hint"}, "Writes your next three weeks to this app only. Nothing goes to your intervals.icu calendar from here."));
+  } else if (c.name === "config") {
+    out.append(h("a", {href: "#settings", class: "btnlink"}, h("button", {class: "primary"}, "Open settings")));
+  } else if (c.name === "calendar") {
+    out.append(h("a", {href: "#settings", class: "btnlink"}, h("button", {}, "Open settings")),
+      h("p", {class: "hint"}, "The calendar push is off until you turn it on there. Look at your plan first."));
+  } else if (c.name === "secrets") {
+    out.append(h("p", {class: "hint"}, "Your intervals.icu key goes in the .env file, not on this page: a secret typed into a web page is one more place it can leak."));
+  } else { return null; }
+  return out;
+}
+
 async function setupView() {
   main.replaceChildren(h("p", {class: "lede"}, "Checking…"));
   const s = await api("GET", "/api/setup");
@@ -200,7 +275,8 @@ async function setupView() {
           h("div", {class: "detail"}, c.detail),
           !c.ok && c.fix ? h("code", {}, c.fix) : null,
           !c.ok && LADDER_CHECKS.includes(c.name)
-            ? h("a", {href: "#ladder", class: "btnlink"}, h("button", {class: "primary"}, "Review the ladder")) : null));
+            ? h("a", {href: "#ladder", class: "btnlink"}, h("button", {class: "primary"}, "Review the ladder")) : null,
+          !c.ok ? rowAction(c) : null));
     })),
     h("button", {onclick: setupView}, "Check again"),
     " ",

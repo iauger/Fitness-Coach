@@ -72,6 +72,9 @@ def _exclusive():
         LOCK_PATH.unlink(missing_ok=True)
 
 
+exclusive = _exclusive      # the public name, for callers outside this module (the setup jobs)
+
+
 def _holder() -> str:
     try:
         return LOCK_PATH.read_text(encoding="utf-8").strip()
