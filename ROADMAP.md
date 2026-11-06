@@ -104,8 +104,12 @@ long-ride day, lifting days and the calendar push through `PUT /api/settings`, w
 anything outside a pinned whitelist (no server host or port, plan slug or coach model) and returns
 the checklist again so a stale ladder shows on the save that caused it. This is vanilla JS rather
 than the Vite/React/TypeScript above, deliberately for now: two screens do not earn a toolchain,
-and the move costs one file. Still to build: the setup steps that only print a command today
-(FTP, history sync, ladder) as buttons, goals editing, the plan screen, the calendar home.
+and the move costs one file. The *Ladder* screen (`/app#ladder`) re-derives under the current settings and shows what would
+change against the stored ladder, rung by rung and field by field, before "Use this ladder" stores
+it as a new version; a second button rebuilds the stored sessions and never pushes. The derivation
+lives in `src/planning/ladder_ops.py`, shared with `bootstrap_plan.py`. Still to build: the setup
+steps that only print a command today (FTP, history sync) as buttons, goals editing, the plan
+screen, the calendar home.
 
 **Ride limits are built** (`max_ride_min`, `day_max_ride_min`), as the second half of what the UI's
 setup wizard has to ask. The decision that matters is *derive inside, never clamp*: a rung is

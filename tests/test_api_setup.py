@@ -159,3 +159,63 @@ def test_the_editable_set_is_pinned():
         "plan.long_ride_ceiling_min", "plan.max_ride_days", "plan.available_days",
         "plan.long_ride_day", "plan.max_ride_min", "plan.day_max_ride_min",
         "plan.strength_days", "integrations.intervals_icu.push_calendar"}
+
+
+# -- the ladder -------------------------------------------------------------------------------
+
+def test_the_ladder_preview_is_served(client, monkeypatch):
+    monkeypatch.setattr(setup.ladder_ops, "preview", lambda: {"error": None, "same": True})
+    assert client.get("/api/ladder").json() == {"error": None, "same": True}
+
+
+def test_keeping_a_ladder_needs_the_token_and_returns_the_checklist(client, monkeypatch):
+    seen = {}
+
+    def fake_store(replace=False, weeks=78):
+        seen["replace"] = replace
+        return {"version": 2, "written": 5}
+    monkeypatch.setattr(setup.ladder_ops, "store", fake_store)
+    assert client.post("/api/ladder", json={"replace": True}).status_code == 403
+    assert seen == {}
+    r = client.post("/api/ladder", headers=HEAD, json={"replace": True})
+    assert r.status_code == 200 and seen == {"replace": True}
+    assert r.json()["version"] == 2 and [c["name"] for c in r.json()["checks"]] == ["config", "ladder"]
+
+
+def test_replace_defaults_to_off(client, monkeypatch):
+    """Mutant: default replace=True. Overwriting a ladder should be asked for."""
+    seen = {}
+    monkeypatch.setattr(setup.ladder_ops, "store",
+                        lambda replace=False, weeks=78: seen.update(replace=replace) or
+                        {"version": 1, "written": 5})
+    client.post("/api/ladder", headers=HEAD, json={})
+    assert seen == {"replace": False}
+
+
+def test_a_derivation_that_cannot_be_made_is_a_422_with_the_reason(client, monkeypatch):
+    def boom(**kw):
+        raise setup.BootstrapError("there is no room to climb: raise plan.max_ride_min")
+    monkeypatch.setattr(setup.ladder_ops, "store", boom)
+    r = client.post("/api/ladder", headers=HEAD, json={})
+    assert r.status_code == 422 and "max_ride_min" in r.json()["detail"]
+
+
+def test_an_existing_ladder_without_replace_is_a_409(client, monkeypatch):
+    def boom(**kw):
+        raise setup.ladder_ops.LadderError("a ladder already exists; pass replace")
+    monkeypatch.setattr(setup.ladder_ops, "store", boom)
+    assert client.post("/api/ladder", headers=HEAD, json={}).status_code == 409
+
+
+def test_regenerating_never_pushes_whatever_the_config_says(client, monkeypatch):
+    """Mutant: push_enabled left to the config. The real config has the push on."""
+    seen = {}
+
+    def fake(**kw):
+        seen.update(kw)
+        return {"errors": []}
+    monkeypatch.setattr(setup.maintenance, "run_cycle", fake)
+    monkeypatch.setattr(setup.maintenance, "summarise", lambda r: "ok")
+    r = client.post("/api/plan/regenerate", headers=HEAD)
+    assert r.status_code == 200 and seen == {"push_enabled": False}
+    assert r.json() == {"summary": "ok", "errors": []}

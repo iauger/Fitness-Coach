@@ -16,6 +16,9 @@ from pydantic import BaseModel
 
 from src import config as cfg
 from src import config_write, firstrun
+from src import maintenance
+from src.planning import ladder_ops
+from src.planning.bootstrap import BootstrapError
 
 router = APIRouter(prefix="/api", tags=["setup"])
 
@@ -97,3 +100,40 @@ def save_settings(body: Changes) -> dict:
     except cfg.ConfigError as exc:
         raise HTTPException(422, str(exc))
     return {"values": current(new), **_checks()}
+
+
+# ── the ladder ────────────────────────────────────────────────────────────────
+
+@router.get("/ladder")
+def ladder() -> dict:
+    """What a re-derive would produce under the current settings, beside what is stored, with
+    every changed field named. Writes nothing."""
+    return ladder_ops.preview()
+
+
+class LadderBody(BaseModel):
+    replace: bool = False
+
+
+@router.post("/ladder")
+def keep_ladder(body: LadderBody) -> dict:
+    """Derive and store. `replace` is a new version; weeks already decided keep their old one."""
+    try:
+        done = ladder_ops.store(replace=body.replace)
+    except BootstrapError as exc:
+        raise HTTPException(422, str(exc))
+    except ladder_ops.LadderError as exc:
+        raise HTTPException(409, str(exc))
+    return {"version": done["version"], "written": done["written"], **_checks()}
+
+
+@router.post("/plan/regenerate")
+def regenerate() -> dict:
+    """
+    One maintenance pass (pull, roll the horizon) that **never pushes**, whatever
+    `push_calendar` says. Getting a new ladder onto the calendar is a separate, deliberate act;
+    this only rewrites the stored sessions, and the next scheduled run or an explicit
+    `sync_now.py --push` is what carries them out.
+    """
+    result = maintenance.run_cycle(push_enabled=False)
+    return {"summary": maintenance.summarise(result), "errors": result.get("errors", [])}

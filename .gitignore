@@ -23,3 +23,5 @@ devlog.md
 
 # The real config. athlete.example.yaml is committed; this one is yours.
 config/athlete.yaml
+config/athlete.yaml.bak
+config/athlete.yaml.tmp

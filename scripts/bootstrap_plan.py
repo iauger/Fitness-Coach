@@ -18,6 +18,8 @@ Re-deriving with `--replace` writes a **new version** rather than overwriting: t
 stay, and every week already decided keeps pointing at the ladder it was graded under. So
 re-deriving is safe for the record, and is still a real change to what gets prescribed from
 the next roll onward, which is why it needs the flag.
+
+The derivation itself is `src/planning/ladder_ops.py`, shared with the UI's ladder screen.
 """
 
 import argparse
@@ -26,15 +28,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.clock import today_local
-from src.config import config
-from src.db.schema import migrate_db, read_connection, write_connection
-from src.planning import plans, tiers_store
-from src.planning.blocks import plan_limits
-from src.planning.bootstrap import BootstrapError, derive, summarise
-from src.planning.constants import (
-    configured_slug, max_ride_days, plan_name as configured_plan_name, ride_day_setting,
-)
+from src.db.schema import migrate_db, read_connection
+from src.planning import ladder_ops
+from src.planning.bootstrap import BootstrapError, summarise
+from src.planning.constants import plan_name as configured_plan_name
 from src.planning.progression import TIERS
 
 
@@ -74,21 +71,14 @@ def main() -> int:
     # database at all, and `no such table: activities` is not a useful first impression.
     migrate_db()
 
-    cfg = config()
-    name = configured_plan_name()
-
-    with read_connection() as conn:
-        weeks = tiers_store.weeks_for(conn, today_local(), args.weeks)
-
     try:
-        ladder = derive(weeks, cfg.plan.sustainable_band_hours,
-                        cfg.plan.long_ride_ceiling_min, max_ride_days(), ride_day_setting(),
-                        limits_for=plan_limits)
+        with read_connection() as conn:
+            ladder = ladder_ops.derive_now(conn, args.weeks)
     except BootstrapError as exc:
         print(f"\n  cannot derive a ladder yet:\n    {exc}\n")
         return 1
 
-    print(f"\n  {name}\n")
+    print(f"\n  {configured_plan_name()}\n")
     print(summarise(ladder))
     if args.compare:
         print()
@@ -98,20 +88,15 @@ def main() -> int:
         print("\n  dry run — nothing written. Pass --write to store this.\n")
         return 0
 
-    with write_connection() as conn:
-        slug = plans.resolve(conn, name, configured_slug())
-        plan = plans.ensure(conn, slug, name, started_on=cfg.plan.start_monday.isoformat(),
-                            goal_date=cfg.plan.goal_date.isoformat()
-                            if cfg.plan.goal_date else None)
-        try:
-            written = tiers_store.save(conn, plan.id, ladder, replace=args.replace)
-        except ValueError as exc:
-            print(f"\n  {exc}\n")
-            return 1
-        version = tiers_store.current_version(conn, plan.id)
+    try:
+        done = ladder_ops.store(replace=args.replace, weeks=args.weeks)
+    except ladder_ops.LadderError as exc:
+        print(f"\n  {exc}\n")
+        return 1
 
-    print(f"\n  stored {written} rungs for {name} as ladder version {version}.")
-    if version > 1:
+    print(f"\n  stored {done['written']} rungs for {configured_plan_name()} "
+          f"as ladder version {done['version']}.")
+    if done["version"] > 1:
         print("  Weeks already decided keep the version they were graded against.")
     print()
     return 0

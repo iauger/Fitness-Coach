@@ -52,6 +52,16 @@
   .day input[type=checkbox]:focus-visible + label { outline:2px solid var(--accent); }
   .day input[type=number] { margin-top:6px; padding:6px 0; text-align:center; appearance:textfield;
                             -moz-appearance:textfield; }
+  table.rungs { width:100%; border-collapse:collapse; font-size:14px; font-variant-numeric:tabular-nums; }
+  table.rungs th, table.rungs td { padding:8px 6px; text-align:right; border-top:1px solid var(--border); }
+  table.rungs th { color:var(--sub); font-weight:500; font-size:12px; border-top:0; }
+  table.rungs th:first-child, table.rungs td:first-child { text-align:left; font-weight:600; }
+  td.chg { background:rgba(251,191,36,.12); }
+  td.chg .was { color:var(--sub); text-decoration:line-through; margin-right:4px; }
+  .scroll { overflow-x:auto; }
+  .obs { display:flex; flex-wrap:wrap; gap:8px 24px; color:var(--sub); font-size:13px; margin-bottom:12px; }
+  .obs b { color:var(--text); font-weight:600; }
+  a.btnlink { text-decoration:none; }
   button { padding:9px 16px; border-radius:6px; border:1px solid var(--border);
            background:var(--surface); color:var(--text); font:inherit; cursor:pointer; }
   button.primary { background:var(--accent); border-color:var(--accent); color:#0b1220;
@@ -75,6 +85,7 @@
   <nav aria-label="Main">
     <a href="#setup" data-view="setup">Setup</a>
     <a href="#settings" data-view="settings">Settings</a>
+    <a href="#ladder" data-view="ladder">Ladder</a>
     <a href="/">Dashboard</a>
     <a href="/calendar">Calendar</a>
   </nav>
@@ -123,6 +134,9 @@ function h(tag, attrs, ...kids) {
   return el;
 }
 
+// The checks whose fix is "derive the ladder again", which this page can do.
+const LADDER_CHECKS = ["tier ladder", "week", "limits"];
+
 // ---- setup ------------------------------------------------------------------------------------
 async function setupView() {
   main.replaceChildren(h("p", {class: "lede"}, "Checking…"));
@@ -141,11 +155,15 @@ async function setupView() {
         h("div", {},
           h("div", {class: "name"}, c.name + (c.ok ? "" : (c.blocking ? " (to do)" : " (worth a look)"))),
           h("div", {class: "detail"}, c.detail),
-          !c.ok && c.fix ? h("code", {}, c.fix) : null));
+          !c.ok && c.fix ? h("code", {}, c.fix) : null,
+          !c.ok && LADDER_CHECKS.includes(c.name)
+            ? h("a", {href: "#ladder", class: "btnlink"}, h("button", {class: "primary"}, "Review the ladder")) : null));
     })),
     h("button", {onclick: setupView}, "Check again"),
     " ",
-    h("a", {href: "#settings"}, h("button", {}, "Change settings")));
+    h("a", {href: "#settings", class: "btnlink"}, h("button", {}, "Change settings")),
+    " ",
+    h("a", {href: "#ladder", class: "btnlink"}, h("button", {}, "Review the ladder")));
 }
 
 // ---- settings ---------------------------------------------------------------------------------
@@ -217,7 +235,9 @@ async function settingsView() {
       status.replaceChildren(
         h("div", {class: "msg good"}, "Saved. Comments in your config file are kept."),
         worth.length ? h("div", {class: "msg note"}, "Worth a look:",
-          worth.map(c => h("div", {}, h("b", {}, c.name + ": "), c.detail))) : null);
+          worth.map(c => h("div", {}, h("b", {}, c.name + ": "), c.detail)),
+          worth.some(c => LADDER_CHECKS.includes(c.name))
+            ? h("div", {}, h("a", {href: "#ladder"}, "Review the ladder for these settings")) : null) : null);
     } catch (e) {
       status.replaceChildren(h("div", {class: "msg bad", role: "alert"}, e.message));
     } finally { save.disabled = false; }
@@ -245,8 +265,92 @@ async function settingsView() {
     h("div", {class: "bar"}, save));
 }
 
+// ---- ladder -----------------------------------------------------------------------------------
+// The tier ladder decides every session for months, so this screen shows what a re-derive would
+// change, rung by rung and field by field, before anything is kept.
+async function ladderView() {
+  main.replaceChildren(h("p", {class: "lede"}, "Working out the ladder…"));
+  const p = await api("GET", "/api/ladder");
+  const intro = [h("h2", {}, "Tier ladder"),
+    h("p", {class: "lede"}, "The rungs the plan climbs, derived from your own riding and held inside your settings.")];
+  if (p.error) {
+    main.replaceChildren(...intro, h("div", {class: "msg bad", role: "alert"}, p.error),
+      h("a", {href: "#settings", class: "btnlink"}, h("button", {}, "Change settings")));
+    return;
+  }
+  const was = {};
+  for (const r of (p.stored ? p.stored.rungs : [])) was[r.tier] = r;
+  const changed = new Set(p.changes.map(c => c.tier + ":" + c.field));
+  const cols = [["rides", "Rides"], ["long_min", "Long ride"], ["hard", "Hard"], ["hard_min", "Hard min"],
+                ["lit_min", "Easy ride"]];
+  const cell = (r, f) => {
+    const td = h("td", {}, String(r[f]));
+    if (p.stored && changed.has(r.tier + ":" + f)) {
+      td.className = "chg";
+      const old = was[r.tier] ? was[r.tier][f] : null;
+      td.replaceChildren(old === null ? "" : h("span", {class: "was"}, String(old)), String(r[f]));
+    }
+    return td;
+  };
+  const hoursCell = r => {
+    const td = h("td", {}, r.hours + "h");
+    const old = was[r.tier];
+    if (p.stored && (!old || old.hours !== r.hours)) {
+      td.className = "chg";
+      td.replaceChildren(old ? h("span", {class: "was"}, old.hours + "h") : "", r.hours + "h");
+    }
+    return td;
+  };
+  const o = p.observed;
+  const status = h("div", {});
+  const keep = h("button", {class: "primary", disabled: p.same}, p.stored ? "Use this ladder" : "Keep this ladder");
+  keep.addEventListener("click", async () => {
+    keep.disabled = true;
+    try {
+      const out = await api("POST", "/api/ladder", {replace: !!p.stored});
+      const regen = h("button", {}, "Rebuild the plan from it");
+      const result = h("div", {});
+      regen.addEventListener("click", async () => {
+        regen.disabled = true;
+        result.replaceChildren(h("div", {class: "msg note"}, "Working…"));
+        try {
+          const r = await api("POST", "/api/plan/regenerate");
+          result.replaceChildren(h("div", {class: r.errors.length ? "msg bad" : "msg good"}, r.summary));
+        } catch (e) {
+          result.replaceChildren(h("div", {class: "msg bad", role: "alert"}, e.message));
+        } finally { regen.disabled = false; }
+      });
+      status.replaceChildren(
+        h("div", {class: "msg good"}, "Stored as ladder version " + out.version + ". Weeks already decided keep the version they were graded against."),
+        h("p", {class: "hint"}, "Rebuilding rewrites the stored sessions from the next two days on. It does not touch your intervals.icu calendar; that happens on the next sync."),
+        regen, result);
+    } catch (e) {
+      status.replaceChildren(h("div", {class: "msg bad", role: "alert"}, e.message));
+      keep.disabled = false;
+    }
+  });
+  main.replaceChildren(...intro,
+    h("div", {class: "card"},
+      h("h3", {}, p.stored ? "Stored: version " + p.stored.version + ". Re-derived from your history under your current settings:"
+                           : "Nothing stored yet. Derived from your history under your current settings:"),
+      h("div", {class: "obs"},
+        h("span", {}, "recently ", h("b", {}, o.recent_hours + "h a week"), " over ", h("b", {}, o.recent_days + " days")),
+        h("span", {}, "longest ", h("b", {}, o.recent_long_min + " min")),
+        h("span", {}, "best sustained ", h("b", {}, o.sustained_hours + "h a week"), " since " + o.sustained_since),
+        h("span", {}, o.weeks_with_a_ride[0] + " of " + o.weeks_with_a_ride[1] + " weeks with a ride")),
+      h("div", {class: "scroll"}, h("table", {class: "rungs"},
+        h("thead", {}, h("tr", {}, h("th", {}, "Tier"), cols.map(([, l]) => h("th", {}, l)), h("th", {}, "Week"))),
+        h("tbody", {}, p.derived.map(r => h("tr", {}, h("td", {}, "T" + r.tier),
+          cols.map(([f]) => cell(r, f)), hoursCell(r)))))),
+      p.same ? h("div", {class: "msg good"}, "Nothing would change: the stored ladder is already what these settings produce.") : null,
+      !p.same && p.stored ? h("p", {class: "hint"}, "Shaded cells would change, with the stored value struck through.") : null,
+      p.notes.map(n => h("div", {class: "msg note"}, n))),
+    status,
+    h("div", {class: "bar"}, keep));
+}
+
 // ---- routing ----------------------------------------------------------------------------------
-const views = {setup: setupView, settings: settingsView};
+const views = {setup: setupView, settings: settingsView, ladder: ladderView};
 async function route() {
   const name = (location.hash || "#setup").slice(1);
   const view = views[name] || setupView;
