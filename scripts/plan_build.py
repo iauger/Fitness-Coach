@@ -30,7 +30,8 @@ from src.analysis.dates import monday_of
 from src.athlete.profile import get_metric
 from src.db.schema import read_connection, write_connection
 from src.planning.blocks import (
-    ROTATION, expand_week, intensity_split, plan_rotation, rotation_after, weekly_rollup,
+    ROTATION, check_fit, expand_week, intensity_split, plan_rotation, rotation_after,
+    weekly_rollup,
 )
 from src.planning import plans, tiers_store
 from src.planning.constants import plan_name as configured_plan_name
@@ -76,6 +77,7 @@ def derive_state(today: date, start_tier: int = 1, persist: bool = True) -> dict
                               tiers=ladder)
     ladder = ladder or dict(TIERS)
     rotation = plan_rotation(max(t.rides for t in ladder.values()))
+    check_fit(rotation, ladder)
     return {**state, "_ladder": ladder, "_rotation": rotation}
 
 

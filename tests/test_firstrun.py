@@ -559,3 +559,24 @@ def test_nothing_is_said_about_the_week_when_nothing_is_configured(repo):
     find what is wrong."""
     db = _ready_repo(repo, "false")
     assert "week" not in named(firstrun.checks(db))
+
+
+def test_the_limits_note_reaches_the_status_report(repo):
+    """
+    `_limits` was tested directly and never through `checks()`, so deleting it from the steps
+    went unnoticed — and the steps are what the athlete actually sees. Mutant this catches: it
+    being dropped from the list.
+    """
+    db = _ready_repo(repo, "false")
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE tiers SET lit_min = 45, long_min = 45")
+    conn.commit()
+    conn.close()
+    _config_with("  max_ride_min: 50\n")
+
+    found = named(firstrun.checks(db))
+    assert found["week"].ok
+    limits = found["limits"]
+    assert not limits.ok and not limits.blocking
+    assert "Threshold" in limits.detail
+    assert "Threshold" in firstrun.report(db)

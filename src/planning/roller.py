@@ -32,7 +32,7 @@ from datetime import date, timedelta
 from src.analysis.dates import monday_of
 from src.clock import today_local, utc_now_iso
 from src.planning.blocks import (
-    ROTATION, advance_position, expand_week, plan_rotation, plan_week_row,
+    ROTATION, advance_position, check_fit, expand_week, plan_rotation, plan_week_row,
 )
 from src.planning import plans, tiers_store
 from src.planning.constants import (
@@ -148,6 +148,9 @@ def store_horizon(conn, today: date | None = None, plan_name: str | None = None,
     # plan being wrong about *you*. The refusal names the command that fixes it.
     ladder = tiers_store.require(conn, plan_id, plan_name)
     rotation = plan_rotation(max(t.rides for t in ladder.values()))
+    # Refuses a ladder that asks for a ride longer than its day allows, rather than clamping it:
+    # a clamped ride leaves a rung the gate expects and the calendar cannot deliver.
+    check_fit(rotation, ladder)
 
     built = horizon(conn, today, plan_name, weeks, start_tier, tiers=ladder,
                     rotation=rotation)

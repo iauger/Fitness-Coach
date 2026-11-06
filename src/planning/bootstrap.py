@@ -280,9 +280,115 @@ def _long_sequence(floor: int, cap: int) -> tuple[list[int], int]:
     return [values[0]] + values, step         # T0 shares T1's long ride
 
 
+@dataclass(frozen=True)
+class RideLimits:
+    """
+    The longest ride each kind of day can hold, as the derivation needs to see it. `None` is no
+    limit, and a `RideLimits()` with every field `None` is how everyone who sets none is derived
+    — exactly as before.
+
+    The setting names ride along because a refusal that says "raise your limit" without saying
+    which setting sends the athlete hunting; the long ride and the easy rides can be limited by
+    different lines of the same file.
+    """
+    long_cap: int | None = None
+    easy_cap: int | None = None          # the tightest day any easy ride can land on
+    hard_cap: int | None = None
+    long_setting: str = "plan.max_ride_min"
+    easy_setting: str = "plan.max_ride_min"
+
+    @property
+    def declared(self) -> bool:
+        return any(v is not None for v in (self.long_cap, self.easy_cap, self.hard_cap))
+
+
+# Gaps between the rungs that climb: T1 to T4. T0 differs from T1 by the hard session, not by
+# a bigger session, so it is not one of them.
+GAPS = RUNGS - 2
+
+# The smallest step a rung may take, on either axis. Below this two rungs are the same week to
+# anyone but a stopwatch.
+MIN_STEP = 5
+
+
+def _round_down(value: float, step: int, minimum: int) -> int:
+    return max(minimum, int(value // step) * step)
+
+
+def _spread(start: int, end: int, gaps: int) -> list[int]:
+    """
+    `gaps + 1` values from `start` to `end`, evenly spaced and rounded to the step.
+
+    Rounding can land two neighbours on the same value or push one past the end, so the values
+    are then forced strictly increasing from the front and strictly inside the range from the
+    back. The caller guarantees the room — `end - start >= gaps * MIN_STEP` — so this never has
+    to choose between the two.
+    """
+    if gaps == 0:
+        return [start]
+    values = [_round_to(start + (end - start) * i / gaps, MIN_STEP, 0) for i in range(gaps + 1)]
+    values[0], values[-1] = start, end
+    for i in range(1, gaps):
+        values[i] = max(values[i], values[i - 1] + MIN_STEP)
+    for i in range(gaps - 1, 0, -1):
+        values[i] = min(values[i], values[i + 1] - MIN_STEP)
+    return values
+
+
+def _climb(long_floor: int, long_cap: int, easy: int,
+           easy_max: int | None) -> tuple[list[int], list[int], int] | None:
+    """
+    Long-ride and easy-ride length for every rung, T0 to T4, or None when there is no room.
+
+    **One axis per rung.** The ladder's rule is that a rung changes one thing, because two
+    changes at once make a rung impossible to attribute. So the long ride climbs for some
+    number of rungs and then the easy ride does, never both in one step.
+
+    With room on the long ride alone — three 15-minute steps — this is the ladder it has always
+    been, and it is also the only path for anyone who has declared no limit: the easy ride grows
+    only when a limit has capped the long ride and left the easy rides room, which is the case
+    this exists for. A 90-minute limit on a three-day week is 4.5 hours of capacity; climbing
+    the long ride alone reaches 3.6 and reports "no further" with most of the week unused.
+
+    The step is the long ride's own `_long_sequence` when it can carry the whole climb, because
+    that function has the dead-rung history and should not be duplicated.
+    """
+    head_long = long_cap - long_floor
+    head_easy = max(0, (easy_max or easy) - easy)
+
+    if head_long >= GAPS * LONG_STEPS[0] or head_easy == 0:
+        if head_long < GAPS * MIN_STEP:
+            return None
+        longs, step = _long_sequence(long_floor, long_cap)
+        return longs, [easy] * RUNGS, step
+
+    best = None
+    for g_long in range(GAPS + 1):
+        g_easy = GAPS - g_long
+        if g_long and head_long < MIN_STEP * g_long:
+            continue
+        if g_easy and head_easy < MIN_STEP * g_easy:
+            continue
+        ideal = GAPS * head_long / (head_long + head_easy)
+        score = (abs(g_long - ideal), -g_long)
+        if best is None or score < best[0]:
+            best = (score, g_long)
+    if best is None:
+        return None
+
+    g_long = best[1]
+    g_easy = GAPS - g_long
+    long_path = _spread(long_floor, long_cap, g_long)
+    easy_path = _spread(easy, easy_max, g_easy) if g_easy else [easy]
+    longs = [long_path[min(k, g_long)] for k in range(GAPS + 1)]
+    easies = [easy_path[max(0, k - g_long)] for k in range(GAPS + 1)]
+    return [longs[0]] + longs, [easy] + easies, 0
+
+
 def derive(weeks: list[dict], band_hours: tuple[float, float],
            long_ceiling_min: int, max_rides: int,
-           ceiling_setting: str = "plan.max_ride_days") -> Ladder:
+           ceiling_setting: str = "plan.max_ride_days",
+           limits_for=None) -> Ladder:
     """
     A ladder on this athlete's scale, from their history and their stated intent.
 
@@ -299,30 +405,19 @@ def derive(weeks: list[dict], band_hours: tuple[float, float],
     7 and rides 3 gets a three-ride ladder, and the ceiling only bites when their riding grows
     into it.
 
+    `limits_for(rides)` returns the `RideLimits` for a week of that many rides. A callable and
+    not a value because which days the long ride and the easy rides land on depends on how many
+    rides there are, and that is only known here, from the history. Limits are derived
+    *inside*: the ladder climbs to what they allow and stops, so every rung is a week the
+    calendar can deliver. When they leave no room to climb at all this refuses, naming the
+    setting and the amount, rather than building a ladder whose rungs are the same week.
+
     This used to be the rotation's own ride-slot count, which was three for everybody because
     the weekly template was two hardcoded lists. `blocks.rotation_for` now builds the template
     around the ladder instead, so the ceiling is the athlete's week rather than the code's.
     """
     obs = observe(weeks)
     notes: list[str] = []
-
-    # The easy ride is the athlete's habitual session length. Cutting it at the same time as
-    # the plan cuts intensity leaves a session below their own baseline on both axes, and a
-    # session shorter than what someone is adapted to gives little novel stimulus.
-    easy = _round_to(obs.recent_session_min, EASY_STEP, MIN_EASY)
-
-    # The long ride starts from what they are already doing and climbs toward the configured
-    # ceiling. `sustained_long` is the floor of the cap rather than the cap itself: having once
-    # held a 90min long ride is a reason not to *stop* there, not a reason to be capped there.
-    long_floor = _round_to(obs.recent_long_min, LONG_STEPS[0], MIN_LONG)
-    long_cap = _round_to(
-        min(float(long_ceiling_min), max(obs.sustained_long_min, obs.recent_long_min) * 1.6),
-        LONG_STEPS[0], MIN_LONG)
-    if long_cap < long_floor:
-        long_cap = long_floor
-        notes.append(
-            f"the long ride does not climb: the configured ceiling ({long_ceiling_min}min) is "
-            f"at or below the {obs.recent_long_min:.0f}min you already ride.")
 
     wanted_rides = max(2, int(round(obs.recent_ride_days)))
     rides_cap = min(wanted_rides, max_rides)
@@ -333,34 +428,120 @@ def derive(weeks: list[dict], band_hours: tuple[float, float],
             f"{max_rides}, so the ladder tops out there. Raise it if those days are really "
             f"available; otherwise the extra day stays yours and the plan will not claim it.")
 
-    longs, step = _long_sequence(long_floor, long_cap)
-    if step != LONG_STEPS[0] and long_cap > long_floor:
+    limits = limits_for(rides_cap) if limits_for else RideLimits()
+    if limits.long_cap is not None and limits.long_cap < MIN_LONG:
+        raise BootstrapError(
+            f"{limits.long_setting} limits the long ride's day to {limits.long_cap}min, which is "
+            f"shorter than the {MIN_LONG}min the shortest long ride is. Raise it to at least "
+            f"{MIN_LONG}, or move the long ride to a day with more room.")
+
+    # The easy ride is the athlete's habitual session length. Cutting it at the same time as
+    # the plan cuts intensity leaves a session below their own baseline on both axes, and a
+    # session shorter than what someone is adapted to gives little novel stimulus.
+    easy = _round_to(obs.recent_session_min, EASY_STEP, MIN_EASY)
+    easy_max = None
+    if limits.easy_cap is not None:
+        easy_limit = _round_down(limits.easy_cap, MIN_STEP, MIN_EASY)
+        if easy > easy_limit:
+            easy = easy_limit
+            notes.append(
+                f"you usually ride {obs.recent_session_min:.0f}min but {limits.easy_setting} "
+                f"limits the easy rides to {limits.easy_cap}min, so the ladder starts there.")
+        easy_max = easy_limit
+
+    # The long ride starts from what they are already doing and climbs toward the configured
+    # ceiling. `sustained_long` is the floor of the cap rather than the cap itself: having once
+    # held a 90min long ride is a reason not to *stop* there, not a reason to be capped there.
+    long_floor = _round_to(obs.recent_long_min, LONG_STEPS[0], MIN_LONG)
+    long_cap = _round_to(
+        min(float(long_ceiling_min), max(obs.sustained_long_min, obs.recent_long_min) * 1.6),
+        LONG_STEPS[0], MIN_LONG)
+    binding = "plan.long_ride_ceiling_min"
+    if limits.long_cap is not None:
+        long_limit = _round_down(limits.long_cap, MIN_STEP, MIN_LONG)
+        if long_cap > long_limit:
+            long_cap, binding = long_limit, limits.long_setting
+        if long_floor > long_limit:
+            long_floor = long_limit
+            notes.append(
+                f"you have been riding {obs.recent_long_min:.0f}min long rides, longer than "
+                f"{limits.long_setting} allows ({limits.long_cap}min), so the ladder starts at "
+                f"the limit.")
+    if long_cap < long_floor:
+        long_cap = long_floor
+        if binding == "plan.long_ride_ceiling_min":
+            notes.append(
+                f"the long ride does not climb: the configured ceiling ({long_ceiling_min}min) "
+                f"is at or below the {obs.recent_long_min:.0f}min you already ride.")
+    easy_rides = max(0, rides_cap - 2)           # the week less its long ride and hard session
+    band_limited = False
+    if easy_max is not None and easy_rides == 0:
+        easy_max = None                           # two-ride weeks have no easy ride above T0
+    if easy_max is not None:
+        easy_max = min(easy_max, long_cap)
+        # The easy rides stop lengthening when the top rung reaches the band the athlete asked
+        # for. Without this a generous limit lets them grow past it: the band is intent, and a
+        # ladder that overshoots it by a third of an hour has not respected what was asked.
+        hard_top = HARD_MIN_HIGH if limits.hard_cap is None else min(HARD_MIN_HIGH, limits.hard_cap)
+        band_top = _round_down((band_hours[1] * 60 - long_cap - hard_top) / easy_rides,
+                               EASY_STEP, MIN_EASY)
+        if band_top < easy_max:
+            easy_max, band_limited = max(easy, band_top), True
+
+    climbed = _climb(long_floor, long_cap, easy, easy_max)
+    if climbed is None:
+        head = (long_cap - long_floor) + (max(0, easy_max - easy) if easy_max else 0)
+        start = (f"the ladder would start at a {long_floor}min long ride and {easy}min easy "
+                 f"rides (what you ride now, "
+                 f"{obs.recent_long_min:.0f}min and {obs.recent_session_min:.0f}min, held to "
+                 f"your limits)")
+        if band_limited:
+            raise BootstrapError(
+                f"there is no room to climb inside your band: {start}, and your configured "
+                f"band tops out at {band_hours[1]}h, which that already reaches. Raise "
+                f"plan.sustainable_band_hours if you want the ladder to go higher.")
+        raise BootstrapError(
+            f"there is no room to climb: {start}, with a ceiling of {long_cap}min on the long "
+            f"ride{f' and {easy_max}min on easy rides' if easy_max else ''} — {head} minutes of "
+            f"headroom, where {GAPS} distinct steps need at least {GAPS * MIN_STEP}. "
+            f"Raise {binding} to at least {long_cap + GAPS * MIN_STEP - head}min and the "
+            f"ladder can start climbing, or ride more days "
+            f"(plan.max_ride_days / plan.available_days).")
+    longs, easies, step = climbed
+    if step and step != LONG_STEPS[0] and long_cap > long_floor:
         notes.append(
             f"rungs step the long ride by {step}min rather than {LONG_STEPS[0]}: there are only "
             f"{long_cap - long_floor}min between the {long_floor}min you ride now and the "
             f"{long_cap}min ceiling, which does not divide into {RUNGS} rungs any coarser.")
+    if limits.declared and any(e != easy for e in easies[1:]):
+        notes.append(
+            f"the long ride reaches its {long_cap}min limit, so the easy rides lengthen from "
+            f"{easy}min to {easies[-1]}min from there. One thing changes per rung, never both.")
 
     tiers = []
     for i in range(RUNGS):
         at_floor = i == 0
-        long_min = longs[i]
+        hard_nominal = HARD_MIN_LOW if i < RUNGS - 2 else HARD_MIN_HIGH
+        if limits.hard_cap is not None:
+            hard_nominal = min(hard_nominal, limits.hard_cap)
         tiers.append(DerivedTier(
             index=i,
             rides=rides_floor if at_floor else rides_cap,
-            long_min=long_min,
+            long_min=longs[i],
             hard=0 if at_floor else 1,
-            hard_min=0 if at_floor else (HARD_MIN_LOW if i < RUNGS - 2 else HARD_MIN_HIGH),
+            hard_min=0 if at_floor else hard_nominal,
             lit_min=(_round_to(easy * FLOOR_EASY_FRACTION, EASY_STEP, MIN_EASY)
-                     if at_floor else easy),
+                     if at_floor else easies[i]),
         ))
 
-    ladder = Ladder(tuple(tiers), obs, tuple(notes + _check_band(tiers, band_hours, obs)))
+    ladder = Ladder(tuple(tiers), obs,
+                    tuple(notes + _check_band(tiers, band_hours, obs, binding)))
     _validate(ladder)
     return ladder
 
 
 def _check_band(tiers: list[DerivedTier], band_hours: tuple[float, float],
-                obs: Observed) -> list[str]:
+                obs: Observed, binding: str = "plan.long_ride_ceiling_min") -> list[str]:
     """
     Say so when the derived shape cannot reach the configured intent.
 
@@ -377,12 +558,12 @@ def _check_band(tiers: list[DerivedTier], band_hours: tuple[float, float],
             f"the top rung reaches {cap}h against a configured band of {low}-{high}h. Your "
             f"recent riding ({obs.recent_volume_min / 60:.1f}h/wk, longest ride "
             f"{obs.recent_long_min:.0f}min) does not support that band yet; raise "
-            f"plan.long_ride_ceiling_min to climb further, or leave it and re-bootstrap once "
+            f"{binding} to climb further, or leave it and re-bootstrap once "
             f"the gate has moved you up.")
     elif cap > high + BAND_TOLERANCE:
         out.append(
             f"the top rung reaches {cap}h, above the configured band of {low}-{high}h. That is "
-            f"the long-ride ceiling driving it; lower plan.long_ride_ceiling_min to bring the "
+            f"the long-ride ceiling driving it; lower {binding} to bring the "
             f"cap down.")
     return out
 

@@ -23,6 +23,7 @@ Periodisation is a property of how ROTATION is ordered, not of this machinery.
 """
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 from datetime import date, timedelta
 
 from src.analysis.dates import monday_of
@@ -37,8 +38,8 @@ from src.planning.progression import TIERS
 # Called, not assigned to a module constant: a constant read into a default argument binds at
 # import and no later config change can reach it, which is the defect this step removes.
 from src.planning.constants import (
-    available_days, goal_date as configured_goal_date, long_ride_day,
-    plan_name as configured_plan_name, strength_days as configured_strength_days)
+    available_days, goal_date as configured_goal_date, limit_setting, long_ride_day,
+    plan_name as configured_plan_name, ride_limits, strength_days as configured_strength_days)
 
 # Weekday roles a slot can take.
 ROLES = ("hard", "long", "lit", "strength")
@@ -69,6 +70,11 @@ class Block:
     # Readable phase name for training_plan_weeks / cycle reviews.
     phase_label: str = ""
     note: str = ""
+    # The longest ride allowed on each weekday of this block's pattern, for the days that have a
+    # limit. It travels with the pattern because the two are one fact — what the week looks like
+    # and what each day of it can hold — and `expand_week` needs both to choose a hard session
+    # that fits the day it lands on.
+    ride_limits: dict[int, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         hard = sum(1 for _, role in self.pattern if role == "hard")
@@ -173,34 +179,79 @@ def _pool(days: tuple[int, ...] | None) -> list[int]:
     return pool
 
 
-def _long_day(pool: list[int], requested: int | None) -> int:
+# A day with no limit sorts above every day that has one.
+UNLIMITED = 10 ** 6
+
+
+def _limit(day: int, limits: dict[int, int] | None) -> int:
+    """The real limit on a day: what a session may be, with no limit meaning unlimited."""
+    return (limits or {}).get(day, UNLIMITED)
+
+
+def _room(day: int, limits: dict[int, int] | None) -> int:
+    """
+    How roomy a day counts as for *ranking* days against each other. Not what fits on it.
+
+    A day nobody gave a limit counts as exactly as roomy as the roomiest day somebody did,
+    rather than as unlimited. The difference is the whole point: with `{sat: 90}` alone, an
+    unlimited Friday would out-rank Saturday and quietly move the long ride there, when all the
+    athlete said was that Saturday's ride is at most 90 minutes. A limit is a constraint and
+    not a preference, so it must not be read as one. With every day listed this is simply the
+    roomiest day; with none, every day ties and the weekend preference decides.
+    """
+    if not limits:
+        return UNLIMITED
+    return limits.get(day, max(limits.values()))
+
+
+def _long_day(pool: list[int], requested: int | None,
+              limits: dict[int, int] | None = None) -> int:
+    """
+    The day for the long ride: the one asked for, else the day with the most room, else the
+    weekend-first preference.
+
+    Room comes before the preference because a long ride on the day with the smallest limit is
+    a long ride that is not long. With no limits every day has the same room, so the preference
+    decides — Saturday — and nothing changes for anyone who sets none.
+    """
     if requested is not None:
         if requested not in pool:
             raise ValueError(
                 f"the long ride is set for weekday {requested}, which is not one of the "
                 f"available days {pool}")
         return requested
-    return next(d for d in _LONG_DAY_PREFERENCE if d in pool)
+    candidates = [d for d in _LONG_DAY_PREFERENCE if d in pool]
+    return min(candidates, key=lambda d: (-_room(d, limits), _LONG_DAY_PREFERENCE.index(d)))
 
 
-def _hard_day(pool: list[int], long_day: int) -> int | None:
+def _hard_day(pool: list[int], long_day: int,
+              limits: dict[int, int] | None = None) -> int | None:
     """
     The day for the one hard session: as far from the long ride as it can be on both sides.
 
     Margin first, because a hard session the day before or after the long ride is the one
-    placement that costs one of them its quality. Ties go to the sooner-after-the-long-ride
-    day — the week's hard work early, so a missed session can still be recovered from before
-    the next long ride. With the long ride on Saturday that is Tuesday, which is where this
-    template has always put it.
+    placement that costs one of them its quality. Then the day with the most room, so a limit
+    does not land on the one session whose shape cannot shrink. Ties go to the
+    sooner-after-the-long-ride day — the week's hard work early, so a missed session can still
+    be recovered from before the next long ride. With the long ride on Saturday that is
+    Tuesday, which is where this template has always put it.
+
+    Days too short for any hard session are set aside unless there is nothing else: a day that
+    cannot host one would only ever hold an easy ride in its place.
     """
     others = [d for d in pool if d != long_day]
     if not others:
         return None
+    # Only consulted when there are limits. Besides being moot without them, the module builds
+    # its default week at import, before `ROTATION` exists for the lookup to read.
+    if limits:
+        fitting = [d for d in others if _limit(d, limits) >= shortest_hard_session()]
+        others = fitting or others
 
-    def key(day: int) -> tuple[int, int]:
+    def key(day: int) -> tuple[int, int, int]:
         after = (day - long_day) % 7
         before = (long_day - day) % 7
-        return -min(after, before), after
+        return -min(after, before), -_room(day, limits), after
 
     return min(others, key=key)
 
@@ -216,8 +267,26 @@ def _fill_rides(rides: list[int], pool: list[int], count: int) -> list[int]:
     return rides
 
 
+def _place_rides(ride_days: int, pool: list[int], long_day: int | None,
+                 limits: dict[int, int] | None = None) -> tuple[int, int | None, list[int]]:
+    """
+    Which weekday holds the long ride, which would hold the hard session, and every ride day.
+
+    Shared by the pattern builder and by `plan_limits`, which needs the same answer to know
+    which days' limits apply to which kind of ride. Two places deciding independently where the
+    long ride goes is how a limit gets applied to the wrong day.
+    """
+    long_ = _long_day(pool, long_day, limits)
+    hard_day = _hard_day(pool, long_, limits)
+    rides = [long_]
+    if ride_days > 1:
+        rides.append(hard_day)
+    return long_, hard_day, sorted(_fill_rides(rides, pool, ride_days))
+
+
 def build_pattern(ride_days: int, strength_days: int = 2, hard: bool = True,
-                  days: tuple[int, ...] | None = None, long_day: int | None = None
+                  days: tuple[int, ...] | None = None, long_day: int | None = None,
+                  limits: dict[int, int] | None = None
                   ) -> list[tuple[int, str]]:
     """
     One week's slots as `(weekday, role)`, for an athlete who rides `ride_days` days.
@@ -230,6 +299,11 @@ def build_pattern(ride_days: int, strength_days: int = 2, hard: bool = True,
     long ride on Saturday, the hard session on Tuesday — and tests/test_availability.py holds
     that to the previous implementation across every combination, because this template
     decides every athlete's week.
+
+    `limits` are the longest ride allowed on each weekday. They only steer *placement* — the
+    long ride goes to the roomiest day and the hard session avoids days too short for one —
+    and with none every day is equal, so the week is exactly as above. They are never applied
+    to a session's length here; `check_fit` holds the ladder to them instead.
 
     Nothing is ever placed on a day outside `days`: not a ride, and not a lift. A pool too
     small for the week asked for is refused rather than squeezed, for the same reason the
@@ -252,12 +326,7 @@ def build_pattern(ride_days: int, strength_days: int = 2, hard: bool = True,
             f"the week asks for {ride_days} ride days but only {len(pool)} are available "
             f"({', '.join(_DAY_NAMES[d] for d in pool)})")
 
-    long_ = _long_day(pool, long_day)
-    hard_day = _hard_day(pool, long_)
-    rides = [long_]
-    if ride_days > 1:
-        rides.append(hard_day)
-    rides = sorted(_fill_rides(rides, pool, ride_days))
+    long_, hard_day, rides = _place_rides(ride_days, pool, long_day, limits)
 
     pattern = []
     for day in rides:
@@ -472,21 +541,59 @@ def _strength_for_week(pattern: list[tuple[int, str]], week: int) -> dict[int, s
     return out
 
 
-def _hard_session(block: Block, week_in_block: int) -> A.Session:
+def _variant_session(block_type: str, variant: str | None) -> A.Session:
+    if block_type == "sit":
+        return A.sit(variant or "medium")
+    if block_type == "hiit":
+        return A.hiit(variant or "straight_5")
+    return A.threshold(variant or "continuous")
+
+
+@lru_cache(maxsize=None)
+def hard_variant_minutes() -> dict[tuple[str, str], float]:
     """
-    Resolve the hard slot to a concrete session.
+    How long each hard-session variant actually is, from the sessions themselves.
+
+    Not from `Tier.hard_min`, which is a nominal planning figure: the real sessions run 40-78
+    minutes depending on the variant, so deciding whether one fits a day from the nominal would
+    accept a 60-minute day for a session that is 78. Built rather than tabulated so a variant
+    added to the library is covered without anyone remembering to update a second list.
+    """
+    return {(b.block_type, v): _variant_session(b.block_type, v).minutes
+            for b in ROTATION for v in b.hard_variants}
+
+
+def shortest_hard_session() -> float:
+    """The shortest hard session in the library; no day with less room can host any of them."""
+    return min(hard_variant_minutes().values())
+
+
+def fitting_variants(block: Block, limit: int | None) -> list[str]:
+    """The block's hard variants that fit a day with this limit, in rotation order."""
+    if limit is None:
+        return list(block.hard_variants)
+    minutes = hard_variant_minutes()
+    return [v for v in block.hard_variants if minutes[(block.block_type, v)] <= limit]
+
+
+def _hard_session(block: Block, week_in_block: int,
+                  limit: int | None = None) -> A.Session | None:
+    """
+    Resolve the hard slot to a concrete session, or None when no variant fits the day.
 
     The variant rotates by week so no two weeks of a block repeat a session. There is no dose
     progression here any more — that was `bump = (week_in_block - 1) // 2`, which added reps
     purely because the calendar advanced.
+
+    With a limit the rotation runs over the variants that fit, so a short day gets the shorter
+    sessions in the same order rather than skipping weeks. When none fit the caller turns the
+    slot into an easy ride — the same thing `pattern_for` does when a tier disallows the hard
+    session — rather than prescribing a session the day cannot hold.
     """
-    variants = block.hard_variants or [None]
-    variant = variants[(week_in_block - 1) % len(variants)]
-    if block.block_type == "sit":
-        return A.sit(variant or "medium")
-    if block.block_type == "hiit":
-        return A.hiit(variant or "straight_5")
-    return A.threshold(variant or "continuous")
+    variants = fitting_variants(block, limit) if block.hard_variants else [None]
+    if not variants:
+        return None
+    return _variant_session(block.block_type, variants[(week_in_block - 1) % len(variants)])
 
 
 def expand_week(block: Block, week_in_block: int, tier: int, monday: date,
@@ -513,7 +620,11 @@ def expand_week(block: Block, week_in_block: int, tier: int, monday: date,
     for weekday, role in pattern:
         day = monday_of(monday) + timedelta(days=weekday)
         if role == "hard":
-            session = _hard_session(block, week_in_block)
+            session = _hard_session(block, week_in_block, block.ride_limits.get(weekday))
+            if session is None:
+                role = "lit"
+                session = A.lit(spec.lit_min,
+                                "cadence_drills" if week_in_block % 2 == 0 else "steady")
         elif role == "long":
             # A sprint every ~25min on the long ride, which is the source's own prescription
             # ("throw in a sprint every 20-30 minutes"), on alternating weeks.
@@ -652,12 +763,13 @@ def plan_rotation(ride_days: int) -> list[Block]:
     calling `rotation_for` anywhere else.
     """
     return rotation_for(ride_days, configured_strength_days(),
-                        days=available_days(), long_day=long_ride_day())
+                        days=available_days(), long_day=long_ride_day(),
+                        limits=ride_limits())
 
 
 def rotation_for(ride_days: int, strength_days: int = 2,
-                 days: tuple[int, ...] | None = None, long_day: int | None = None
-                 ) -> list[Block]:
+                 days: tuple[int, ...] | None = None, long_day: int | None = None,
+                 limits: dict[int, int] | None = None) -> list[Block]:
     """
     The rotation, with its weekly template built for an athlete who rides `ride_days` days.
 
@@ -670,15 +782,111 @@ def rotation_for(ride_days: int, strength_days: int = 2,
     back a short week at that tier rather than failing. Only this function holds both the
     pattern and the ladder it is being built for, so only this function can check it.
     """
-    easy = build_pattern(ride_days, strength_days, hard=False, days=days, long_day=long_day)
-    emphasis = build_pattern(ride_days, strength_days, hard=True, days=days, long_day=long_day)
+    easy = build_pattern(ride_days, strength_days, hard=False, days=days, long_day=long_day,
+                         limits=limits)
+    emphasis = build_pattern(ride_days, strength_days, hard=True, days=days, long_day=long_day,
+                             limits=limits)
     return [
         Block(name=b.name, phase_label=b.phase_label, block_type=b.block_type, weeks=b.weeks,
               pattern=list(easy if b.block_type == "base" else emphasis),
               hard_variants=list(b.hard_variants), recovery_weeks=set(b.recovery_weeks),
-              note=b.note)
+              note=b.note, ride_limits=dict(limits or {}))
         for b in ROTATION
     ]
+
+
+def plan_limits(ride_days: int):
+    """
+    What each kind of ride is limited to, for the week this athlete's settings produce.
+
+    Returned as a `bootstrap.RideLimits` for the derivation. The long ride's limit is that of
+    the day the long ride lands on, and the easy rides' limit is the *lowest* among every other
+    ride day — the hard day included, because a recovery or re-entry week turns the hard
+    session into an easy ride of the tier's full easy length, so that day has to be able to
+    hold one.
+
+    Placement is asked of the same function that builds the week, so a limit is never applied
+    to a day the long ride is not actually on.
+    """
+    from src.planning.bootstrap import RideLimits
+
+    limits = ride_limits()
+    if not limits:
+        return RideLimits()
+    pool = _pool(available_days())
+    long_, hard_day, rides = _place_rides(min(ride_days, len(pool)), pool, long_ride_day(),
+                                          limits)
+    others = [d for d in rides if d != long_ and d in limits]
+    tightest = min(others, key=lambda d: limits[d]) if others else None
+    return RideLimits(
+        long_cap=limits.get(long_),
+        easy_cap=limits[tightest] if tightest is not None else None,
+        hard_cap=limits.get(hard_day) if hard_day is not None else None,
+        long_setting=limit_setting(long_),
+        easy_setting=limit_setting(tightest) if tightest is not None else "plan.max_ride_min",
+    )
+
+
+def check_fit(rotation: list[Block], ladder: dict) -> None:
+    """
+    Raise when the ladder asks for a ride longer than the day it lands on allows.
+
+    **Refuses; never clamps.** A rung is graded against 90% of its minutes, so a ride quietly
+    shortened to fit would leave a rung the gate expects and the calendar cannot deliver. The
+    athlete would meet everything the plan asked and hold at the same tier for ever, with
+    nothing anywhere saying why. This is the check that makes that unreachable: the ladder is
+    derived inside the limits, and if the limits later tighten the roll stops with a message
+    naming the rung, the day and the setting.
+    """
+    block = rotation[0]
+    limits = block.ride_limits
+    if not limits:
+        return
+    long_day = next(d for d, role in block.pattern if role == "long")
+    other_days = [d for d, role in block.pattern if role in ("lit", "hard")]
+
+    for index in sorted(ladder):
+        tier = ladder[index]
+        if limits.get(long_day) is not None and tier.long_min > limits[long_day]:
+            raise ValueError(
+                f"T{index}'s long ride is {tier.long_min}min but {_DAY_NAMES[long_day]}'s "
+                f"limit is {limits[long_day]}min ({limit_setting(long_day)}). The ladder was "
+                f"derived for a different limit: raise it, or re-derive with "
+                f"`bootstrap_plan.py --write --replace`.")
+        for day in other_days:
+            if limits.get(day) is not None and tier.lit_min > limits[day]:
+                raise ValueError(
+                    f"T{index}'s easy ride is {tier.lit_min}min but {_DAY_NAMES[day]}'s limit "
+                    f"is {limits[day]}min ({limit_setting(day)}). The ladder was derived for "
+                    f"a different limit: raise it, or re-derive with "
+                    f"`bootstrap_plan.py --write --replace`.")
+
+
+def unfittable_blocks(rotation: list[Block]) -> list[dict]:
+    """
+    Blocks whose hard session cannot be prescribed at all, because no variant fits its day.
+
+    Their hard slot becomes an easy ride, which is correct and silent — so this exists to make
+    it audible. Someone who limits their Tuesday to 50 minutes should hear that threshold and
+    VO2 weeks will be easy rides, and what limit would change that, rather than discover it
+    from a calendar with no intervals on it.
+    """
+    out = []
+    minutes = hard_variant_minutes()
+    for block in rotation:
+        if not block.hard_variants:
+            continue
+        hard_days = [d for d, role in block.pattern if role == "hard"]
+        if not hard_days:
+            continue
+        day = hard_days[0]
+        limit = block.ride_limits.get(day)
+        if limit is None or fitting_variants(block, limit):
+            continue
+        needs = min(minutes[(block.block_type, v)] for v in block.hard_variants)
+        out.append({"block": block.name, "day": _DAY_NAMES[day], "limit": limit,
+                    "needs": int(round(needs + 0.4999)), "setting": limit_setting(day)})
+    return out
 
 
 def rotation_rides(rotation: list[Block]) -> int:

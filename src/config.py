@@ -119,6 +119,20 @@ class Plan:
     slug: str | None = None
     sustainable_band_hours: tuple[float, float] = (3.5, 4.0)
     long_ride_ceiling_min: int = 120
+    # The longest a single ride may be, on any day. "Three days a week, ninety minutes at most"
+    # is this plus `max_ride_days`. Unset means no limit, and the plan behaves exactly as it
+    # always has.
+    #
+    # It is a limit on *rides*, not on a day's total time: a lift on the same day is separate.
+    # And it is a ceiling the plan is derived *inside*, not clamped to afterwards — the ladder
+    # climbs to what the limit allows and stops there, then the coach tells you what would let
+    # it climb further. Clamping afterwards would leave rungs the gate expects and the calendar
+    # cannot deliver, so the athlete would hold at the same tier for ever and never see why.
+    max_ride_min: int | None = None
+    # Per-day overrides of the above, as `{day: minutes}`: `{sat: 150}` for a long ride that has
+    # more room than the rest of the week. When `available_days` is set, a day named here must
+    # be one of them.
+    day_max_ride_min: dict | None = None
     # An availability ceiling, not a target. The ladder's ride-day count is read from what you
     # actually ride; this only stops it climbing past the days you have. Seven is allowed and
     # is a bad idea for most people, which is a judgement for the athlete rather than the code.
@@ -372,6 +386,30 @@ def _validate(cfg: Config) -> None:
         raise ConfigError(
             f"plan.long_ride_ceiling_min: {cfg.plan.long_ride_ceiling_min} is shorter than "
             f"any session this plan prescribes")
+
+    # The shortest session the plan prescribes is a 30-minute easy ride, so a limit below that
+    # would leave a day that can host nothing while still being listed as available.
+    if cfg.plan.max_ride_min is not None and cfg.plan.max_ride_min < 30:
+        raise ConfigError(
+            f"plan.max_ride_min: {cfg.plan.max_ride_min} is shorter than any session this plan "
+            f"prescribes")
+    if cfg.plan.day_max_ride_min is not None:
+        seen: dict[int, str] = {}
+        for name, minutes in cfg.plan.day_max_ride_min.items():
+            where = f"plan.day_max_ride_min.{name}"
+            day = weekday(name, where)
+            if day in seen:
+                raise ConfigError(f"{where}: the same weekday is already given as {seen[day]!r}")
+            seen[day] = str(name)
+            if isinstance(minutes, bool) or not isinstance(minutes, int):
+                raise ConfigError(f"{where}: expected a number of minutes, got {minutes!r}")
+            if minutes < 30:
+                raise ConfigError(
+                    f"{where}: {minutes} is shorter than any session this plan prescribes")
+            if days is not None and day not in days:
+                raise ConfigError(
+                    f"{where}: that day is not in plan.available_days, so nothing is "
+                    f"scheduled on it and a limit for it would do nothing")
 
     if not 1 <= cfg.server.port <= 65535:
         raise ConfigError(f"server.port: {cfg.server.port} is not a usable port")

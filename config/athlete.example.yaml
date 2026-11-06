@@ -63,11 +63,27 @@ plan:
   # and you need at least two days for the lowest rung to ride twice. Both are checked when
   # the file loads, with the number in the message.
   #
-  # What it does not say is how long you have on each day. A session's length comes from your
-  # ladder, and honouring a per-day limit properly needs a hard session that can shrink to
-  # fit a day, which this plan does not have yet.
+  # How long you have on each day is a separate setting, below: `max_ride_min`.
   #
   # available_days: [tue, thu, sat, sun]    # mon tue wed thu fri sat sun, or the full names
+  #
+  # The longest a single ride may be. "Three days a week, ninety minutes at most" is
+  # `max_ride_days: 3` plus this. Unset means no limit and the plan is exactly as it was.
+  #
+  # The ladder is built *inside* the limit, not clamped to it afterwards: it climbs to what the
+  # limit allows (the long ride first, then the easy rides, one thing changing per step) and
+  # stops there. If your limit leaves no room to climb at all the bootstrap says so and names
+  # the number to raise, and `status.py` flags a limit you tighten later that the stored
+  # ladder no longer fits. It limits rides, not a day's total time: a lift on the same day is
+  # separate. A hard session that cannot fit a day's limit becomes an easy ride, and
+  # `status.py` says which blocks that affects — threshold needs about 60 minutes and VO2
+  # about 52, while the sprint sessions fit in 45.
+  #
+  # max_ride_min: 90
+  #
+  # Per-day overrides of the above, `{day: minutes}`. A day left out is as roomy as the
+  # roomiest day you list, so `{sat: 90}` on its own does not move your long ride off Saturday.
+  # day_max_ride_min: {sat: 150}
   #
   # Pins the long ride to one of those days. Unset, it goes on Saturday, or failing that the
   # available day nearest the weekend — a guess, so say so here if your free days are

@@ -179,36 +179,77 @@ def _ladder(conn) -> Check:
                  f"to T{max(ladder)} {ladder[max(ladder)].target_hours}h")
 
 
-def _week(conn) -> Check | None:
-    """
-    Whether the stored ladder's week can be placed inside the days the configuration allows.
-
-    Checked separately from the ladder because the two can disagree *after* a successful
-    bootstrap: the ladder says three rides a week, and someone later edits `available_days`
-    down to two. Nothing about the ladder is wrong and nothing about the config is invalid on
-    its own, but the next roll cannot build a week — and the roll runs unattended, hourly, so
-    the first anyone hears of it would be a calendar that stopped updating.
-    """
+def _stored_rotation(conn):
+    """The week the stored ladder produces under the current settings, and that ladder."""
     from src.planning import plans, tiers_store
     from src.planning.blocks import plan_rotation
-    from src.planning.constants import available_days, long_ride_day, plan_name
-
-    # Nothing to report when nothing is configured: with every day available and no pinned
-    # long ride the week always builds, and a line that is `ok` for everyone who has not
-    # touched these settings is noise in the one output people read to find what is wrong.
-    if available_days() is None and long_ride_day() is None:
-        return None
+    from src.planning.constants import plan_name
 
     plan = plans.by_name(conn, plan_name())
     ladder = tiers_store.load(conn, plan.id)
+    return plan_rotation(max(t.rides for t in ladder.values())), ladder
+
+
+def _week(conn) -> Check | None:
+    """
+    Whether the stored ladder's week fits the days and ride limits the configuration allows.
+
+    Checked separately from the ladder because the two can disagree *after* a successful
+    bootstrap: the ladder says three rides a week, and someone later edits `available_days`
+    down to two, or lowers a ride limit below the long ride the ladder asks for. Nothing about
+    the ladder is wrong and nothing about the config is invalid on its own, but the next roll
+    cannot build the week — and the roll runs unattended, hourly, so the first anyone hears of
+    it would be a calendar that stopped updating.
+    """
+    from src.planning.blocks import check_fit
+    from src.planning.constants import available_days, long_ride_day, ride_limits
+
+    # Nothing to report when nothing is configured: with every day available, no pinned long
+    # ride and no limits the week always builds, and a line that is `ok` for everyone who has
+    # not touched these settings is noise in the one output people read to find what is wrong.
+    if available_days() is None and long_ride_day() is None and not ride_limits():
+        return None
+
     try:
-        plan_rotation(max(t.rides for t in ladder.values()))
+        rotation, ladder = _stored_rotation(conn)
+        check_fit(rotation, ladder)
     except ValueError as exc:
-        return Check("week", False, str(exc)[:160],
-                     "adjust plan.available_days, plan.long_ride_day or plan.strength_days in "
-                     "config/athlete.yaml, or re-derive the ladder for the days you have:\n"
+        return Check("week", False, str(exc)[:200],
+                     "adjust plan.available_days, plan.long_ride_day, plan.strength_days or "
+                     "the ride limits in config/athlete.yaml, or re-derive the ladder for what "
+                     "you have:\n"
                      f"    {interpreter()} scripts/bootstrap_plan.py --write --replace")
-    return Check("week", True, "can be placed inside the available days")
+    return Check("week", True, "fits the available days and ride limits")
+
+
+def _limits(conn) -> Check | None:
+    """
+    Which blocks lose their hard session to a ride limit, said out loud.
+
+    Their hard slot becomes an easy ride, which is correct and silent. Someone who limits their
+    Tuesday to 50 minutes should hear that threshold and VO2 weeks will have no intervals in
+    them, and what limit would change that, rather than discover it from an empty calendar.
+    Non-blocking: it is a consequence of a setting the athlete chose, not a fault.
+    """
+    from src.planning.blocks import unfittable_blocks
+    from src.planning.constants import ride_limits
+
+    if not ride_limits():
+        return None
+    try:
+        rotation, _ = _stored_rotation(conn)
+    except ValueError:
+        return None                               # `_week` has already said so
+    lost = unfittable_blocks(rotation)
+    if not lost:
+        return None
+    names = " and ".join(item["block"] for item in lost)
+    first = lost[0]
+    return Check("limits", False,
+                 f"{names} have no hard session that fits {first['day']}'s {first['limit']}min "
+                 f"limit, so those weeks are easy rides",
+                 f"raise {first['setting']} to at least {first['needs']}min if you want them "
+                 f"back", blocking=False)
 
 
 def _plan(conn) -> Check:
@@ -270,7 +311,7 @@ def checks(db_path: Path | None = None) -> list[Check]:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        for step in (_history, _ftp, _ladder, _week, _plan, _calendar):
+        for step in (_history, _ftp, _ladder, _week, _limits, _plan, _calendar):
             check = step(conn)
             if check is None:
                 continue

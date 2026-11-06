@@ -116,6 +116,39 @@ def long_ride_day() -> int | None:
     return None if named is None else weekday(named, "plan.long_ride_day")
 
 
+def ride_limits() -> dict[int, int]:
+    """
+    The longest ride allowed on each weekday, for the days that have a limit. `{}` means none.
+
+    A day's own entry beats the plan-wide `max_ride_min`; a day with neither is simply absent,
+    not zero — absent means unlimited, and a limit of zero would mean the opposite.
+    """
+    from src.config import weekday
+
+    plan = config().plan
+    limits: dict[int, int] = {}
+    if plan.max_ride_min is not None:
+        limits = {day: plan.max_ride_min for day in range(7)}
+    for name, minutes in (plan.day_max_ride_min or {}).items():
+        limits[weekday(name, "plan.day_max_ride_min")] = minutes
+    return limits
+
+
+def limit_setting(day: int) -> str:
+    """
+    The setting to tell the athlete to raise for this weekday's limit.
+
+    A message that says "raise plan.max_ride_min" to someone whose Saturday has its own entry
+    sends them to edit a line that Saturday ignores.
+    """
+    from src.config import WEEKDAYS, weekday
+
+    for name in (config().plan.day_max_ride_min or {}):
+        if weekday(name, "plan.day_max_ride_min") == day:
+            return f"plan.day_max_ride_min.{WEEKDAYS[day]}"
+    return "plan.max_ride_min"
+
+
 def max_ride_days() -> int:
     """
     The most days a week the ladder may ask for. A ceiling, never a target.
