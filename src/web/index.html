@@ -69,6 +69,20 @@
     .goalrow { grid-template-columns:minmax(0,1fr) minmax(0,1fr) 36px; }
     .goalrow input[type=text] { grid-column:1 / -1; }
   }
+  .badge { display:inline-block; min-width:18px; margin-left:6px; padding:0 5px; border-radius:9px; background:var(--warn);
+           color:#111827; font-size:11px; font-weight:700; text-align:center; line-height:18px; }
+  .duepanel { display:grid; gap:12px; margin-bottom:16px; }
+  .duecard { background:var(--surface); border:1px solid var(--border); border-left:4px solid var(--border); border-radius:10px;
+             padding:12px 16px; margin-bottom:12px; }
+  .duepanel .duecard { margin-bottom:0; }
+  .duecard.due { border-left-color:var(--warn); } .duecard.overdue { border-left-color:var(--bad); }
+  .duecard.ok { border-left-color:var(--ok); }
+  .duehead { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:4px; }
+  .duecard .hint { color:var(--sub); font-size:13px; margin:2px 0 8px; }
+  .duecard textarea { margin:4px 0 8px; }
+  .pill { font-size:12px; padding:1px 9px; border-radius:10px; border:1px solid var(--border); color:var(--sub); }
+  .pill.due { border-color:var(--warn); color:var(--warn); } .pill.overdue { border-color:var(--bad); color:var(--bad); }
+  .pill.ok { border-color:var(--ok); color:var(--ok); }
   .coachbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:12px; }
   .coachbar select { width:auto; min-width:0; flex:1 1 160px; max-width:360px; }
   .chatlog { display:flex; flex-direction:column; gap:10px; padding-bottom:12px; min-height:30vh; }
@@ -492,6 +506,8 @@ async function planView() {
     return;
   }
   const t = o.tier, g = o.gate, w = o.this_week;
+  let banners = [];
+  try { const d = await api("GET", "/api/chat/due"); banners = dueBanners(d); setNavBadge(d.attention); } catch (e) { /* the plan stands without it */ }
 
   const hero = h("div", {class: "card"},
     h("div", {class: "hero"}, h("span", {class: "big"}, "T" + t.index + " · " + t.hours + "h a week"),
@@ -555,7 +571,25 @@ async function planView() {
 
   main.replaceChildren(h("h2", {}, o.plan_name),
     h("p", {class: "lede"}, "Where you are, what moves you, and what is next."),
-    hero, week, horizon, outline, recent, goals);
+    ...banners, hero, week, horizon, outline, recent, goals);
+}
+
+// ---- check-in status, shown wherever you are ----------------------------------------------------
+// A count on the Coach tab, and a card on the Plan screen, whenever the weekly check-in or the
+// block review is due. The rules are the server's (src/coach/due.py); this only displays them.
+function setNavBadge(n) {
+  const a = document.querySelector('nav a[data-view="coach"]'); if (!a) return;
+  const old = a.querySelector(".badge"); if (old) old.remove();
+  if (n) a.append(h("span", {class: "badge", title: n + " check-in" + (n > 1 ? "s" : "") + " waiting"}, String(n)));
+}
+async function refreshBadge() { try { setNavBadge((await api("GET", "/api/chat/due")).attention); } catch (e) { /* a convenience */ } }
+function dueBanners(d) {
+  const labels = {ok: "Up to date", due: "Due", overdue: "Overdue"};
+  return [["Weekly check-in", d.checkin], ["Block review", d.review]].filter(([, s]) => s.state !== "ok").map(([title, s]) =>
+    h("div", {class: "duecard " + s.state},
+      h("div", {class: "duehead"}, h("b", {}, title), h("span", {class: "pill " + s.state}, labels[s.state])),
+      s.reasons.map(r => h("p", {class: "hint"}, r)),
+      h("a", {href: "#coach", class: "btnlink"}, h("button", {class: "primary"}, "Open the coach"))));
 }
 
 // ---- coach ------------------------------------------------------------------------------------
@@ -611,10 +645,10 @@ function markdown(text) {
   flush(); return box;
 }
 
-async function streamAsk(question, sessionId, on) {
+async function streamAsk(body, on) {
   const r = await fetch("/api/chat/ask", {method: "POST",
     headers: {"Content-Type": "application/json", "X-Fitness-Token": await getToken()},
-    body: JSON.stringify({question, session_id: sessionId})});
+    body: JSON.stringify(body)});
   if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(typeof d.detail === "string" ? d.detail : "request failed (" + r.status + ")"); }
   const reader = r.body.getReader(), dec = new TextDecoder(); let buf = "";
   for (;;) {
@@ -663,18 +697,23 @@ async function coachView() {
     if (write && result) el.append(h("small", {}, String(result).slice(0, 200)));
   }
 
-  async function ask(question) {
-    if (busy || !question.trim()) return;
-    busy = true; send.disabled = true; box.value = "";
-    if (log.querySelector(".starters")) log.replaceChildren();
-    log.append(bubble("you", question));
-    let text = "", answer = null, chips = [], current = null;
+  // One path for every kind of turn. A conversation question continues the open session; a
+  // check-in or block review always starts a new one, and the server records it when it works.
+  async function run(label, body, structured) {
+    if (busy || (!structured && !body.question.trim())) return;
+    busy = true; send.disabled = true; box.value = ""; lockStarts(true);
+    if (structured) { sessionId = null; remember(null); log.replaceChildren(); }
+    else if (log.querySelector(".starters")) log.replaceChildren();
+    log.append(bubble("you", label));
+    let text = "", answer = null, chips = [], current = null, statusLine = null;
     const paint = () => { if (!answer) { answer = bubble("coach"); log.append(answer); } answer.replaceChildren(markdown(text)); };
     try {
-      await streamAsk(question, sessionId, ev => {
+      await streamAsk(Object.assign({session_id: structured ? null : sessionId}, body), ev => {
         const stick = nearBottom();
         if (ev.type === "session") { sessionId = ev.session_id; remember(sessionId); }
-        else if (ev.type === "text") { text += ev.text; paint(); }
+        else if (ev.type === "status") { statusLine = statusLine || h("div", {class: "tool"}); statusLine.textContent = ev.text; log.append(statusLine); }
+        else if (ev.type === "recorded") { log.append(h("div", {class: "tool write"}, ev.what === "checkin" ? "Recorded as this week's check-in" : "Block review filed")); }
+        else if (ev.type === "text") { if (statusLine) { statusLine.remove(); statusLine = null; } text += ev.text; paint(); }
         else if (ev.type === "tool_start") { current = chip(ev.name, ev.input); chips.push(current); log.append(current); answer = null; text = ""; }
         else if (ev.type === "tool_end") { const c = chips.find(x => x.dataset.name === ev.name && !x.dataset.done) || current; if (c) { c.dataset.done = "1"; finishChip(c, ev.result); } }
         else if (ev.type === "error") { log.append(h("div", {class: "msg bad", role: "alert"}, ev.message)); }
@@ -683,7 +722,42 @@ async function coachView() {
       if (!text && !answer && !chips.length) log.append(h("div", {class: "msg note"}, "The coach sent no reply."));
     } catch (e) {
       log.append(h("div", {class: "msg bad", role: "alert"}, e.message));
-    } finally { busy = false; send.disabled = false; box.focus(); loadPast(); }
+    } finally { busy = false; send.disabled = false; lockStarts(false); loadPast(); refreshDue(); }
+  }
+  const ask = q => run(q, {question: q}, false);
+
+  // ---- when a check-in is due -----------------------------------------------------------------
+  const duePanel = h("div", {class: "duepanel"});
+  const startButtons = [];
+  const lockStarts = on => startButtons.forEach(b => { b.disabled = on; });
+  const PILL = {ok: "Up to date", due: "Due", overdue: "Overdue"};
+  function dueCard(title, s, actions) {
+    return h("div", {class: "duecard " + s.state},
+      h("div", {class: "duehead"}, h("b", {}, title), h("span", {class: "pill " + s.state}, PILL[s.state] || s.state)),
+      s.reasons.map(r => h("p", {class: "hint"}, r)), actions);
+  }
+  async function refreshDue() {
+    let d; try { d = await api("GET", "/api/chat/due"); } catch (e) { return; }
+    setNavBadge(d.attention);
+    startButtons.length = 0;
+    const c = d.checkin, r = d.review;
+    const note = h("textarea", {rows: 2, placeholder: "Anything the coach should know first? (optional)", "aria-label": "Note for the check-in"});
+    const go = h("button", {class: c.state === "ok" ? "" : "primary"}, c.state === "ok" ? "Check in anyway" : "Start check-in");
+    go.addEventListener("click", () => run("Weekly check-in", {mode: "checkin", note: note.value.trim() || null}, true));
+    startButtons.push(go);
+    const last = h("p", {class: "hint"}, c.last_date ? "Last check-in: " + c.last_date + " (" + c.days_since + " day" + (c.days_since === 1 ? "" : "s") + " ago)." : "No check-in recorded yet.");
+    const cards = [dueCard("Weekly check-in", c, [last, note, go])];
+    if (r.state !== "ok" || r.next_close) {
+      const acts = [];
+      if (r.state !== "ok") {
+        const rb = h("button", {class: "primary"}, "Start block review");
+        rb.addEventListener("click", () => run("Block review", {mode: "cycle_review"}, true));
+        startButtons.push(rb); acts.push(rb);
+      }
+      cards.push(dueCard("Block review", r, acts));
+    }
+    duePanel.replaceChildren(...cards);
+    lockStarts(busy);
   }
 
   function showHistory(messages) {
@@ -700,10 +774,10 @@ async function coachView() {
     if (!log.children.length) empty();
   }
 
-  async function open(id) {
+  async function open(id, scroll = true) {
     sessionId = id || null; remember(sessionId);
     if (!id) { empty(); picker.value = ""; return; }
-    try { showHistory((await api("GET", "/api/chat/sessions/" + id)).messages); toBottom(); }
+    try { showHistory((await api("GET", "/api/chat/sessions/" + id)).messages); if (scroll) toBottom(); }
     catch (e) { sessionId = null; remember(null); empty(); }
   }
 
@@ -722,11 +796,12 @@ async function coachView() {
   fresh.addEventListener("click", () => { if (!busy) open(null); });
   picker.addEventListener("change", () => { if (!busy && picker.value) open(picker.value); });
 
-  main.replaceChildren(...head,
+  main.replaceChildren(...head, duePanel,
     h("div", {class: "coachbar"}, picker, fresh, h("span", {class: "detail"}, st.model)),
     log, h("div", {class: "bar composer"}, box, send));
+  refreshDue();
   await loadPast();
-  if (sessionId) await open(sessionId); else empty();
+  if (sessionId) await open(sessionId, false); else empty();
 }
 
 // ---- ladder -----------------------------------------------------------------------------------
@@ -820,6 +895,7 @@ async function route() {
   const view = views[name];
   document.querySelectorAll("nav a[data-view]").forEach(a =>
     a.classList.toggle("on", a.dataset.view === name));
+  refreshBadge();
   try { await view(); }
   catch (e) { main.replaceChildren(h("div", {class: "msg bad", role: "alert"}, e.message)); }
 }

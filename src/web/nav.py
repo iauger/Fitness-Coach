@@ -31,8 +31,20 @@ _CSS = """
   #fc-nav a:hover { color:#f9fafb; }
   #fc-nav a[aria-current="page"] { color:#f9fafb; background:rgba(255,255,255,.08); }
   #fc-nav.bleed { margin:-1.5rem -1.5rem 1.5rem; }
+  #fc-nav .fc-badge { display:inline-block; min-width:18px; margin-left:6px; padding:0 5px; border-radius:9px;
+                      background:#fbbf24; color:#111827; font-size:11px; font-weight:700; text-align:center; }
 </style>
 """
+
+# A count on the Coach link when a weekly check-in or a block review is due. The rules live in
+# src/coach/due.py and come back from the server; this only shows the number.
+_BADGE_SCRIPT = """<script>
+fetch('/api/chat/due').then(r => r.ok ? r.json() : null).then(d => {
+  if (!d || !d.attention) return;
+  const a = document.querySelector('#fc-nav a[href="/app#coach"]');
+  if (a) { const b = document.createElement('span'); b.className = 'fc-badge'; b.textContent = d.attention; a.appendChild(b); }
+}).catch(() => {});
+</script>"""
 
 
 def nav_html(active: str, bleed: bool = False) -> str:
@@ -40,7 +52,7 @@ def nav_html(active: str, bleed: bool = False) -> str:
         f'<a href="{href}"' + (' aria-current="page"' if key == active else "") + f">{label}</a>"
         for label, href, key in ITEMS)
     return (f'{_CSS}<nav id="fc-nav"{" class=bleed" if bleed else ""} aria-label="Main">'
-            f"<b>Fitness Coach</b>{links}</nav>")
+            f"<b>Fitness Coach</b>{links}</nav>{_BADGE_SCRIPT}")
 
 
 def with_nav(html: str, active: str, bleed: bool = False) -> str:

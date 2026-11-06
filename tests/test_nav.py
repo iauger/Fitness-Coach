@@ -105,3 +105,10 @@ def test_the_cached_page_is_not_stored_with_the_bar_in_it(client):
     client.get("/dashboard")
     client.get("/dashboard")
     assert client.get("/dashboard").text.count('<nav id="fc-nav"') == 1
+
+
+def test_the_bar_asks_the_server_whether_a_check_in_is_due():
+    """The count on the Coach link comes from the server's rules, not from the bar."""
+    out = nav_html("dashboard")
+    assert "fetch('/api/chat/due')" in out and "d.attention" in out
+    assert 'a[href="/app#coach"]' in out

@@ -15,6 +15,7 @@ import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -22,11 +23,16 @@ from pydantic import BaseModel, Field
 
 from src.analysis.report import coaching_context_text
 from src.api.cache import freshness_key
-from src.coach import chat_store
+from src import maintenance
+from src.clock import today_local
+from src.coach import chat_store, due
+from src.coach import session as coach_session
 from src.coach.prompt import build_system_prompt
 from src.coach import settings as coach_settings
 from src.coach.session import MAX_TOKENS, _client
 from src.coach.stream import Event, stream_turn
+from src.db.schema import read_connection
+from src.planning.constants import plan_name
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -53,8 +59,15 @@ _SENTINEL = object()
 
 
 class AskRequest(BaseModel):
-    question: str = Field(min_length=1, max_length=4000)
+    """
+    `conversation` is an open question. `checkin` and `cycle_review` are the two structured
+    runs: the server writes their opening message, they always start a new session, and a
+    successful one is *recorded* (a log row, a filed review) so the due-status can see it.
+    """
+    question: str | None = Field(default=None, max_length=4000)
     session_id: str | None = None
+    mode: Literal["conversation", "checkin", "cycle_review"] = "conversation"
+    note: str | None = Field(default=None, max_length=1000)     # check-in only: how you feel
 
 
 def _system_for(session_id: str) -> str:
@@ -68,6 +81,72 @@ def _system_for(session_id: str) -> str:
         cached = _SYSTEM_CACHE[key] = build_system_prompt(
             coaching_context_text(), mode="conversation")
     return cached
+
+
+def _pending_review_cycle(today=None) -> dict | None:
+    """The block a review would cover now, by the same rule the due-status shows."""
+    from src.analysis.training_plan import cycles
+    today = today or today_local()
+    with read_connection() as conn:
+        status = due.review_status(conn, today)
+    if status["cycle"] is None:
+        return None
+    return next((c for c in cycles(plan_name()) if c["start_date"] == status["cycle"]["start"]),
+                None)
+
+
+def _sync_quietly(queue: Queue) -> None:
+    """
+    Bring the data up to date before a structured run, as the command line always did.
+
+    Under the same lock as the background sync, so the two never write together; if that lock is
+    held the sync is already happening and its data is good enough. A failed sync (no network)
+    is reported and the run carries on with what is stored, because the athlete asked for a
+    check-in, not for a sync.
+    """
+    queue.put({"type": "status", "text": "Syncing your latest rides..."})
+    from src.sync import incremental_sync
+    try:
+        with maintenance.exclusive():
+            incremental_sync(silent=True)
+    except maintenance.AlreadyRunning:
+        pass
+    except Exception as exc:
+        queue.put({"type": "status", "text": f"Could not sync ({exc}); using what is already stored."})
+
+
+def _run_structured(session_id: str, mode: str, note: str | None, queue: Queue) -> None:
+    """A check-in or block review: sync, build the prompt, stream it, and record it if it worked."""
+    try:
+        _sync_quietly(queue)
+        if mode == "checkin":
+            inputs = coach_session.checkin_inputs(note or "")
+        else:
+            cyc = _pending_review_cycle()
+            if cyc is None:
+                raise RuntimeError("there is no closed block waiting for a review")
+            inputs = coach_session.cycle_review_inputs(cyc)
+        history = list(inputs["messages"])
+
+        text = ""
+        for event in stream_turn(_client(), inputs["model"], inputs["system"], history, MAX_TOKENS):
+            if event.type == "turn_end":
+                text = event.text
+            queue.put(event)
+
+        if not text.strip():
+            queue.put(Event("error", message="The coach returned no answer, so nothing was recorded."))
+            return
+        if mode == "checkin":
+            coach_session.finish_checkin(text, inputs["model"], session_id)
+        else:
+            coach_session.finish_cycle_review(inputs, text)
+        chat_store.replace_history(session_id, history)
+        queue.put({"type": "recorded", "what": mode})
+    except Exception as exc:
+        queue.put(Event("error", message=f"{type(exc).__name__}: {exc}"))
+    finally:
+        queue.put(_SENTINEL)
 
 
 def _sse(event: Event | dict) -> str:
@@ -103,15 +182,28 @@ async def ask(req: AskRequest) -> StreamingResponse:
     refused = coach_settings.refusal()
     if refused:
         raise HTTPException(*refused)
+    structured = req.mode != "conversation"
+    if structured and req.session_id is not None:
+        raise HTTPException(422, f"a {req.mode} always starts a new session")
+    if not structured and not (req.question or "").strip():
+        raise HTTPException(422, "a question is required")
+    if req.mode == "cycle_review" and _pending_review_cycle() is None:
+        raise HTTPException(409, "There is no closed block waiting for a review.")
+
     session_id = req.session_id
     if session_id is None:
-        session_id = chat_store.new_session(coach_settings.model())
+        session_id = chat_store.new_session(
+            coach_settings.model(), mode=req.mode,
+            title={"checkin": "Weekly check-in", "cycle_review": "Block review"}.get(req.mode))
     elif not chat_store.session_exists(session_id):
         raise HTTPException(404, f"unknown session {session_id}")
 
     queue: Queue = Queue()
     loop = asyncio.get_running_loop()
-    loop.run_in_executor(_EXECUTOR, _run_and_enqueue, session_id, req.question, queue)
+    if structured:
+        loop.run_in_executor(_EXECUTOR, _run_structured, session_id, req.mode, req.note, queue)
+    else:
+        loop.run_in_executor(_EXECUTOR, _run_and_enqueue, session_id, req.question, queue)
 
     async def events():
         # Tells the client which session this is before any model output, so a page that started
@@ -134,6 +226,13 @@ async def ask(req: AskRequest) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.get("/due")
+def due_status() -> dict:
+    """Whether a weekly check-in or a block review is worth doing now, and why."""
+    with read_connection() as conn:
+        return due.status(conn, today_local())
 
 
 @router.get("/status")

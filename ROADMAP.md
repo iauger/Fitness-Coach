@@ -125,9 +125,18 @@ the model writes is rendered as text nodes, never HTML. `coach.enabled` and `coa
 actually read (`src/coach/settings.py`): they were declared and used by nothing. Asking it why the
 plan says what it does found the coach telling the athlete that promotion needs "three times in a
 row"; the gate needs one met week, so the snapshot now states the rule exactly from the gate's own
-numbers (`gate_thresholds`). Still to build: the weekly check-in as a button (it has its own
-prompt mode and writes a weekly summary), ending a conversation with a saved summary as the CLI
-does, and suggestions the coach makes as buttons (raise the limit, add a day) instead of text.
+numbers (`gate_thresholds`). The weekly check-in and the block review now run from that screen, with a status
+(`src/coach/due.py`, `GET /api/chat/due`): the weekly one is due once a week has closed since the
+last check-in, overdue at two weeks or never done, and a progression event (the tier moved up or
+down, or a missed week) is its own reason; it never prompts within two days of the last one. The
+block review is due when a block of the *current* plan has closed with no review filed. A count
+shows on the Coach tab on every page and a card on the Plan screen. Both runs sync first, are
+recorded only when the model returned something (the log row is what the status reads, and an
+empty review row would mark a block reviewed for ever), and share their briefing with the command
+line (`checkin_inputs`, `cycle_review_inputs`), which now syncs before it builds the briefing
+rather than after. Still to build: ending a conversation with a saved summary as the CLI does
+(app conversations leave no memory yet), and suggestions the coach makes as buttons (raise the
+limit, add a day) instead of text.
 
 **Ride limits are built** (`max_ride_min`, `day_max_ride_min`), as the second half of what the UI's
 setup wizard has to ask. The decision that matters is *derive inside, never clamp*: a rung is

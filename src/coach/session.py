@@ -52,30 +52,32 @@ def _run_tool_loop(client: Anthropic, model: str, system: str,
     return run_turn(client, model, system, messages, MAX_TOKENS)
 
 
-def checkin(feel_context: str = "", verbose: bool = False) -> str:
+def checkin_inputs(feel_context: str = "") -> dict:
     """
-    Single-shot weekly check-in. Builds full context, runs tool loop, returns response.
-    feel_context: optional pre-session subjective input from the user.
+    Everything a weekly check-in turn needs: the system prompt, the opening message, the model.
+
+    Shared by the command line and the app, so the two cannot build a different check-in. The
+    caller syncs first: the context is built from the database, and building it before the sync
+    (as the CLI once did) briefed the coach on data that was about to be replaced.
     """
-    ctx = build_coaching_context()
-    snapshot = coaching_context_text(ctx)
-    system = build_system_prompt(snapshot, mode="checkin")
-    model = coach_model()
-
-    incremental_sync(silent=not verbose)
-
-    if verbose:
-        print(f"[coach] model: {model}")
-        print(f"[coach] system prompt lines: {len(system.splitlines())}")
-        print()
-
+    system = build_system_prompt(coaching_context_text(build_coaching_context()), mode="checkin")
     user_content = "Give me my weekly check-in."
     if feel_context:
         user_content += f"\n\nBefore you start: {feel_context}"
+    return {"system": system, "model": coach_model(),
+            "messages": [{"role": "user", "content": user_content}]}
 
-    client = _client()
-    messages = [{"role": "user", "content": user_content}]
-    response = _run_tool_loop(client, model, system, messages)
+
+def finish_checkin(response: str, model: str, session_id: str | None = None,
+                   verbose: bool = False) -> str:
+    """
+    Record a completed check-in: summarise the week that just ended, then log it.
+
+    Refuses an empty answer, the same guard the cycle review has: the log row is what the
+    due-status reads, so an empty one would silence the next prompt for a week.
+    """
+    if not (response or "").strip():
+        raise RuntimeError("the model returned no text; not recording an empty check-in")
 
     # Summarise the week that just ended, as a byproduct of the check-in rather than as its own
     # scheduled job — the check-in is already the weekly ritual, and this is the moment the
@@ -87,15 +89,30 @@ def checkin(feel_context: str = "", verbose: bool = False) -> str:
         if verbose:
             print(f"[coach] weekly summary skipped: {e}")
 
-    # persist to coaching_log
-    session_id = str(uuid.uuid4())[:8]
+    session_id = session_id or str(uuid.uuid4())[:8]
     with write_connection() as conn:
         conn.execute("""
             INSERT INTO coaching_log (session_id, date, type, model, content, created_at)
             VALUES (?, ?, 'checkin', ?, ?, ?)
-        """, (session_id, today_local_iso(), model, response,
-              utc_now_iso()))
+        """, (session_id, today_local_iso(), model, response, utc_now_iso()))
+    return session_id
 
+
+def checkin(feel_context: str = "", verbose: bool = False) -> str:
+    """
+    Single-shot weekly check-in. Builds full context, runs tool loop, returns response.
+    feel_context: optional pre-session subjective input from the user.
+    """
+    incremental_sync(silent=not verbose)
+    inputs = checkin_inputs(feel_context)
+
+    if verbose:
+        print(f"[coach] model: {inputs['model']}")
+        print(f"[coach] system prompt lines: {len(inputs['system'].splitlines())}")
+        print()
+
+    response = _run_tool_loop(_client(), inputs["model"], inputs["system"], inputs["messages"])
+    finish_checkin(response, inputs["model"], verbose=verbose)
     return response
 
 
@@ -115,35 +132,21 @@ def _summarise_last_week(verbose: bool = False) -> None:
               + (" (no notes — stats only)" if narrative is None else ""))
 
 
-def cycle_review(on: date | None = None, verbose: bool = False) -> str | None:
+def cycle_review_inputs(cyc: dict, verbose: bool = False) -> dict:
     """
-    4-week mesocycle review. Returns None if no cycle has closed yet.
+    What a block review needs for `cyc`: the system prompt (athlete context plus the block's
+    deterministic rollup), the opening message, the model, and what is needed to file the result.
 
-    Deliberately not auto-fired from incremental_sync(): sync runs at the start of every coach
-    session, so an automatic trigger would mean surprise API calls, and a cycle whose Monday
-    passed without any session being run would be missed silently. Invoked explicitly by
-    scripts/cycle_review.py; the weekly check-in points at it when a cycle has just closed.
-
-    Stored in cycle_reviews rather than coaching_log — see the schema comment for why.
+    Shared by the command line and the app. Everything that can fail does so here, before the
+    model is paid for: a block whose start Monday is outside any seeded plan used to raise only
+    *after* the review had been generated, and the text was lost with it.
     """
-    cyc = cycle_for_review(on)
-    if cyc is None:
-        return None
-
-    incremental_sync(silent=not verbose)
-
-    # Resolved before the API call, not after. This used to sit below _run_tool_loop and
-    # subscript current_week(...) directly, which is declared `-> dict | None` — so a cycle
-    # whose start Monday is outside any seeded plan raised TypeError *after* the model had been
-    # paid for, and the review text was lost with it.
     week = current_week(date.fromisoformat(cyc["start_date"]))
     if week is None:
         raise RuntimeError(
             f"cycle starting {cyc['start_date']} is not inside any seeded training plan, so "
             f"the review cannot be filed against one. Seed training_plan_weeks for that date "
             f"first — reviews are keyed on (plan_name, cycle_start).")
-    plan_name = week["plan_name"]
-
     metrics = cycle_metrics(cyc)
     prev = previous_review(cyc["start_date"])
     # Full athlete context plus the cycle rollup: the review still needs to know goals,
@@ -153,28 +156,49 @@ def cycle_review(on: date | None = None, verbose: bool = False) -> str | None:
         f"{snapshot}\n\n{'=' * 70}\n\n{cycle_context_text(metrics, prev)}",
         mode="cycle_review",
     )
-    model = coach_model()
-
     if verbose:
-        print(f"[coach] model: {model}")
         print(f"[coach] cycle: {cyc['start_date']} .. {cyc['end_date']} "
               f"(weeks {cyc['plan_week_range'][0]}-{cyc['plan_week_range'][1]})")
         print(f"[coach] comparing against: {prev['cycle_start'] if prev else 'no prior review'}")
         print()
+    return {"system": system, "model": coach_model(), "cyc": cyc, "metrics": metrics,
+            "plan_name": week["plan_name"],
+            "messages": [{"role": "user",
+                          "content": "That block just finished. Give me the cycle review."}]}
 
-    client = _client()
-    messages = [{"role": "user", "content":
-                 "That block just finished. Give me the cycle review."}]
-    response = _run_tool_loop(client, model, system, messages)
 
+def finish_cycle_review(inputs: dict, response: str) -> None:
+    """File a completed review, refusing an empty one."""
     if not (response or "").strip():
         # cycle_reviews is UNIQUE(plan_name, cycle_start), so an empty row is not a harmless
         # no-op: the cycle is thereafter treated as reviewed and never offered again.
         raise RuntimeError(
-            f"the model returned no text for the cycle starting {cyc['start_date']}; refusing "
-            f"to file an empty review, which would mark the cycle reviewed permanently.")
+            f"the model returned no text for the cycle starting {inputs['cyc']['start_date']}; "
+            f"refusing to file an empty review, which would mark the cycle reviewed permanently.")
+    save_review(inputs["plan_name"], inputs["metrics"], response, inputs["model"])
 
-    save_review(plan_name, metrics, response, model)
+
+def cycle_review(on: date | None = None, verbose: bool = False) -> str | None:
+    """
+    4-week mesocycle review. Returns None if no cycle has closed yet.
+
+    Deliberately not auto-fired from incremental_sync(): sync runs at the start of every coach
+    session, so an automatic trigger would mean surprise API calls, and a cycle whose Monday
+    passed without any session being run would be missed silently. Invoked explicitly by
+    scripts/cycle_review.py, or from the app when `coach.due` says a block has closed.
+
+    Stored in cycle_reviews rather than coaching_log — see the schema comment for why.
+    """
+    cyc = cycle_for_review(on)
+    if cyc is None:
+        return None
+
+    incremental_sync(silent=not verbose)
+    inputs = cycle_review_inputs(cyc, verbose=verbose)
+    if verbose:
+        print(f"[coach] model: {inputs['model']}")
+    response = _run_tool_loop(_client(), inputs["model"], inputs["system"], inputs["messages"])
+    finish_cycle_review(inputs, response)
     return response
 
 
