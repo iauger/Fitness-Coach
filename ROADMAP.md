@@ -1676,7 +1676,8 @@ fully covered, and never executed.
 
 ### Backlog, added 2026-11-05
 
-- **Version the tier ladder, and record which one graded each week.** `plan_progression` rows
+- ~~**Version the tier ladder, and record which one graded each week.**~~ **Done
+  2026-11-05, migration 10.** `plan_progression` rows
   carry `tier_applied`, which was stored precisely so a decision could be read back against
   the inputs it was made under. That stops being true the moment a ladder is re-derived:
   `tier_applied = 2` means one week of training before the re-bootstrap and a different one
@@ -1695,3 +1696,33 @@ fully covered, and never executed.
   middle of it, and the refusal path that protects it has only ever been seen on a database
   that already had history. The interesting case is the opposite: a fresh clone with almost no
   synced riding, where `BootstrapError` fires and the message has to be good enough to act on.
+
+#### Ladder versions, done 2026-11-05 (migration 10)
+
+Taken off the backlog before step 6, because the outgrown check had started recommending
+re-derivation and that made a theoretical gap into advice we were actively giving.
+
+**The gap.** `plan_progression.tier_applied` records which rung a week was asked to meet, and
+exists so a decision can be read back against the inputs it was made under — the same
+reasoning as `config_hash` on `plans`. Re-deriving a ladder broke that silently:
+`tier_applied = 2` meant one week of training before and a different one after, with nothing
+in the row to say which.
+
+**The fix, additive.** `tiers` gains `version`, keyed `UNIQUE(plan_id, version, tier_index)`,
+and stops being overwritten — `save` appends a new version and the old rungs stay, so a past
+decision can still be resolved. `plan_progression` gains `ladder_version`, written by
+`record_week` from whichever version was in force when the week was graded.
+
+**NULL means something.** Rows decided before a plan had a derived ladder were graded against
+the built-in rungs, and `ladder_for` returns those. Backfilling `1` onto them would claim they
+were graded by a ladder that did not exist when they closed — the exact dishonesty the column
+is here to prevent. That mutant was the only one of ten to survive the first pass: the
+migration could have written `1` into every old row and nothing failed.
+
+**What `--replace` means now.** Not "overwrite" — "derive a new version". It is still a flag,
+but for a different reason: re-deriving is no longer retroactively destructive, it is simply a
+real change to everything prescribed from the next roll onward.
+
+Verified live: re-derived, got version 2, confirmed v1 still loadable and byte-identical (same
+history, same config). The redundant version was then removed, since nothing referenced it and
+a version with no reason to exist is noise in the athlete's own data.

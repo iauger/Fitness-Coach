@@ -35,11 +35,41 @@ def _tier(row) -> Tier:
                 hard=row["hard"], hard_min=row["hard_min"], lit_min=row["lit_min"])
 
 
-def load(conn, plan_id: int) -> dict[int, Tier] | None:
-    """The plan's ladder as `progression.TIERS` is shaped, or None if it has none."""
+def current_version(conn, plan_id: int) -> int | None:
+    """The highest ladder version this plan has, or None if it has never been bootstrapped."""
+    row = conn.execute(
+        "SELECT MAX(version) FROM tiers WHERE plan_id = ?", (plan_id,)).fetchone()
+    return row[0] if row and row[0] is not None else None
+
+
+def load(conn, plan_id: int, version: int | None = None) -> dict[int, Tier] | None:
+    """
+    The plan's ladder as `progression.TIERS` is shaped, or None if it has none.
+
+    Defaults to the current version. Pass `version` to read the rungs a past decision was
+    graded under — which is the whole reason versions exist, since `tier_applied` on a
+    `plan_progression` row is meaningless without the ladder that produced it.
+    """
+    if version is None:
+        version = current_version(conn, plan_id)
+        if version is None:
+            return None
     rows = conn.execute(
-        "SELECT * FROM tiers WHERE plan_id = ? ORDER BY tier_index", (plan_id,)).fetchall()
+        "SELECT * FROM tiers WHERE plan_id = ? AND version = ? ORDER BY tier_index",
+        (plan_id, version)).fetchall()
     return {r["tier_index"]: _tier(r) for r in rows} if rows else None
+
+
+def ladder_for(conn, plan_id: int, decision: dict) -> dict[int, Tier] | None:
+    """
+    The rungs a recorded decision was graded against.
+
+    `ladder_version` is NULL on rows decided before the plan had a derived ladder; those were
+    graded against the built-in rungs, and that is what comes back. The distinction matters:
+    reading such a row against today's ladder is precisely the misreading this column prevents.
+    """
+    version = decision.get("ladder_version")
+    return dict(TIERS) if version is None else load(conn, plan_id, version)
 
 
 def require(conn, plan_id: int, plan_name: str = "") -> dict[int, Tier]:
@@ -67,8 +97,10 @@ def age_weeks(conn, plan_id: int, today: date) -> float | None:
     Read by the outgrown check, which leaves a recent ladder alone: re-deriving every few
     weeks would make `tier_applied` mean a different thing in every row of the decision log.
     """
+    version = current_version(conn, plan_id)
     row = conn.execute(
-        "SELECT MIN(created_at) FROM tiers WHERE plan_id = ?", (plan_id,)).fetchone()
+        "SELECT MIN(created_at) FROM tiers WHERE plan_id = ? AND version = ?",
+        (plan_id, version)).fetchone()
     if row is None or row[0] is None:
         return None
     try:
@@ -80,39 +112,47 @@ def age_weeks(conn, plan_id: int, today: date) -> float | None:
 
 def provenance(conn, plan_id: int) -> dict | None:
     """What the bootstrap observed, for explaining a ladder after the fact."""
+    version = current_version(conn, plan_id)
+    if version is None:
+        return None
     row = conn.execute(
-        "SELECT derived_from, notes, created_at FROM tiers WHERE plan_id = ? "
-        "ORDER BY tier_index LIMIT 1", (plan_id,)).fetchone()
+        "SELECT derived_from, notes, created_at FROM tiers WHERE plan_id = ? AND version = ? "
+        "ORDER BY tier_index LIMIT 1", (plan_id, version)).fetchone()
     if row is None:
         return None
-    return {"observed": json.loads(row["derived_from"]),
+    return {"version": version,
+            "observed": json.loads(row["derived_from"]),
             "notes": json.loads(row["notes"] or "[]"),
             "derived_at": row["created_at"]}
 
 
 def save(conn, plan_id: int, ladder: Ladder, replace: bool = False) -> int:
     """
-    Write a derived ladder. Returns the number of rungs written.
+    Write a derived ladder as a **new version**. Returns the number of rungs written.
 
-    `replace=False` refuses to overwrite an existing ladder, because re-deriving is not a
-    neutral act: the gate's stored decisions in `plan_progression` were graded against the
-    rungs that were in force when each week closed, and swapping the ladder underneath them
-    makes `tier_applied` mean something different for rows before and after. A re-bootstrap is
-    a deliberate choice, so it is a flag.
+    Nothing is deleted. The old rungs stay so that a decision recorded against them can still
+    be resolved — `tier_applied = 2` has to keep meaning what it meant on the day it was
+    written, and it only can if the ladder that produced it is still there to read.
+
+    `replace=False` still refuses, but for a different reason than it used to. Re-deriving is
+    no longer retroactively destructive; it is simply a real change to what gets prescribed
+    from the next roll onward, and that should be asked for rather than stumbled into.
     """
-    if not replace and load(conn, plan_id) is not None:
+    existing = current_version(conn, plan_id)
+    if existing is not None and not replace:
         raise ValueError(
-            f"plan {plan_id} already has a ladder. Re-deriving changes what the tiers already "
-            f"recorded in plan_progression meant, so pass --replace if that is intended.")
+            f"plan {plan_id} already has a ladder (version {existing}). Re-deriving changes "
+            f"what gets prescribed from the next roll onward, so pass --replace if that is "
+            f"intended. Past decisions keep the rungs they were graded against.")
 
-    conn.execute("DELETE FROM tiers WHERE plan_id = ?", (plan_id,))
+    version = (existing or 0) + 1
     now = utc_now_iso()
     observed = json.dumps(ladder.observed.as_dict(), sort_keys=True)
     notes = json.dumps(list(ladder.notes))
     conn.executemany(
-        "INSERT INTO tiers (plan_id, tier_index, rides, long_min, hard, hard_min, lit_min, "
-        "derived_from, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [(plan_id, t.index, t.rides, t.long_min, t.hard, t.hard_min, t.lit_min,
+        "INSERT INTO tiers (plan_id, version, tier_index, rides, long_min, hard, hard_min, "
+        "lit_min, derived_from, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [(plan_id, version, t.index, t.rides, t.long_min, t.hard, t.hard_min, t.lit_min,
           observed, notes, now) for t in ladder.tiers])
     return len(ladder.tiers)
 

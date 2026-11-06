@@ -677,6 +677,57 @@ def _m009_tiers_table(conn: sqlite3.Connection) -> None:
     conn.executescript(TIERS_SQL)
 
 
+def _m010_ladder_versions(conn: sqlite3.Connection) -> None:
+    """
+    A ladder gets a version, and every decided week records which one graded it.
+
+    `plan_progression.tier_applied` exists so a decision can be read back against the inputs it
+    was made under — the same reasoning as `config_hash` on `plans`. That stops being true the
+    moment a ladder is re-derived: `tier_applied = 2` means one week of training before the
+    re-derivation and a different one after, with nothing in the row to say which.
+
+    It became urgent rather than theoretical when the outgrown check started *recommending*
+    re-derivation. Telling an athlete to do something with a known unresolved consequence is
+    worse than not noticing in the first place.
+
+    So `tiers` stops being replaced and starts accumulating: `UNIQUE(plan_id, version,
+    tier_index)`, with the old rungs kept so a past decision can still be resolved. SQLite
+    cannot alter a UNIQUE constraint, so the table is rebuilt — the standard twelve-step
+    procedure, minus the foreign-key dance, since nothing references `tiers.id`.
+
+    **Backfill.** Existing rungs become version 1. `plan_progression.ladder_version` is left
+    NULL for every row already decided, and NULL has a meaning rather than being an absence:
+    *graded before this plan had a derived ladder, against the built-in rungs.* Writing 1 into
+    those rows would claim they were graded by a ladder that did not exist when they closed,
+    which is the exact dishonesty this column is here to prevent.
+    """
+    conn.executescript("""
+        CREATE TABLE tiers_new (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            plan_id       INTEGER NOT NULL REFERENCES plans(id),
+            version       INTEGER NOT NULL DEFAULT 1,
+            tier_index    INTEGER NOT NULL,
+            rides         INTEGER NOT NULL,
+            long_min      INTEGER NOT NULL,
+            hard          INTEGER NOT NULL,
+            hard_min      INTEGER NOT NULL,
+            lit_min       INTEGER NOT NULL,
+            derived_from  TEXT NOT NULL,
+            notes         TEXT,
+            created_at    TEXT NOT NULL,
+            UNIQUE(plan_id, version, tier_index)
+        );
+        INSERT INTO tiers_new (id, plan_id, version, tier_index, rides, long_min, hard,
+                               hard_min, lit_min, derived_from, notes, created_at)
+            SELECT id, plan_id, 1, tier_index, rides, long_min, hard, hard_min, lit_min,
+                   derived_from, notes, created_at FROM tiers;
+        DROP TABLE tiers;
+        ALTER TABLE tiers_new RENAME TO tiers;
+        CREATE INDEX IF NOT EXISTS idx_tiers_plan_version ON tiers(plan_id, version);
+    """)
+    add_column(conn, "plan_progression", "ladder_version", "INTEGER")
+
+
 # (version, name, step). Append only — never renumber or edit an applied migration.
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "baseline schema as of phase 12B", _m001_baseline),
@@ -688,6 +739,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (7, "close the cutover overlap", _m007_close_the_cutover_overlap),
     (8, "plans table and plan_id foreign keys", _m008_plans_table),
     (9, "tiers table: the ladder as data, with its provenance", _m009_tiers_table),
+    (10, "ladder versions, and which one graded each week", _m010_ladder_versions),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)

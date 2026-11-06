@@ -11,10 +11,13 @@ Usage:
     python scripts/bootstrap_plan.py --write --replace   # re-derive over an existing ladder
     python scripts/bootstrap_plan.py --weeks 52      # how much history to read
 
-Dry by default, because a ladder is the one piece of this system that is read every week for
-months and is awkward to change afterwards: the tiers already recorded in `plan_progression`
-were graded against whatever was in force at the time, so replacing it changes what those rows
-mean. Look at it before you keep it.
+Dry by default, because a ladder is read every week for months and decides every session in
+them. Look at it before you keep it.
+
+Re-deriving with `--replace` writes a **new version** rather than overwriting: the old rungs
+stay, and every week already decided keeps pointing at the ladder it was graded under. So
+re-deriving is safe for the record, and is still a real change to what gets prescribed from
+the next roll onward, which is why it needs the flag.
 """
 
 import argparse
@@ -56,7 +59,8 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     p.add_argument("--write", action="store_true", help="store the ladder (default: dry run)")
     p.add_argument("--replace", action="store_true",
-                   help="overwrite an existing ladder; changes what recorded tiers meant")
+                   help="re-derive over an existing ladder, as a new version; past decisions "
+                        "keep the rungs they were graded against")
     p.add_argument("--weeks", type=int, default=78,
                    help="how many weeks of history to read (default 78)")
     p.add_argument("--compare", action="store_true",
@@ -96,8 +100,12 @@ def main() -> int:
         except ValueError as exc:
             print(f"\n  {exc}\n")
             return 1
+        version = tiers_store.current_version(conn, plan.id)
 
-    print(f"\n  stored {written} rungs for {name} (plan {plan.id}).\n")
+    print(f"\n  stored {written} rungs for {name} as ladder version {version}.")
+    if version > 1:
+        print("  Weeks already decided keep the version they were graded against.")
+    print()
     return 0
 
 

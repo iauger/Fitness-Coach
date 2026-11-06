@@ -29,7 +29,7 @@ from src.analysis.activities import week_volume
 from src.analysis.dates import last_completed_week, monday_of, mondays_between
 from src.clock import today_local, utc_now_iso
 from src.planning.blocks import ROTATION_LOOP_FROM, advance_position
-from src.planning import plans
+from src.planning import plans, tiers_store
 from src.planning.constants import (
     configured_slug, plan_name as configured_plan_name, plan_start_monday,
 )
@@ -75,22 +75,31 @@ def record_week(conn, graded: dict, decision, block_index: int, week_in_block: i
 
     The caller supplies `block_index`/`week_in_block` for the *next* week, already advanced by
     `blocks.advance_position` — the rotation is that module's business, not the gate's.
+
+    **`ladder_version` is the point of this row being readable later.** `tier_applied` records
+    which rung was asked for; the version records which ladder that rung came from. Without
+    it, re-deriving makes `tier_applied = 2` mean one thing before and another after, with
+    nothing in the row to say which — the same failure `config_hash` exists to prevent one
+    level up. It is looked up here rather than threaded in because grading always uses the
+    ladder currently in force, so the current version is always the right answer; NULL means
+    the week was graded before this plan had a derived ladder, against the built-in rungs.
     """
     plan_name = plan_name or configured_plan_name()
+    plan_id = plans.ensure(conn, plans.resolve(conn, plan_name, configured_slug()),
+                           plan_name, started_on=plan_start_monday()).id
     cur = conn.execute("""
         INSERT INTO plan_progression (
             plan_name, plan_id, week_start, ride_minutes, ride_days, strength_logged,
             outcome, tier_applied, verdict, tier_next, week_type_next, rotation,
-            block_index, week_in_block, reason, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            block_index, week_in_block, reason, created_at, ladder_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(plan_name, week_start) DO NOTHING
-    """, (plan_name,
-          plans.ensure(conn, plans.resolve(conn, plan_name, configured_slug()),
-                       plan_name, started_on=plan_start_monday()).id,
+    """, (plan_name, plan_id,
           graded["week_start"], graded["ride_min"], graded["ride_days"],
           strength_logged, graded["outcome"], graded["tier"], decision.verdict, decision.tier,
           decision.week_type, decision.rotation, block_index, week_in_block,
-          decision.reason, utc_now_iso()))
+          decision.reason, utc_now_iso(),
+          tiers_store.current_version(conn, plan_id)))
     return cur.rowcount > 0
 
 
