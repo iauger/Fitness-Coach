@@ -92,6 +92,16 @@ keeps the token from other origins. A dev frontend on another port is therefore 
 serve the UI from this app, or widen deliberately with `FITNESS_COACH_ALLOWED_HOSTS`. A small slice
 of the authentication work, not the whole of it. Config writes go through `src/config_write.py` (ruamel.yaml: comments survive, the result is validated before an atomic replace).
 
+**The first screens are built** (2026-11-06): `/app`, one HTML file with no build step, served by
+the same process so it shares the guard's origin. *Setup* is `firstrun.checks()` as a checklist
+(`GET /api/setup`, the same list `status.py` prints) and *Settings* edits availability, ride limits,
+long-ride day, lifting days and the calendar push through `PUT /api/settings`, which refuses
+anything outside a pinned whitelist (no server host or port, plan slug or coach model) and returns
+the checklist again so a stale ladder shows on the save that caused it. This is vanilla JS rather
+than the Vite/React/TypeScript above, deliberately for now: two screens do not earn a toolchain,
+and the move costs one file. Still to build: the setup steps that only print a command today
+(FTP, history sync, ladder) as buttons, goals editing, the plan screen, the calendar home.
+
 **Ride limits are built** (`max_ride_min`, `day_max_ride_min`), as the second half of what the UI's
 setup wizard has to ask. The decision that matters is *derive inside, never clamp*: a rung is
 graded against 90% of its minutes, so a ride shortened to fit leaves a rung the gate expects and

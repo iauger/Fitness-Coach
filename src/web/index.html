@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fitness Coach</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --bg:#111827; --surface:#1f2937; --border:#374151; --text:#f9fafb; --sub:#9ca3af;
+          --accent:#60a5fa; --ok:#34d399; --warn:#fbbf24; --bad:#f87171; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:15px/1.5 Inter, system-ui, sans-serif; }
+  header { display:flex; flex-wrap:wrap; gap:8px 24px; align-items:center;
+           padding:12px 16px; border-bottom:1px solid var(--border); background:var(--surface); }
+  header h1 { font-size:16px; margin:0 8px 0 0; }
+  nav { display:flex; flex-wrap:wrap; gap:4px; }
+  nav a { color:var(--sub); text-decoration:none; padding:6px 12px; border-radius:6px; }
+  nav a.on { color:var(--text); background:rgba(255,255,255,.08); }
+  nav a:hover { color:var(--text); }
+  main { max-width:760px; margin:0 auto; padding:24px 16px 64px; }
+  h2 { font-size:20px; margin:0 0 4px; }
+  p.lede { color:var(--sub); margin:0 0 20px; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:10px;
+          padding:16px; margin-bottom:16px; }
+  .card h3 { margin:0 0 4px; font-size:15px; }
+  .card p.hint { color:var(--sub); font-size:13px; margin:0 0 12px; }
+  .row { display:flex; gap:12px; align-items:flex-start; padding:12px 0;
+         border-top:1px solid var(--border); }
+  .row:first-child { border-top:0; }
+  .mark { width:22px; height:22px; flex:none; border-radius:50%; text-align:center;
+          font-size:13px; line-height:22px; color:#111827; font-weight:700; }
+  .mark.ok { background:var(--ok); } .mark.next { background:var(--accent); }
+  .mark.warn { background:var(--warn); }
+  .name { font-weight:600; } .detail { color:var(--sub); font-size:14px; }
+  code { display:block; margin-top:6px; padding:8px 10px; background:#0b1220; border-radius:6px;
+         font:13px ui-monospace, monospace; color:#d1d5db; overflow-x:auto; white-space:pre; }
+  label.f { display:block; margin-bottom:12px; font-size:14px; }
+  label.f span { display:block; color:var(--sub); font-size:13px; margin-bottom:4px; }
+  input[type=text], input[type=number], input[type=date], select, textarea {
+    width:100%; padding:8px 10px; background:#0b1220; color:var(--text);
+    border:1px solid var(--border); border-radius:6px; font:inherit; }
+  input:focus, select:focus, textarea:focus, button:focus-visible {
+    outline:2px solid var(--accent); outline-offset:1px; }
+  .days { display:grid; grid-template-columns:repeat(7, minmax(0,1fr)); gap:8px; }
+  .day { position:relative; text-align:center; font-size:13px; }
+  .day label { display:block; padding:6px 0; border:1px solid var(--border); border-radius:6px;
+               cursor:pointer; color:var(--sub); }
+  .day input[type=checkbox] { position:absolute; opacity:0; }
+  .day input[type=checkbox]:checked + label { background:rgba(96,165,250,.18);
+                                              border-color:var(--accent); color:var(--text); }
+  .day input[type=checkbox]:focus-visible + label { outline:2px solid var(--accent); }
+  .day input[type=number] { margin-top:6px; padding:6px 0; text-align:center; appearance:textfield;
+                            -moz-appearance:textfield; }
+  button { padding:9px 16px; border-radius:6px; border:1px solid var(--border);
+           background:var(--surface); color:var(--text); font:inherit; cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#0b1220;
+                   font-weight:600; }
+  button:disabled { opacity:.5; cursor:default; }
+  .msg { padding:10px 12px; border-radius:6px; margin:12px 0; font-size:14px; }
+  .msg.bad { background:rgba(248,113,113,.12); border:1px solid var(--bad); }
+  .msg.good { background:rgba(52,211,153,.12); border:1px solid var(--ok); }
+  .msg.note { background:rgba(251,191,36,.10); border:1px solid var(--warn); }
+  .bar { position:sticky; bottom:0; padding:12px 0; background:var(--bg); display:flex;
+         gap:12px; align-items:center; }
+  .toggle { display:flex; gap:10px; align-items:flex-start; }
+  .toggle input { margin-top:5px; }
+  @media (max-width:520px) { .days { gap:4px; } .day label { font-size:12px; }
+    .day input[type=number] { font-size:12px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Fitness Coach</h1>
+  <nav aria-label="Main">
+    <a href="#setup" data-view="setup">Setup</a>
+    <a href="#settings" data-view="settings">Settings</a>
+    <a href="/">Dashboard</a>
+    <a href="/calendar">Calendar</a>
+  </nav>
+</header>
+<main id="main" aria-live="polite"></main>
+
+<script>
+"use strict";
+const DAYS = ["mon","tue","wed","thu","fri","sat","sun"];
+const FULL = {mon:"Monday",tue:"Tuesday",wed:"Wednesday",thu:"Thursday",fri:"Friday",
+              sat:"Saturday",sun:"Sunday"};
+const main = document.getElementById("main");
+
+// ---- the write token -------------------------------------------------------------------------
+// The server refuses any non-GET without it. It is per server run, so fetch it again on a 403
+// rather than trusting a copy that may predate a restart.
+let token = null;
+async function getToken(force) {
+  if (!token || force) token = (await (await fetch("/api/session")).json()).token;
+  return token;
+}
+async function api(method, path, body) {
+  const send = async () => fetch(path, {
+    method,
+    headers: Object.assign({"Content-Type": "application/json"},
+      method === "GET" ? {} : {"X-Fitness-Token": await getToken()}),
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  let r = await send();
+  if (r.status === 403 && method !== "GET") { await getToken(true); r = await send(); }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(typeof data.detail === "string" ? data.detail : "request failed (" + r.status + ")");
+  return data;
+}
+
+// ---- tiny DOM helper: text nodes only, never an HTML string, so a config value cannot inject markup
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (v === true) el.setAttribute(k, "");
+    else if (v !== false && v != null) el.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid != null) el.append(kid);
+  return el;
+}
+
+// ---- setup ------------------------------------------------------------------------------------
+async function setupView() {
+  main.replaceChildren(h("p", {class: "lede"}, "Checking…"));
+  const s = await api("GET", "/api/setup");
+  const firstOpen = s.checks.findIndex(c => !c.ok && c.blocking);
+  main.replaceChildren(
+    h("h2", {}, s.ready ? "You are set up" : "Finish setting up"),
+    h("p", {class: "lede"}, s.ready
+      ? "Everything the plan needs is in place. Anything marked below is worth a look, not a blocker."
+      : "These run in order; the first open step is the one to do next."),
+    h("div", {class: "card"}, s.checks.map((c, i) => {
+      const cls = c.ok ? "ok" : (!c.blocking ? "warn" : (i === firstOpen ? "next" : "warn"));
+      return h("div", {class: "row"},
+        h("div", {class: "mark " + cls, "aria-hidden": "true"},
+          c.ok ? "✓" : (c.blocking ? String(i + 1) : "!")),
+        h("div", {},
+          h("div", {class: "name"}, c.name + (c.ok ? "" : (c.blocking ? " (to do)" : " (worth a look)"))),
+          h("div", {class: "detail"}, c.detail),
+          !c.ok && c.fix ? h("code", {}, c.fix) : null));
+    })),
+    h("button", {onclick: setupView}, "Check again"),
+    " ",
+    h("a", {href: "#settings"}, h("button", {}, "Change settings")));
+}
+
+// ---- settings ---------------------------------------------------------------------------------
+async function settingsView() {
+  main.replaceChildren(h("p", {class: "lede"}, "Loading…"));
+  const {values: v} = await api("GET", "/api/settings");
+  const limits = v["plan.day_max_ride_min"] || {};
+  const open = v["plan.available_days"] || DAYS;
+
+  const f = {};   // dotted config path -> function returning the form's current value for it
+  const text = (path, label, hint) => {
+    const input = h("input", {type: "text", value: v[path] ?? ""});
+    f[path] = () => input.value.trim();
+    return h("label", {class: "f"}, h("span", {}, label + (hint ? " — " + hint : "")), input);
+  };
+  const num = (path, label, hint, min) => {
+    const input = h("input", {type: "number", min: min ?? 0, step: 1, value: v[path] ?? ""});
+    f[path] = () => input.value.trim() === "" ? null : Number(input.value);
+    return h("label", {class: "f"}, h("span", {}, label + (hint ? " — " + hint : "")), input);
+  };
+
+  const dayBoxes = {}, dayLimits = {};
+  const dayRow = h("div", {class: "days", role: "group", "aria-label": "Days you can train"},
+    DAYS.map(d => {
+      const box = h("input", {type: "checkbox", id: "d-" + d, checked: open.includes(d)});
+      const lim = h("input", {type: "number", min: 30, step: 5, placeholder: "min",
+                              "aria-label": FULL[d] + " ride limit in minutes", value: limits[d] ?? ""});
+      dayBoxes[d] = box; dayLimits[d] = lim;
+      return h("div", {class: "day"}, box, h("label", {for: "d-" + d}, d.toUpperCase()), lim);
+    }));
+  f["plan.available_days"] = () => {
+    const on = DAYS.filter(d => dayBoxes[d].checked);
+    return on.length === 7 ? null : on;
+  };
+  f["plan.day_max_ride_min"] = () => {
+    const m = {};
+    for (const d of DAYS) if (dayLimits[d].value.trim() !== "") m[d] = Number(dayLimits[d].value);
+    return Object.keys(m).length ? m : null;
+  };
+  const longDay = h("select", {}, h("option", {value: ""}, "Let the plan choose"),
+    DAYS.map(d => h("option", {value: d, selected: v["plan.long_ride_day"] === d}, FULL[d])));
+  f["plan.long_ride_day"] = () => longDay.value || null;
+
+  const push = h("input", {type: "checkbox", id: "push",
+                           checked: v["integrations.intervals_icu.push_calendar"]});
+  f["integrations.intervals_icu.push_calendar"] = () => push.checked;
+
+  const notes = h("textarea", {rows: 3}, v["athlete.notes"] || "");
+  f["athlete.notes"] = () => notes.value.trim();
+
+  const status = h("div", {});
+  const save = h("button", {class: "primary"}, "Save changes");
+  save.addEventListener("click", async () => {
+    const changes = {};
+    for (const [path, read] of Object.entries(f)) {
+      const now = read();
+      const was = v[path] ?? null;
+      if (JSON.stringify(now) !== JSON.stringify(was) && !(now === "" && was === null)) changes[path] = now;
+    }
+    if (!Object.keys(changes).length) {
+      status.replaceChildren(h("div", {class: "msg note"}, "Nothing to save."));
+      return;
+    }
+    save.disabled = true;
+    try {
+      const out = await api("PUT", "/api/settings", {changes});
+      Object.assign(v, out.values);
+      const worth = out.checks.filter(c => !c.ok);
+      status.replaceChildren(
+        h("div", {class: "msg good"}, "Saved. Comments in your config file are kept."),
+        worth.length ? h("div", {class: "msg note"}, "Worth a look:",
+          worth.map(c => h("div", {}, h("b", {}, c.name + ": "), c.detail))) : null);
+    } catch (e) {
+      status.replaceChildren(h("div", {class: "msg bad", role: "alert"}, e.message));
+    } finally { save.disabled = false; }
+  });
+
+  main.replaceChildren(
+    h("h2", {}, "Settings"),
+    h("p", {class: "lede"}, "These write to config/athlete.yaml. A change that does not fit is refused with the reason, and nothing is saved."),
+    h("div", {class: "card"}, h("h3", {}, "You"),
+      text("athlete.name", "Name"),
+      text("athlete.timezone", "Timezone", "an IANA name such as America/Chicago; it decides what today means"),
+      h("label", {class: "f"}, h("span", {}, "Notes for the coach — life load, work, kids"), notes)),
+    h("div", {class: "card"}, h("h3", {}, "When you can train"),
+      h("p", {class: "hint"}, "Tick the days you can ride or lift on. Under each, an optional limit on the longest ride that day, in minutes."),
+      dayRow,
+      h("div", {style: "height:16px"}),
+      num("plan.max_ride_days", "Most days a week you will ride", "an upper bound; how many you ride is read from your history", 2),
+      num("plan.max_ride_min", "Longest any single ride may be, in minutes", "blank for no limit", 30),
+      h("label", {class: "f"}, h("span", {}, "Long ride day"), longDay),
+      num("plan.strength_days", "Lifting days a week", "never trimmed by a tier", 0)),
+    h("div", {class: "card"}, h("h3", {}, "intervals.icu calendar"),
+      h("p", {class: "hint"}, "Off by default. When on, each sync writes your next few weeks to your real intervals.icu calendar, and from there to Zwift and Garmin. A second copy of this project pointed at the same account will overwrite the first one's events."),
+      h("div", {class: "toggle"}, push, h("label", {for: "push"}, "Push the plan to my intervals.icu calendar"))),
+    status,
+    h("div", {class: "bar"}, save));
+}
+
+// ---- routing ----------------------------------------------------------------------------------
+const views = {setup: setupView, settings: settingsView};
+async function route() {
+  const name = (location.hash || "#setup").slice(1);
+  const view = views[name] || setupView;
+  document.querySelectorAll("nav a[data-view]").forEach(a =>
+    a.classList.toggle("on", a.dataset.view === name));
+  try { await view(); }
+  catch (e) { main.replaceChildren(h("div", {class: "msg bad", role: "alert"}, e.message)); }
+}
+addEventListener("hashchange", route);
+route();
+</script>
+</body>
+</html>

@@ -18,6 +18,7 @@ is item 16 and is a VPN's job, not this server's.
 
 import sqlite3
 import os
+from pathlib import Path
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -28,6 +29,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from src.api.cache import CACHE
 from src.api.guard import Guard, TOKEN, TOKEN_PATH
 from src.api.chat import router as chat_router
+from src.api.setup import router as setup_router
 from src.analysis.activities import recent_activities, sport_distribution, weekly_load_by_sport
 from src.analysis.cycle import cycles, cycle_metrics, cycle_for_review, latest_review
 from src.analysis.derive import derived_metrics
@@ -115,6 +117,7 @@ app = FastAPI(
 
 app.add_middleware(Guard)
 app.include_router(chat_router)
+app.include_router(setup_router)
 
 
 @app.get(TOKEN_PATH, tags=["ops"])
@@ -136,6 +139,14 @@ def calendar(weeks: int = Query(6, ge=1, le=52)) -> HTMLResponse:
     return HTMLResponse(
         CACHE.get(f"calendar:{weeks}", lambda: build_calendar_html(weeks=weeks))
     )
+
+
+@app.get("/app", response_class=HTMLResponse, tags=["pages"])
+def web_app() -> HTMLResponse:
+    """The setup and settings screens. One file, no build step, served from here so that it
+    shares this origin (the guard refuses any other)."""
+    return HTMLResponse((Path(__file__).parent.parent / "web" / "index.html")
+                        .read_text(encoding="utf-8"))
 
 
 # The generated file links to "calendar.html"; keep that working so the served page and the

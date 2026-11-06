@@ -69,8 +69,24 @@ def _set(root: CommentedMap, dotted: str, value: Any) -> None:
         node = child
     if value is None:
         node.pop(leaf, None)
-    else:
+    elif leaf in node:
         node[leaf] = _plain(value)
+    else:
+        last = list(node)[-1] if node else None
+        node[leaf] = _plain(value)
+        _keep_section_gap(node, last, leaf)
+
+
+def _keep_section_gap(node: CommentedMap, was_last: str | None, now_last: str) -> None:
+    """
+    ruamel hangs the blank line after a section on that section's last key. Add a key after it
+    and the blank line lands between the old last key and the new one, running the next section
+    into this one. Move it to the new last key so the gap stays where it was.
+    """
+    entry = node.ca.items.get(was_last) if was_last is not None else None
+    if entry and len(entry) > 2 and entry[2] is not None and entry[2].value.startswith("\n"):
+        node.ca.items[now_last] = [None, None, entry[2], None]
+        node.ca.items[was_last] = [None, None, None, None]
 
 
 def apply(text: str, changes: dict[str, Any]) -> str:
@@ -100,7 +116,9 @@ def update(changes: dict[str, Any], path: Path | None = None) -> cfg.Config:
         raise ConfigWriteError("refusing to write the committed example config")
     if not path.exists():
         raise ConfigWriteError(f"no configuration at {path}; the first run creates it")
-    old = path.read_text(encoding="utf-8")
+    raw = path.read_bytes().decode("utf-8")
+    crlf = "\r\n" in raw                    # a file edited on Windows keeps its line endings
+    old = raw.replace("\r\n", "\n")
     new = apply(old, changes)
     try:
         result = cfg.parse(new)              # nothing is written unless this passes
@@ -109,8 +127,8 @@ def update(changes: dict[str, Any], path: Path | None = None) -> cfg.Config:
     if new == old:
         return result
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(new, encoding="utf-8", newline="\n")
-    path.with_name(path.name + ".bak").write_text(old, encoding="utf-8", newline="\n")
+    tmp.write_bytes((new.replace("\n", "\r\n") if crlf else new).encode("utf-8"))
+    path.with_name(path.name + ".bak").write_bytes(raw.encode("utf-8"))
     os.replace(tmp, path)
     cfg.reset()
     return result

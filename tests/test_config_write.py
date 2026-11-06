@@ -148,3 +148,41 @@ def test_a_failure_while_replacing_leaves_the_original_whole(path, monkeypatch):
     with pytest.raises(OSError):
         update({"plan.max_ride_days": 3}, path)
     assert path.read_bytes() == before
+
+
+CR, LF = chr(13).encode(), chr(10).encode()
+
+
+def test_a_windows_file_keeps_its_line_endings(path):
+    """Mutant: normalise to LF on write. The real config is CRLF, so a first save would turn
+    every line of it into a diff."""
+    crlf = path.read_bytes().replace(CR + LF, LF).replace(LF, CR + LF)
+    path.write_bytes(crlf)
+    update({"plan.max_ride_days": 3}, path)
+    out = path.read_bytes()
+    assert out.count(LF) == out.count(CR + LF) > 0            # no bare LF anywhere
+    assert path.with_name("athlete.yaml.bak").read_bytes() == crlf   # the backup is the original
+
+
+def test_a_unix_file_stays_unix(path):
+    path.write_bytes(path.read_bytes().replace(CR + LF, LF))
+    update({"plan.max_ride_days": 3}, path)
+    assert CR not in path.read_bytes()
+
+
+def test_a_new_key_does_not_swallow_the_gap_before_the_next_section():
+    """Mutant: leave ruamel's placement. The blank line lands between the old last key and the
+    new one, and the next section runs straight into this one."""
+    text = """plan:
+  a: 1
+
+other:
+  b: 2
+"""
+    assert apply(text, {"plan.c": 3}) == """plan:
+  a: 1
+  c: 3
+
+other:
+  b: 2
+"""

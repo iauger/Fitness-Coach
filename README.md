@@ -214,7 +214,7 @@ In order, that walks you through:
 | `python scripts/seed_profile.py --ftp 250` | your FTP — every prescription is a percentage of it |
 | `python scripts/bootstrap_plan.py` | look at the derived ladder, then `--write` to keep it |
 | `python scripts/sync_now.py` | generate the first horizon |
-| `python scripts/serve.py --open` | dashboard, calendar, API |
+| `python scripts/serve.py --open` | dashboard, calendar, API; `/app` for setup and settings |
 
 **Nothing reaches your intervals.icu calendar until you ask it to.** The push is the only
 thing here that writes anywhere but your own machine, and it writes to a calendar that may
