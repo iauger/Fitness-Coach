@@ -254,22 +254,66 @@ def test_importing_config_reads_no_file(monkeypatch):
     importlib.reload(C)
 
 
-def test_config_imports_nothing_from_this_project():
+def _project_imports(path: str) -> list[str]:
+    import ast
+    import pathlib
+
+    tree = ast.parse(pathlib.Path(path).read_text(encoding="utf-8"))
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            found.append(node.module)
+        elif isinstance(node, ast.Import):
+            found += [a.name for a in node.names]
+    return [m for m in found if m.startswith("src")]
+
+
+# The one thing config may import, and only because it imports nothing itself. Archetype
+# overrides have to be checked at load against the training rules they may not break, and
+# those rules cannot sensibly live in the loader.
+CONFIG_MAY_IMPORT = {"src.planning.safety", "src.planning.archetypes"}
+
+
+def test_config_imports_almost_nothing_from_this_project():
     """
     It has to be a leaf. `planning/constants.py` already had to become one because
     `planning/blocks.py` imports `analysis/derive.py`; config is needed on both sides of that.
+
+    Two exceptions, both inside `_validate` rather than at module level, so importing config
+    still costs nothing: `safety` for the rules, and `archetypes` for the defaults an override
+    is merged over before being judged. Neither runs at import time.
+    """
+    assert set(_project_imports("src/config.py")) <= CONFIG_MAY_IMPORT, (
+        _project_imports("src/config.py"))
+
+
+def test_the_safety_rules_are_a_true_leaf():
+    """
+    The exception above only holds while this is true. `safety.py` importing anything from
+    the project would route config back into the import graph it exists outside of — and the
+    cycle would appear at `config` rather than here, which is a miserable place to debug it.
+    """
+    assert _project_imports("src/planning/safety.py") == []
+
+
+def test_importing_config_still_costs_no_project_import():
+    """
+    `_validate` imports `archetypes`, which pulls in a real chunk of the planning package.
+    Doing that at module level would make `import src.config` expensive for every caller and
+    would close the cycle the leaf rule exists to prevent — so the imports sit in the
+    function, and this asserts they stayed there.
     """
     import ast
     import pathlib
 
     tree = ast.parse(pathlib.Path("src/config.py").read_text(encoding="utf-8"))
-    imported = []
-    for node in ast.walk(tree):
+    top_level = []
+    for node in tree.body:
         if isinstance(node, ast.ImportFrom) and node.module:
-            imported.append(node.module)
+            top_level.append(node.module)
         elif isinstance(node, ast.Import):
-            imported += [a.name for a in node.names]
-    assert not [m for m in imported if m.startswith("src")], imported
+            top_level += [a.name for a in node.names]
+    assert not [m for m in top_level if m.startswith("src")], top_level
 
 
 # ── the athlete's day, not the server's ───────────────────────────────────────

@@ -230,6 +230,45 @@ def _bout_steps(total_s: int, cfg: dict, label: str) -> list[Step]:
 
 # ── archetypes ────────────────────────────────────────────────────────────────
 
+DEFAULTS = {}        # filled below, once every *_VARIANTS dict exists
+
+
+def variants(archetype: str) -> dict[str, dict]:
+    """
+    The variants for an archetype: ours, with the athlete's overrides merged over them.
+
+    **Per variant, per key.** Naming `threshold.long_reps.pct` changes the target and leaves
+    the reps, the bout length and the rest alone. Replacing the whole variant would make a
+    one-line tweak require restating four numbers correctly, which is a worse way to get a
+    session wrong than the one it protects against.
+
+    A name the library does not have creates a new variant rather than failing. That is what
+    makes the library genuinely extensible instead of merely adjustable — but it is also why
+    `safety.check_all` validates the *merged* result at config load, since a brand-new variant
+    has no defaults to lean on and every rule has to hold on its own.
+
+    Read on every call rather than merged once at import: config is already memoized, these
+    are five small dicts, and an import-time merge would be unreachable by `config.reset()` —
+    the same binding problem that made `plan_name: str = PLAN_NAME` wrong.
+    """
+    base = DEFAULTS[archetype]
+    try:
+        from src.config import config
+        overrides = (config().archetypes or {}).get(archetype) or {}
+    except Exception:
+        # Config is unreadable or absent. The built-in library is a working plan, and failing
+        # to build any session at all because a YAML file has a typo would be worse than
+        # ignoring it — the loader has already said so, loudly, at load.
+        return dict(base)
+    if not overrides:
+        return dict(base)
+
+    merged = {name: dict(cfg) for name, cfg in base.items()}
+    for name, cfg in overrides.items():
+        merged.setdefault(name, {}).update(cfg)
+    return merged
+
+
 LIT_VARIANTS = {
     "steady":            {"pct": 0.62},
     "cadence_drills":    {"pct": 0.62, "note": "alternate 5min @ 95rpm / 5min @ 75rpm",
@@ -249,7 +288,7 @@ def lit(minutes: int, variant: str = "steady") -> Session:
     failure mode for endurance work is drifting up into tempo, which converts the session's
     purpose from duration-dependent to intensity-dependent stimulus.
     """
-    cfg = LIT_VARIANTS[variant]
+    cfg = variants("lit")[variant]
     total = minutes * 60
     if "ramp" in cfg:
         steps = _ramp(total, *cfg["ramp"])
@@ -293,7 +332,7 @@ SIT_NOMINAL_PCT = 1.80
 
 
 def sit(variant: str = "medium", reps: int | None = None) -> Session:
-    cfg = dict(SIT_VARIANTS[variant])
+    cfg = dict(variants("sit")[variant])
     if reps:
         cfg["reps"] = reps
     steps = _warmup(15)
@@ -326,7 +365,7 @@ HIIT_VARIANTS = {
 
 def hiit(variant: str = "straight_5", reps: int | None = None,
          work_min: float | None = None) -> Session:
-    cfg = dict(HIIT_VARIANTS[variant])
+    cfg = dict(variants("hiit")[variant])
     if reps:
         cfg["reps"] = reps
     if work_min:
@@ -368,7 +407,7 @@ THRESHOLD_VARIANTS = {
 
 def threshold(variant: str = "long_reps", reps: int | None = None,
               work_min: float | None = None) -> Session:
-    cfg = dict(THRESHOLD_VARIANTS[variant])
+    cfg = dict(variants("threshold")[variant])
     if reps:
         cfg["reps"] = reps
     if work_min:
@@ -395,17 +434,20 @@ def strength(minutes: int = 40, variant: str = "full") -> Session:
     emphatic that it belongs year-round, and because its absence from the PMC is exactly why
     this project keeps undercounting its load.
     """
-    cfg = dict(STRENGTH_VARIANTS[variant])
+    cfg = dict(variants("strength")[variant])
     return Session("strength", variant,
                    steps=[Step(minutes * 60, 0.0, cfg["focus"])],
                    params={"minutes": minutes, **cfg})
 
 
+DEFAULTS.update({
+    "lit": LIT_VARIANTS, "sit": SIT_VARIANTS, "hiit": HIIT_VARIANTS,
+    "threshold": THRESHOLD_VARIANTS, "strength": STRENGTH_VARIANTS,
+})
+
+
 def variant_names(archetype: str) -> list[str]:
-    return sorted({
-        "lit": LIT_VARIANTS, "sit": SIT_VARIANTS, "hiit": HIIT_VARIANTS,
-        "threshold": THRESHOLD_VARIANTS, "strength": STRENGTH_VARIANTS,
-    }[archetype])
+    return sorted(variants(archetype))
 
 
 def catalogue() -> list[Session]:

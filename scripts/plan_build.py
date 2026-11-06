@@ -31,20 +31,23 @@ from src.db.schema import read_connection, write_connection
 from src.planning.blocks import (
     ROTATION, expand_week, intensity_split, rotation_after, weekly_rollup,
 )
-from src.planning.constants import plan_name as configured_plan_name
+from src.planning import plans, tiers_store
+from src.planning.blocks import rotation_for
+from src.planning.constants import plan_name as configured_plan_name, strength_days
 from src.planning.progression import TIERS
 from src.planning.progression_store import current_state
 from src.clock import today_local
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
-def _strength_slots(block_index: int) -> int:
+def _strength_slots(rotation: list, block_index: int) -> int:
     """How many strength days the block actually schedules.
 
     Counted from the pattern rather than read off the tier: strength is not a per-tier dose,
     and a tier field claiming otherwise was removed for saying something the code did not do.
+    The rotation is passed in because it is now built around the plan's own ride-day count.
     """
-    return sum(1 for _, role in ROTATION[block_index].pattern if role == "strength")
+    return sum(1 for _, role in rotation[block_index].pattern if role == "strength")
 
 
 def derive_state(today: date, start_tier: int = 1, persist: bool = True) -> dict:
@@ -58,10 +61,22 @@ def derive_state(today: date, start_tier: int = 1, persist: bool = True) -> dict
 
     `persist=False` for an `--as-of` what-if: computing where a future date would put you must
     not file that date's decisions as though they had happened.
+
+    Returns the plan's stored ladder and rotation alongside the state, because everything
+    printed below has to describe the plan that is actually generated. Reading the module
+    constants here would print 3.42h beside a calendar showing 3.5h — the same two-sources
+    split that had to be fixed in the API and the coaching report, and missed here because
+    this script was not checked when those were.
     """
     opener = write_connection if persist else read_connection
     with opener() as conn:
-        return current_state(conn, today, start_tier=start_tier, persist=persist)
+        plan = plans.by_name(conn, configured_plan_name())
+        ladder = tiers_store.load(conn, plan.id) if plan else None
+        state = current_state(conn, today, start_tier=start_tier, persist=persist,
+                              tiers=ladder)
+    ladder = ladder or dict(TIERS)
+    rotation = rotation_for(max(t.rides for t in ladder.values()), strength_days())
+    return {**state, "_ladder": ladder, "_rotation": rotation}
 
 
 def _watts(session: dict) -> str:
@@ -123,6 +138,7 @@ def main() -> int:
     # A pretend date must not file its decisions as real ones — see derive_state.
     persisted = args.as_of is None
     state = derive_state(today, persist=persisted)
+    ladder, rotation = state["_ladder"], state["_rotation"]
     tier = args.tier if args.tier is not None else state["tier"]
     block_index = args.block if args.block is not None else state["block_index"]
 
@@ -152,18 +168,18 @@ def main() -> int:
               f"{(monday_of(today) + timedelta(days=6)).isoformat()}")
     if args.tier is not None:
         print(f"  (overridden to T{tier})")
-    spec = TIERS[tier]
+    spec = ladder[tier]
     print(f"  T{tier}: {spec.rides} rides, {spec.target_hours}h, long {spec.long_min}min, "
-          f"{spec.hard} hard, strength {_strength_slots(block_index)}")
+          f"{spec.hard} hard, strength {_strength_slots(rotation, block_index)}")
 
     week_type = state["week_type"]
     all_sessions = []
     bi, wib = block_index, state["week_in_block"]
     for offset in range(args.weeks):
         monday = monday_of(today) + timedelta(weeks=offset)
-        block = ROTATION[bi]
+        block = rotation[bi]
         sessions = expand_week(block, wib, tier, monday, plan_name, bi,
-                               week_type if offset == 0 else "normal")
+                               week_type if offset == 0 else "normal", tiers=ladder)
         all_sessions += sessions
         print_week(sessions, watts=args.watts, steps=args.steps)
         wib += 1

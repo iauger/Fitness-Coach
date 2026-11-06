@@ -1,10 +1,14 @@
 """
 The athlete's configuration, loaded once and validated at the door.
 
-A leaf module: stdlib and PyYAML only, no imports from this project. That is not tidiness, it
-is a requirement — `planning/constants.py` already had to become a leaf because
-`planning/blocks.py` imports `analysis/derive.py`, so anything `analysis` needs cannot live
-downstream of `planning`. Config is needed by both.
+A leaf module: stdlib, PyYAML, and `planning/safety.py`, which imports nothing at all. That is
+not tidiness, it is a requirement — `planning/constants.py` already had to become a leaf
+because `planning/blocks.py` imports `analysis/derive.py`, so anything `analysis` needs cannot
+live downstream of `planning`. Config is needed by both.
+
+The one exception earns itself: archetype overrides have to be checked against the training
+rules they may not break, and those rules cannot sensibly live here. `safety.py` is a leaf for
+exactly this reason, so importing it closes no cycle.
 
 **Why dataclasses rather than passing the parsed dict around.** A typo in a YAML file is
 inevitable, and a dict lets it travel: `config["plan"]["horzion_weeks"]` raises a `KeyError`
@@ -22,7 +26,7 @@ whether or not it reads a value.
 
 import dataclasses
 import os
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any, get_args, get_origin
@@ -131,6 +135,11 @@ class Config:
     plan: Plan
     goals: tuple[Goal, ...] = ()
     profile: Profile = Profile()
+    # Free-form on purpose: the keys are archetype and variant names, and a variant name the
+    # library has never heard of is a *feature* — it creates one. So this is the one block the
+    # unknown-key check cannot police, and `safety.check_all` polices it instead, against the
+    # rules a session may not break rather than against a list of permitted spellings.
+    archetypes: dict = field(default_factory=dict)
     integrations: Integrations = Integrations()
     server: Server = Server()
     coach: Coach = Coach()
@@ -175,6 +184,12 @@ def _coerce(value: Any, declared: Any, where: str) -> Any:
     if declared is bool:
         if not isinstance(value, bool):
             raise ConfigError(f"{where}: expected true or false, got {value!r}")
+        return value
+
+    if declared is dict:
+        if not isinstance(value, dict):
+            raise ConfigError(f"{where}: expected a block of settings, "
+                              f"got {type(value).__name__}")
         return value
 
     if declared in (int, float, str):
@@ -287,6 +302,19 @@ def _validate(cfg: Config) -> None:
 
     if not 1 <= cfg.server.port <= 65535:
         raise ConfigError(f"server.port: {cfg.server.port} is not a usable port")
+
+    # Checked here rather than at use, and merged over the defaults before checking, because
+    # an override naming only `pct` has to be judged with the `work_min` and `rest_min` it
+    # will actually be ridden with. A target lowered under FTP that leaves the work:rest ratio
+    # broken would otherwise pass, and surface one plan build later.
+    from src.planning.archetypes import DEFAULTS
+    from src.planning.safety import check_all
+
+    broken = check_all(cfg.archetypes, DEFAULTS)
+    if broken:
+        joined = "\n  ".join(broken)
+        raise ConfigError(
+            f"these archetype overrides break rules that are not configurable:\n  {joined}")
 
     allowed = {"primary", "secondary", "opt_in"}
     for i, goal in enumerate(cfg.goals):

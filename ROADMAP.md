@@ -1726,3 +1726,55 @@ real change to everything prescribed from the next roll onward.
 Verified live: re-derived, got version 2, confirmed v1 still loadable and byte-identical (same
 history, same config). The redundant version was then removed, since nothing referenced it and
 a version with no reason to exist is noise in the athlete's own data.
+
+### Step 6 — archetype overrides, done 2026-11-05
+
+The first step where editing a text file changes what a session asks someone to ride. Most of
+that is theirs; a few things are not, and the refusal turned out to be the more interesting
+half.
+
+**The shape.** `archetypes:` in config, merged per variant and per key — naming
+`threshold.long_reps.pct` changes the target and leaves the reps, bout length and rest alone.
+A name the library does not have *creates* a variant, which is what makes the library
+extensible rather than merely adjustable. `archetypes.variants()` does the merge at use, not
+at import, for the same reason `plan_name()` is a function.
+
+**The rules that are not configurable** live in `src/planning/safety.py`: threshold never
+crosses FTP (including the micro alternation), bouts are 10min+ accumulating 40min+ at ≥8:1
+work:rest, HIIT bouts are 4min+ and sub-maximal, sprints are 10–40s, the easy ride stays easy.
+Each is there because breaking it produces a *plausible* session that is wrong — a threshold
+target of 1.02 looks almost identical to 0.98 and is a different session.
+
+Validated **at config load**, merged over the defaults first, with every broken rule reported
+at once. Judged alone, an override naming only `rest_min` would have no `work_min` to form a
+ratio with and would pass.
+
+**`safety.py` is a leaf that imports nothing**, which is what lets `config.py` use it without
+closing the import cycle the leaf rule exists to prevent. The existing "config imports nothing"
+test now permits exactly two names and asserts `safety` itself imports none — plus a third
+test that neither import is at module level, so `import src.config` still costs nothing.
+
+**Our own library is validated against these rules in the suite.** A rule the defaults break is
+a wrong rule, not a library to fix — and without that test the rules could be written to any
+strictness and only ever be felt by a stranger with a config file.
+
+The roadmap's bar — invariants holding against a config overriding *every* variant — passes:
+the hard-session ceiling, two lifts a week, no lower body beside a long ride, no doubled slot.
+None of those come from the library, which is the point: the library decides what a hard
+session *is*, never how many there are or where they land.
+
+**A real bug, found by testing something else.** A minimal config written for these tests had
+no `goal_date`, and `store_horizon` died on `IntegrityError` —
+`training_plan_weeks.plan_end_date` was NOT NULL from when the date was a module constant that
+always existed. Plenty of people train without a dated event. Migration 11 makes it nullable;
+whoever hit this would have been someone running the project for the first time.
+
+**The read/write split appeared a third time.** `plan_build.py` printed 3.42h and a 60min easy
+ride while the calendar had 3.5h and 65min, because it read `progression.TIERS` directly. Fixed
+in the API and the report during step 5; this script was not looked at. There is now an
+AST-based guard: `TIERS[...]` as a direct subscript fails the suite outside the four modules
+where the module ladder is the subject rather than a shortcut. Verified the guard fires.
+
+17 mutants, all caught. One survived first — removing the unknown-archetype guard in
+`check_all`, which is reachable only when the misspelled block has *no* variants, since
+`violations` catches it otherwise.

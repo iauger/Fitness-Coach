@@ -479,3 +479,42 @@ def test_strength_is_never_trimmed_however_wide_the_week(db):
     for ride_days in range(2, 8):
         pattern = build_pattern(ride_days, strength_days=2)
         assert sum(1 for _, r in pattern if r == "strength") == 2, (ride_days, pattern)
+
+
+def test_nothing_reads_the_module_ladder_where_a_plan_has_its_own():
+    """
+    A grep, after the same defect appeared three times.
+
+    The write path takes the plan's stored ladder; a reader falling back to
+    `progression.TIERS` reports a different number for the same week — 3.42h on a dashboard
+    beside 3.5h on the calendar. It was fixed in the API and the coaching report, then found
+    again in `plan_build.py`, which had not been looked at. No behavioural test catches it,
+    because both answers are individually plausible and the suite seeds the module ladder.
+
+    `TIERS` is legitimate as a *fallback* (`ladder or TIERS`) and as the thing the derivation
+    is compared against. It is not legitimate as a direct subscript in a reader.
+    """
+    import ast
+    import pathlib
+
+    # Where the module ladder is the subject rather than a shortcut: it is defined in
+    # `progression`, derived against in `bootstrap`, and is the documented fallback in
+    # `tiers_store`.
+    allowed_files = {"progression.py", "bootstrap.py", "tiers_store.py", "safety.py"}
+    offenders = []
+    for root in ("src", "scripts"):
+        for f in sorted(pathlib.Path(root).rglob("*.py")):
+            if "__pycache__" in str(f) or f.name in allowed_files:
+                continue
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                # `TIERS[x]` as a direct subscript. `(ladder or TIERS)[x]` subscripts a
+                # BoolOp, not a Name, so the legitimate fallback does not trip this.
+                if (isinstance(node, ast.Subscript)
+                        and isinstance(node.value, ast.Name)
+                        and node.value.id == "TIERS"):
+                    offenders.append(f"{f}:{node.lineno}")
+    listed = "\n  ".join(offenders)
+    assert not offenders, (
+        "read the plan's own ladder (tiers_store.load) rather than the module constant, or "
+        f"the reader and the calendar will disagree:\n  {listed}")

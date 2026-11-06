@@ -60,6 +60,27 @@ plan:
   horizon_weeks: 3
   goal_date: 2027-10-01          # labels stored plan rows; not a taper target
 
+# Override the workout library. Optional, and most people never will — the defaults are a
+# working plan. Named per variant and per key: listing `pct` alone changes the target and
+# leaves the reps, the bout length and the rest alone. A name the library does not have
+# creates a new variant rather than failing, so the library is extensible, not just adjustable.
+#
+# A handful of rules are NOT configurable, and an override that breaks one is refused at load
+# with the rule named — threshold work never crosses FTP, threshold bouts are 10min+ and
+# accumulate 40min+ at roughly 10:1 work:rest, HIIT bouts are 4min+ and sub-maximal, sprints
+# are 10-40s, and the easy ride stays easy. Those come from the methodology this plan follows
+# and are what stops a config turning a sustainable week into an unsustainable one.
+#
+# `python scripts/plan_build.py --steps` prints what a variant actually builds.
+#
+# archetypes:
+#   threshold:
+#     long_reps:
+#       pct: 0.88          # the others (reps, work_min, rest_min) keep their defaults
+#   lit:
+#     steady:
+#       pct: 0.65
+
 integrations:
   intervals_icu:
     # Push the horizon to the intervals.icu calendar. intervals.icu then delivers to Zwift

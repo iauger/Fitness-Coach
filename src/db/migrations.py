@@ -728,6 +728,50 @@ def _m010_ladder_versions(conn: sqlite3.Connection) -> None:
     add_column(conn, "plan_progression", "ladder_version", "INTEGER")
 
 
+def _m011_optional_goal_date(conn: sqlite3.Connection) -> None:
+    """
+    A plan may have no goal date, so `training_plan_weeks.plan_end_date` stops being NOT NULL.
+
+    `plan.goal_date` is optional in configuration — correctly, since plenty of people train
+    without a dated event, and the rotation deliberately does not taper for one anyway. But
+    the column it lands in was declared NOT NULL back when the date was a module constant that
+    always existed, so omitting it made `store_horizon` die on an IntegrityError several
+    frames from anything that mentioned goals.
+
+    Found by testing something else: a minimal config written for the archetype-override tests
+    had no `goal_date`, and the generator could not store a single week. Nobody would have hit
+    it before step 7, and whoever did would have been someone running this for the first time.
+
+    SQLite cannot drop a NOT NULL constraint, so the table is rebuilt. `plan_end_date` is read
+    by `report.py` and the calendar; both already treat it as a goal rather than a commitment,
+    and both handle its absence.
+    """
+    conn.executescript("""
+        CREATE TABLE training_plan_weeks_new (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            plan_name        TEXT NOT NULL,
+            plan_start_date  TEXT NOT NULL,
+            plan_end_date    TEXT,
+            week_start_date  TEXT NOT NULL,
+            week_end_date    TEXT NOT NULL,
+            week_type        TEXT,
+            phase            TEXT,
+            phase_number     INTEGER,
+            phase_week_number INTEGER,
+            plan_week_number INTEGER,
+            volume_tier      INTEGER,
+            plan_id          INTEGER REFERENCES plans(id),
+            UNIQUE(plan_name, week_start_date)
+        );
+        INSERT INTO training_plan_weeks_new
+            SELECT id, plan_name, plan_start_date, plan_end_date, week_start_date,
+                   week_end_date, week_type, phase, phase_number, phase_week_number,
+                   plan_week_number, volume_tier, plan_id FROM training_plan_weeks;
+        DROP TABLE training_plan_weeks;
+        ALTER TABLE training_plan_weeks_new RENAME TO training_plan_weeks;
+    """)
+
+
 # (version, name, step). Append only — never renumber or edit an applied migration.
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "baseline schema as of phase 12B", _m001_baseline),
@@ -740,6 +784,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (8, "plans table and plan_id foreign keys", _m008_plans_table),
     (9, "tiers table: the ladder as data, with its provenance", _m009_tiers_table),
     (10, "ladder versions, and which one graded each week", _m010_ladder_versions),
+    (11, "a plan may have no goal date", _m011_optional_goal_date),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)
