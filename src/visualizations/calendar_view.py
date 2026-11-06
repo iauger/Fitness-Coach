@@ -43,11 +43,12 @@ def _fmt_hms(seconds: float | None) -> str:
 
 
 
-def _week_bounds(weeks: int) -> tuple[date, date]:
+def _week_bounds(weeks: int, ahead: int = 0) -> tuple[date, date]:
+    """`weeks` Monday-to-Sunday weeks ending with this one, plus `ahead` more after it."""
     today = today_local()
     this_monday = today - timedelta(days=today.weekday())
     start = this_monday - timedelta(weeks=weeks - 1)
-    end = this_monday + timedelta(days=6)  # Sunday of the current week
+    end = this_monday + timedelta(days=6, weeks=ahead)  # Sunday of the last week shown
     return start, end
 
 
@@ -193,8 +194,13 @@ def _day_cell_html(day: dict, today_str: str) -> str:
       </div>"""
 
 
-def build_calendar_html(weeks: int = 6) -> str:
-    start, end = _week_bounds(weeks)
+def build_calendar_html(weeks: int = 6, ahead: int = 2) -> str:
+    """
+    `weeks` back including this one, and `ahead` more. The default shows the plan's whole
+    committed horizon: it used to stop on this Sunday, so the two weeks already scheduled (and
+    already on the athlete's devices) were invisible here.
+    """
+    start, end = _week_bounds(weeks, ahead)
     days = _load_data(start, end)
     today_str = today_local().isoformat()
     # Escaped: the athlete's name comes from a configuration file and lands inside markup.

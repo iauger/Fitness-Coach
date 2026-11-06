@@ -143,9 +143,10 @@ def dashboard() -> HTMLResponse:
 
 
 @app.get("/calendar", response_class=HTMLResponse, tags=["pages"])
-def calendar(weeks: int = Query(6, ge=1, le=52)) -> HTMLResponse:
+def calendar(weeks: int = Query(6, ge=1, le=52), ahead: int = Query(2, ge=0, le=8)) -> HTMLResponse:
     return HTMLResponse(with_nav(
-        CACHE.get(f"calendar:{weeks}", lambda: build_calendar_html(weeks=weeks)),
+        CACHE.get(f"calendar:{weeks}:{ahead}",
+                  lambda: build_calendar_html(weeks=weeks, ahead=ahead)),
         "calendar", bleed=True))
 
 

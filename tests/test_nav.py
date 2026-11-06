@@ -72,7 +72,7 @@ def test_the_apps_own_header_links_to_the_same_places():
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr(web, "build_dashboard", lambda: PAGE)
-    monkeypatch.setattr(web, "build_calendar_html", lambda weeks=6: PAGE)
+    monkeypatch.setattr(web, "build_calendar_html", lambda weeks=6, ahead=2: PAGE)
     web.CACHE.clear()
     yield TestClient(web.app, base_url="http://localhost:8800", follow_redirects=False)
     web.CACHE.clear()
