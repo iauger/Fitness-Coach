@@ -95,6 +95,20 @@ behavioural test because both behaviours look plausible in isolation:
 will disagree with what was actually prescribed — this was fixed in the API, then the coaching
 report, then found a third time in `plan_build.py`.
 
+## Limits are derived inside, never clamped to
+
+`plan.max_ride_min` and `plan.day_max_ride_min` shape the ladder in `bootstrap.derive`; they are
+not applied to sessions at generation time. `blocks.check_fit` *refuses* a stored ladder that a
+limit no longer fits, and the roller calls it.
+
+**Why:** a rung is graded against 90% of its minutes. A ride shortened to fit its day leaves a
+rung the gate expects and the calendar cannot deliver, so the athlete meets everything asked and
+holds at the same tier for ever, with nothing anywhere saying why. Clamping looks like the
+obviously simpler design and is the one that produces that.
+
+**How to apply:** if a limit seems to need handling at expansion time, the ladder was derived for
+a different limit and the answer is a message naming the rung, the day and the setting.
+
 ## Nothing generates config as a side effect
 
 `config.load(..., create_if_missing=True)` belongs to a deliberate first run and nowhere else.

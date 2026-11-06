@@ -24,6 +24,8 @@ database cannot be argued with.
 
 from dataclasses import dataclass
 
+from src.planning.bootstrap import LONG_STEPS, MIN_STEP, RideLimits
+
 # How much recent history the signals read. Six weeks spans a block and a recovery week, so a
 # single strong fortnight cannot trigger this on its own.
 WINDOW_WEEKS = 6
@@ -67,9 +69,113 @@ def _median(values: list[float]) -> float:
             else (ordered[mid - 1] + ordered[mid]) / 2)
 
 
+# How far one suggestion raises a limit. The long ride's preferred rung step, because a limit
+# raised by less than a step would not change the ladder the derivation builds.
+LIMIT_STEP = LONG_STEPS[0]
+
+
+def _at(value: int, limit: int | None) -> bool:
+    """Whether `value` is as high as `limit` lets it go. Limits are rounded down to 5 minutes."""
+    return limit is not None and value >= limit - (MIN_STEP - 1)
+
+
+def limit_bound(cap, limits: RideLimits | None) -> bool:
+    """
+    Whether the top rung stopped climbing because of a ride limit, as opposed to the band or the
+    long-ride ceiling.
+
+    Every axis that *has* a limit must be at it. A long ride at its limit with the easy rides
+    still lengthening is not bound, because the ladder can still climb inside the limits; and
+    an easy ride that stopped short of its limit stopped because the band was reached, which is
+    the athlete's own intent and not something a raised limit would change.
+    """
+    if limits is None or not limits.declared:
+        return False
+    easy_rides = max(0, cap.rides - 1 - cap.hard)
+    axes = []
+    if limits.long_cap is not None:
+        axes.append(_at(cap.long_min, limits.long_cap))
+    if limits.easy_cap is not None and easy_rides:
+        axes.append(_at(cap.lit_min, min(limits.easy_cap, cap.long_min)))
+    return bool(axes) and all(axes)
+
+
+def unlock_options(cap, limits: RideLimits | None, max_ride_days: int,
+                   ceiling_setting: str = "plan.max_ride_days") -> list[dict]:
+    """
+    The smallest changes that would let the ladder climb again, each with what it buys.
+
+    Offered as options with their cost rather than as an instruction: raising a limit is the
+    athlete's call, and "you need 105 minutes" is a different sentence from "raising Saturday
+    from 90 to 105 adds a quarter of an hour a week, or a fourth day adds about an hour and a
+    half". They also have different prices — one is a longer Saturday and the other is a
+    different week — so the choice is theirs to make with both numbers in front of them.
+    """
+    options: list[dict] = []
+    easy_rides = max(0, cap.rides - 1 - cap.hard)
+    if limits is not None and limits.long_cap is not None and _at(cap.long_min, limits.long_cap):
+        options.append({"kind": "long_ride", "setting": limits.long_setting,
+                        "from": limits.long_cap, "to": limits.long_cap + LIMIT_STEP,
+                        "gain_min": LIMIT_STEP})
+    if (limits is not None and limits.easy_cap is not None and easy_rides
+            and _at(cap.lit_min, limits.easy_cap)):
+        options.append({"kind": "easy_rides", "setting": limits.easy_setting,
+                        "from": limits.easy_cap, "to": limits.easy_cap + LIMIT_STEP,
+                        "gain_min": LIMIT_STEP * easy_rides})
+    # One setting raising both axes is one option, not two. With a plan-wide `max_ride_min` the
+    # long ride and the easy rides share a line of the config, and listing it twice both read as
+    # a stutter and understated what raising it buys: the long ride's 15 minutes *and* the easy
+    # rides', which is what the athlete would actually get.
+    long_opt = next((o for o in options if o["kind"] == "long_ride"), None)
+    easy_opt = next((o for o in options if o["kind"] == "easy_rides"), None)
+    if (long_opt and easy_opt and long_opt["setting"] == easy_opt["setting"]
+            and long_opt["from"] == easy_opt["from"] and long_opt["to"] == easy_opt["to"]):
+        options = [o for o in options if o not in (long_opt, easy_opt)]
+        options.insert(0, {"kind": "all_rides", "setting": long_opt["setting"],
+                           "from": long_opt["from"], "to": long_opt["to"],
+                           "gain_min": long_opt["gain_min"] + easy_opt["gain_min"]})
+
+    options.append({
+        "kind": "ride_day",
+        # None when the ceiling already allows another day: nothing to change but to ride it,
+        # and the plan follows once the history shows it.
+        "setting": ceiling_setting if cap.rides >= max_ride_days else None,
+        "from": cap.rides, "to": cap.rides + 1,
+        "gain_min": cap.lit_min,
+    })
+    return options
+
+
+def _ordinal(n: int) -> str:
+    suffix = "th" if n % 100 in (11, 12, 13) else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def describe_options(options: list[dict]) -> str:
+    """The options as prose for the coach to put to the athlete."""
+    parts = []
+    for o in options:
+        # Minutes for small gains. `0.25h` formats as "0.2h", and "a quarter of an hour" is
+        # what the number means.
+        gain = (f"about +{o['gain_min']}min a week" if o["gain_min"] < 60
+                else f"about +{o['gain_min'] / 60:.1f}h a week")
+        if o["kind"] in ("long_ride", "all_rides"):
+            parts.append(f"raise {o['setting']} from {o['from']} to {o['to']}min ({gain})")
+        elif o["kind"] == "easy_rides":
+            parts.append(f"raise {o['setting']} from {o['from']} to {o['to']}min ({gain})")
+        elif o["setting"]:
+            parts.append(f"allow a {_ordinal(o['to'])} ride day by raising "
+                         f"{o['setting']} ({gain})")
+        else:
+            parts.append(f"ride a {_ordinal(o['to'])} day, which the ceiling already "
+                         f"allows and the plan will follow once it is in the history ({gain})")
+    return "; or ".join(parts)
+
+
 def assess(weeks: list[dict], ladder: dict, decided: list[dict],
            max_ride_days: int, ladder_age_weeks: float | None = None,
-           ceiling_setting: str = "plan.max_ride_days") -> Assessment:
+           ceiling_setting: str = "plan.max_ride_days",
+           limits: RideLimits | None = None) -> Assessment:
     """
     Whether this athlete's riding has moved past the ladder they are being prescribed from.
 
@@ -128,8 +234,32 @@ def assess(weeks: list[dict], ladder: dict, decided: list[dict],
         "weeks_considered": len(ridden),
     }
 
+    # Whether the ladder stopped climbing because of a ride limit, and what would let it climb
+    # again. Computed whatever else fires, so the numbers are always in the detail.
+    bound = limit_bound(cap, limits)
+    options = unlock_options(cap, limits, max_ride_days, ceiling_setting) if bound else []
+    detail["limit_bound"] = bound
+    if options:
+        detail["unlock"] = options
+
+    at_top = bool(decided) and decided[-1].get("tier_applied") == max(ladder)
     actionable = [s for s in signals if s != "held_cap"]
+
     if not actionable:
+        if "held_cap" in signals and bound:
+            # The case this exists for. They have done everything the top rung asks for, for a
+            # month, and the plan has nowhere to go because *their own limit* is the ceiling —
+            # so unlike an ordinary held cap this is worth raising, and with the options and
+            # what each costs rather than as a bare "do you want to go higher".
+            return Assessment(
+                True, True, tuple(signals) + ("limit_bound",),
+                f"They have held T{max(ladder)} for {held} straight weeks, and it is as far as "
+                f"their ride limits let the plan climb, so it cannot progress them further as "
+                f"it stands. Worth asking whether it still feels hard. If it does not, the ways "
+                f"to keep progressing are: {describe_options(options)}. Either way the ladder "
+                f"then needs re-deriving: `python scripts/bootstrap_plan.py --write --replace`. "
+                f"It is their call, and staying here is a perfectly good answer.",
+                detail)
         if "held_cap" in signals:
             return Assessment(
                 False, False, tuple(signals),
@@ -138,12 +268,26 @@ def assess(weeks: list[dict], ladder: dict, decided: list[dict],
                 f"than something the gate does on its own, and it is worth asking whether they "
                 f"want to.",
                 detail)
+        if bound and at_top:
+            # Not yet a recommendation: they have only just arrived. Said now so the coach is
+            # not surprised later, and so "why has my plan stopped getting harder?" has an
+            # answer already written down.
+            return Assessment(
+                False, False, ("at_limit",),
+                f"They are at T{max(ladder)}, which is as far as their ride limits let the plan "
+                f"climb. Nothing to do yet — when it stops being hard, the ways to keep "
+                f"progressing are: {describe_options(options)}.",
+                detail)
         return NOTHING
 
     # Re-deriving reads history and then clamps to configured availability, so when the day
     # count is already at the ceiling the ladder is not the binding constraint — the config is,
     # and saying "re-bootstrap" would send them round a loop that changes nothing.
     blocked = "ride_days" in actionable and cap.rides >= max_ride_days
+    # The same reasoning for a limit: riding more than the top rung while that rung is held down
+    # by a ride limit, so re-deriving would rebuild the same capped ladder.
+    limit_blocked = bound and "volume" in actionable
+    blocked = blocked or limit_blocked
 
     parts = []
     if "ride_days" in actionable:
@@ -154,7 +298,11 @@ def assess(weeks: list[dict], ladder: dict, decided: list[dict],
             f"averaging {volume / 60:.1f}h against a top rung of {cap.target_min / 60:.1f}h")
     observation = " and ".join(parts)
 
-    if blocked and "volume" in actionable:
+    if limit_blocked:
+        advice = (f"Their ride limits are what is holding the ladder down, so re-deriving would "
+                  f"rebuild the same one. To let it climb: {describe_options(options)}. Then "
+                  f"re-derive: `python scripts/bootstrap_plan.py --write --replace`.")
+    elif blocked and "volume" in actionable:
         # Both fired: re-deriving lengthens the rungs but cannot widen the week, so saying only
         # "re-bootstrap" would quietly leave half the problem, and saying only "raise the
         # ceiling" would leave the other half.

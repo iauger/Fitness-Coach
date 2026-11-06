@@ -73,9 +73,36 @@ is refused there, naming the arithmetic — and `status.py` re-checks them again
 ladder, because you can edit the days after the ladder was derived and the next roll would
 otherwise fail without anyone watching.
 
-This says *which* days, not how long you have on each. A session's length comes from your
-ladder, and honouring a per-day limit needs a hard session that can shrink to fit a day, which
-this plan does not have yet.
+**How long a ride may be** is a third, separate setting. "Three days a week, ninety minutes at
+most" is two numbers:
+
+```yaml
+plan:
+  max_ride_days: 3
+  max_ride_min: 90                  # the longest any single ride may be
+  day_max_ride_min: {sat: 150}      # optional per-day overrides
+```
+
+The plan is built *inside* that limit rather than clamped to it afterwards, and that distinction
+is the design. A rung is graded against 90% of its minutes, so a ride quietly shortened to fit
+would leave a rung the gate expects and the calendar cannot deliver: you would do everything
+asked and hold at the same tier for ever, with nothing saying why. Instead the ladder climbs to
+what your limit allows — the long ride first, then the easy rides, one thing changing per rung —
+and stops. For someone riding 75-minute long rides and 65-minute easy ones, a 90-minute limit
+climbs 3.25h to 4.0h in real steps.
+
+When the plan reaches the limit, it tells you. Once you are at the top rung it notes that the
+limit is what is holding the plan there. After a month of meeting it, the coach raises it at a
+check-in with the options and what each costs: raise Saturday from 90 to 105 (about a quarter
+of an hour more a week), or add a fourth day (about an hour and a half). If your limit leaves no
+room to climb at all, bootstrap refuses and names the number: "raise `plan.max_ride_min` to at
+least 80". The same goes for a limit you tighten later that the stored ladder no longer fits:
+`status.py` flags it before the next roll can fail.
+
+Hard sessions come in fixed shapes of 40–78 minutes, so one that cannot fit its day is chosen
+from the variants that do, and if none do, that block's hard slot becomes an easy ride. Threshold
+needs about 60 minutes and VO2 about 52; the sprint sessions fit in 45. `status.py` says which
+blocks are affected rather than leaving you to find out from a calendar with no intervals on it.
 
 A week that hits ≥90% of its tier's volume *and* its ride-day count advances you one rung. A
 partial week holds. A gap steps you down one rung per week and produces a **re-entry week**
@@ -287,7 +314,7 @@ See [ROADMAP.md](ROADMAP.md) for the reasoning behind each, and the backlog.
 pytest
 ```
 
-856 tests. The convention worth knowing: new behaviour is checked by **mutation testing**, not
+978 tests. The convention worth knowing: new behaviour is checked by **mutation testing**, not
 only by a green suite. Breaking the code deliberately and confirming a test fails has
 repeatedly caught tests here that passed for the wrong reason — one asserting a constant's own
 value back at itself, a filter that worked only because of insert order. Several docstrings in

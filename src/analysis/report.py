@@ -579,6 +579,7 @@ def _outgrown(conn, plan, ladder: dict, today: date) -> dict | None:
     Wrapped in its own try: a failure here must not cost the coach the rest of the plan block,
     which is the part it reasons about every session.
     """
+    from src.planning.blocks import plan_limits
     from src.planning.constants import max_ride_days, ride_day_setting
     from src.planning.progression_store import rows as progression_rows
     from src.planning.tiers_store import age_weeks, weeks_for
@@ -591,6 +592,7 @@ def _outgrown(conn, plan, ladder: dict, today: date) -> dict | None:
             max_ride_days=max_ride_days(),
             ladder_age_weeks=age_weeks(conn, plan.id, today),
             ceiling_setting=ride_day_setting(),
+            limits=plan_limits(ladder[max(ladder)].rides),
         )
     except Exception:
         return None

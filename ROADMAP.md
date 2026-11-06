@@ -47,8 +47,9 @@ and calendar, and the Claude coaching layer.
 | 6 | archetype overrides, with non-configurable safety rules |
 | 7 | a first run that says what to do next |
 | 8 | which days you can train: `available_days`, `long_ride_day` *(unplanned; a prerequisite for the UI)* |
+| 9 | how long a ride may be: `max_ride_min`, `day_max_ride_min`, derived inside and never clamped, with the coach told when it binds *(unplanned)* |
 
-Schema at `user_version` 11. 856 tests.
+Schema at `user_version` 11. 978 tests.
 
 **The first run has been walked on a clean clone, 2026-11-06**, end to end by someone other
 than the code: clone, config, migrate, fetch, bootstrap, sync, seed FTP, serve. It worked,
@@ -86,12 +87,25 @@ almost all `GET`; a browser on loopback with no-auth write routes lets any page 
 request to `127.0.0.1:8800`, and some of those requests are a calendar push or a billed chat
 call. That is a small slice of the authentication work, not the whole of it.
 
-**Per-day *minutes* is deliberately not built.** Which days is done. How long you have on each
-is a different problem: a session's real length comes from its archetype variant, and the hard
-sessions run 40–78 minutes (sweet spot 78, medium reps 68) against the 55–60 the ladder's
-`hard_min` claims. Honouring a 60-minute Tuesday means variants that can fit a day, and fixing
-the ladder's own arithmetic for the hard session, which currently understates it. The first is
-feature work and the second is a pre-existing discrepancy worth fixing on its own account.
+**Ride limits are built** (`max_ride_min`, `day_max_ride_min`), as the second half of what the UI's
+setup wizard has to ask. The decision that matters is *derive inside, never clamp*: a rung is
+graded against 90% of its minutes, so a ride shortened to fit leaves a rung the gate expects and
+the calendar cannot deliver, and the athlete holds at one tier for ever with nothing saying why.
+The ladder therefore climbs to what the limit allows and stops; when it has, the coach raises it
+with the options and what each costs (`outgrown.py`); and a limit tightened after the ladder was
+derived blocks the roll with a message instead of quietly changing the plan.
+
+Measuring found three things. Climbing only the long ride under a 90-minute limit gave five-minute
+rungs and a top of 3.58h against 4.5h of capacity, so the easy rides now take up the climb once
+the long ride is at its limit. `Tier.target_min` counted one easy ride whatever the ride count,
+so at five rides the gate expected 195 minutes against 315 scheduled — fixed, and held to the
+generator's own output. And a limit at or below current riding used to fail as "T4 does not ask
+for more than T3"; it now names the setting and the number.
+
+Not built, on purpose: **fewer than five rungs.** A limit at or below what you already ride has
+no room for a progression, so it is refused with the amount to raise rather than given a short
+ladder. Variable rung counts touch the gate (`CAP_TIER` is a module constant that the plan's own
+ladder does not override), so it waits for someone who needs it.
 
 **What is left before this is safe to host:** authentication. `serve.py` holds the intervals.icu
 and Anthropic keys, has no login, and `/api/chat/ask` spends money per call, so it binds
