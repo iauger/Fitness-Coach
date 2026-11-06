@@ -106,3 +106,14 @@ def max_ride_days() -> int:
 def strength_days() -> int:
     """Lifting days per week. Never trimmed by a tier, recovery week or re-entry week."""
     return config().plan.strength_days
+
+
+def push_calendar() -> bool:
+    """
+    Whether to push the horizon to the intervals.icu calendar.
+
+    Off is the setting that makes a second copy of this project safe to run against the same
+    account: the plan slug and therefore every `external_id` would be identical, so a sandbox
+    would quietly overwrite the real calendar rather than sitting beside it.
+    """
+    return config().integrations.intervals_icu.push_calendar

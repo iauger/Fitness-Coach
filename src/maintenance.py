@@ -35,7 +35,7 @@ from datetime import date
 
 from src.clock import today_local, utc_now_iso
 from src.db.schema import DB_PATH, read_connection, write_connection
-from src.planning.constants import plan_name as configured_plan_name
+from src.planning.constants import plan_name as configured_plan_name, push_calendar
 
 LOCK_PATH = DB_PATH.parent / "maintenance.lock"
 
@@ -99,7 +99,7 @@ def needs_push(conn, today: date, plan_name: str | None = None) -> bool:
     return row["n"] > 0
 
 
-def run_cycle(today: date | None = None, push_enabled: bool = True,
+def run_cycle(today: date | None = None, push_enabled: bool | None = None,
               plan_name: str | None = None, silent: bool = True) -> dict:
     """
     One full maintenance pass. Safe to call on a timer.
@@ -107,9 +107,19 @@ def run_cycle(today: date | None = None, push_enabled: bool = True,
     Never raises for an expected failure: the network is down, the API is rate-limited, a
     scheduled run overlaps another. Those are recorded in `errors` and the next run tries
     again. An unattended job that dies on a transient failure stops being unattended.
+
+    `push_enabled` defaults to `integrations.intervals_icu.push_calendar`. That setting was
+    declared in `config.py` and documented in the committed example, and **read by nothing** —
+    a field stating an intent the code did not implement, which is worse than no field. Found
+    while looking for a safe way to run a second copy of this project against the same
+    intervals.icu account: turning the push off was the obvious precaution and would have
+    done nothing, and a second copy pushes the same `external_id`s, so it would have
+    overwritten the real calendar.
     """
     today = today or today_local()
     plan_name = plan_name or configured_plan_name()
+    if push_enabled is None:
+        push_enabled = push_calendar()
     result: dict = {"ran_at": utc_now_iso(), "errors": []}
 
     try:

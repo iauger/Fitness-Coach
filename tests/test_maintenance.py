@@ -327,3 +327,60 @@ def test_reporting_never_raises_even_with_nowhere_to_write(monkeypatch, tmp_path
 
     monkeypatch.setattr("sys.stdout", Hostile())
     mod._say("a line that has nowhere to go")       # must not raise
+
+
+# ── the push can actually be turned off ──────────────────────────────────────
+
+def _cycle_without_network(monkeypatch, lock_path, pushed: list):
+    """Run a cycle with the sync stubbed, recording whether the push was attempted."""
+    import src.maintenance as M
+
+    monkeypatch.setattr("src.sync.incremental_sync", lambda **k: {"errors": []})
+    monkeypatch.setattr(M, "_reconcile_and_push",
+                        lambda *a, **k: (pushed.append(True), {"pushed": 0})[1])
+    return M.run_cycle
+
+
+def test_push_calendar_false_actually_stops_the_push(monkeypatch, lock_path, tmp_path):
+    """
+    `integrations.intervals_icu.push_calendar` was declared in config, documented in the
+    committed example, and read by nothing — a field stating an intent the code did not
+    implement, which is worse than having no field.
+
+    It matters most in the case that exposed it: a second copy of this project run against the
+    same intervals.icu account derives the same plan slug, so every `external_id` is identical
+    and a sandbox push overwrites the real calendar. Turning the push off is the obvious
+    precaution, and it did nothing at all.
+    """
+    import src.config as C
+    import src.maintenance as M
+
+    path = tmp_path / "off.yaml"
+    path.write_text(
+        "athlete:\n  name: X\nplan:\n  name: P\n  start_monday: 2026-11-02\n"
+        "integrations:\n  intervals_icu:\n    push_calendar: false\n", encoding="utf-8")
+    monkeypatch.setattr(C, "CONFIG_PATH", path)
+    C.reset()
+
+    pushed: list = []
+    cycle = _cycle_without_network(monkeypatch, lock_path, pushed)
+    result = cycle(TODAY)
+    C.reset()
+
+    assert pushed == [], "the push ran despite push_calendar: false"
+    assert result["push"] == {"skipped": "push disabled"}
+
+
+def test_push_calendar_true_leaves_the_push_on(monkeypatch, lock_path):
+    pushed: list = []
+    cycle = _cycle_without_network(monkeypatch, lock_path, pushed)
+    cycle(TODAY)
+    assert pushed == [True]
+
+
+def test_an_explicit_argument_still_overrides_the_config(monkeypatch, lock_path):
+    """`sync_now.py --no-push` has to win over a config that says to push."""
+    pushed: list = []
+    cycle = _cycle_without_network(monkeypatch, lock_path, pushed)
+    cycle(TODAY, push_enabled=False)
+    assert pushed == []
