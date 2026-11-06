@@ -1347,15 +1347,27 @@ Steps renumber because identity has to land before config can rename anything sa
 
 | Step | What | Why here |
 |---|---|---|
-| 0 | `src/config.py` loader, no consumers | nothing depends on it yet |
-| 1 | `plans` table, `plan_id` foreign keys, `config_hash` | **before** config can rename a plan |
-| 2 | Timezone: `clock.today_local()` + the 58 call sites | before dates come from config |
+| 0 | `src/config.py` loader, no consumers | **done** |
+| 1 | `plans` table, `plan_id` foreign keys, `config_hash` | **done** |
+| 2 | Timezone: `clock.today_local()` + the 58 call sites | **done** |
 | 3 | The 11 personal constants read from config | **done** — `prescribed_sessions` byte-identical |
-| 4 | Deduplicate `SPORT_GROUPS` | keeps step 3's diff clean |
-| 5 | Tier ladder derived from history, `tiers` table | needs `plan_id` from step 1 |
+| 4 | Deduplicate `SPORT_GROUPS` | **done** |
+| 5 | Tier ladder derived from history, `tiers` table | **done** — reproduces the hand-written ladder |
+| 5a | Weekly template generated, 2–7 ride days | unplanned; three was the code's limit, not the athlete's |
+| 5b | Outgrown check, surfaced to the coach | unplanned; closes the loop 5a opened |
 | 6 | Archetype overrides, validated | needs the loader and the safety rules |
-| 7 | First-run experience, README | needs all of the above |
+| 7 | First-run experience, README | **grew** — `bootstrap_plan.py` is now a required first run |
 | 8 | Auth, then network binding | independent, but pointless before first-run works |
+
+5a and 5b were not in the plan. Both came out of one question — *"are we hard coding 3 ride
+days?"* — and neither is scope creep: 5a removed a limitation that would have made the project
+unusable for a second athlete, and 5b closes the loop 5a opened, since configurable
+availability is decorative if nothing ever notices the athlete has grown into it.
+
+Step 7 grew as a result. The first run is now `fetch_history` → `seed_profile` →
+**`bootstrap_plan`** → `serve`, and the roller refuses until that third step has happened. That
+refusal is deliberate, but it means the clean-clone walkthrough has a required step that has
+never been exercised from scratch.
 
 ### Backlog, added 2026-11-04
 
@@ -1661,3 +1673,25 @@ the returning-from-a-gap test used a week modest enough that no signal would hav
 way, so the guard it existed to protect could be deleted with the suite green; and nothing ran
 the check end to end, so `_rolling_plan` could stop calling it entirely — the detector correct,
 fully covered, and never executed.
+
+### Backlog, added 2026-11-05
+
+- **Version the tier ladder, and record which one graded each week.** `plan_progression` rows
+  carry `tier_applied`, which was stored precisely so a decision could be read back against
+  the inputs it was made under. That stops being true the moment a ladder is re-derived:
+  `tier_applied = 2` means one week of training before the re-bootstrap and a different one
+  after, with nothing in the row to say which. `tiers_store.save` warns about this and makes
+  `--replace` explicit, which is a speed bump rather than a fix.
+
+  **This is now more pressing than it was**, because the outgrown check actively recommends
+  re-deriving. We have built something that tells the athlete to do a thing with a known,
+  unresolved consequence. The shape of the fix is the same principle one level up: a
+  `ladder_version` on `tiers` (plan_id, version, …) and a `ladder_version` column on
+  `plan_progression`, so a decision points at the rungs that produced it. Small, additive, and
+  it makes re-deriving a safe operation rather than a warned-about one.
+
+- **Exercise the clean-clone first run.** Step 7's own verification — clone into an empty
+  directory, follow the README, reach a generated plan — now has `bootstrap_plan.py` in the
+  middle of it, and the refusal path that protects it has only ever been seen on a database
+  that already had history. The interesting case is the opposite: a fresh clone with almost no
+  synced riding, where `BootstrapError` fires and the message has to be good enough to act on.
