@@ -62,6 +62,48 @@
   .obs { display:flex; flex-wrap:wrap; gap:8px 24px; color:var(--sub); font-size:13px; margin-bottom:12px; }
   .obs b { color:var(--text); font-weight:600; }
   a.btnlink { text-decoration:none; }
+  .hero { display:flex; flex-wrap:wrap; gap:8px 24px; align-items:baseline; }
+  .hero .big { font-size:28px; font-weight:700; }
+  .hero .sub { color:var(--sub); }
+  .rungs-bar { display:grid; grid-template-columns:repeat(5, minmax(0,1fr)); gap:6px; margin:14px 0 4px; }
+  .pip { text-align:center; padding:6px 0; border-radius:6px; border:1px solid var(--border);
+         color:var(--sub); font-size:12px; }
+  .pip b { display:block; font-size:13px; color:var(--text); }
+  .pip.here { background:rgba(96,165,250,.18); border-color:var(--accent); }
+  .pip.passed { background:rgba(255,255,255,.04); }
+  .meter { position:relative; height:10px; background:#0b1220; border-radius:5px; margin:10px 0 6px; }
+  .meter .fill { position:absolute; inset:0 auto 0 0; background:var(--accent); border-radius:5px; }
+  .meter .tick { position:absolute; top:-3px; bottom:-3px; width:2px; background:var(--sub); }
+  .ticks { position:relative; height:16px; font-size:11px; color:var(--sub); }
+  .ticks span { position:absolute; transform:translateX(-50%); white-space:nowrap; }
+  .rule { color:var(--sub); font-size:13px; margin:8px 0 0; }
+  .rule b { color:var(--text); font-weight:600; }
+  h4.wk { margin:18px 0 6px; font-size:13px; color:var(--sub); font-weight:600; }
+  h4.wk:first-child { margin-top:0; }
+  .sess { display:grid; grid-template-columns:64px 1fr auto; gap:4px 12px; align-items:baseline;
+          padding:8px 0; border-top:1px solid var(--border); font-size:14px; }
+  .sess .when { color:var(--sub); font-variant-numeric:tabular-nums; }
+  .sess .what small { display:block; color:var(--sub); font-size:12px; }
+  .sess .min { text-align:right; font-variant-numeric:tabular-nums; }
+  .tag { display:inline-block; font-size:11px; padding:1px 7px; border-radius:10px; margin-left:6px;
+         border:1px solid var(--border); color:var(--sub); vertical-align:1px; }
+  .tag.lock { border-color:var(--warn); color:var(--warn); }
+  .tag.cal { border-color:var(--ok); color:var(--ok); }
+  .role-strength .what { color:#fb923c; } .role-long .what { color:var(--accent); }
+  .role-hard .what { color:#f87171; }
+  .outline { display:grid; grid-template-columns:repeat(auto-fill, minmax(104px, 1fr)); gap:6px; }
+  .wkchip { border:1px solid var(--border); border-radius:6px; padding:6px 8px; font-size:12px; color:var(--sub); }
+  .wkchip b { display:block; color:var(--text); font-size:13px; }
+  .wkchip.proj { border-style:dashed; }
+  .wkchip.rec { background:rgba(52,211,153,.08); }
+  .wkchip.now { border-color:var(--accent); background:rgba(96,165,250,.12); }
+  .oc { display:inline-block; padding:1px 8px; border-radius:10px; font-size:12px; }
+  .oc.met { background:rgba(52,211,153,.18); color:var(--ok); }
+  .oc.partial { background:rgba(251,191,36,.18); color:var(--warn); }
+  .oc.missed { background:rgba(248,113,113,.18); color:var(--bad); }
+  .goal { display:flex; justify-content:space-between; gap:12px; padding:8px 0; border-top:1px solid var(--border); }
+  .goal:first-of-type { border-top:0; }
+  .pre { white-space:pre-line; color:var(--sub); font-size:13px; }
   button { padding:9px 16px; border-radius:6px; border:1px solid var(--border);
            background:var(--surface); color:var(--text); font:inherit; cursor:pointer; }
   button.primary { background:var(--accent); border-color:var(--accent); color:#0b1220;
@@ -83,6 +125,7 @@
 <header>
   <h1>Fitness Coach</h1>
   <nav aria-label="Main">
+    <a href="#plan" data-view="plan">Plan</a>
     <a href="#setup" data-view="setup">Setup</a>
     <a href="#settings" data-view="settings">Settings</a>
     <a href="#ladder" data-view="ladder">Ladder</a>
@@ -130,7 +173,7 @@ function h(tag, attrs, ...kids) {
     else if (v === true) el.setAttribute(k, "");
     else if (v !== false && v != null) el.setAttribute(k, v);
   }
-  for (const kid of kids.flat()) if (kid != null) el.append(kid);
+  for (const kid of kids.flat(Infinity)) if (kid != null) el.append(kid);
   return el;
 }
 
@@ -265,6 +308,102 @@ async function settingsView() {
     h("div", {class: "bar"}, save));
 }
 
+// ---- plan -------------------------------------------------------------------------------------
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const WEEKDAY = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+// Dates arrive as YYYY-MM-DD and are read as calendar dates, not instants, so no timezone can
+// move them a day.
+function parts(iso) { const [y, m, d] = iso.split("-").map(Number); return {y, m, d}; }
+function fmt(iso) { const p = parts(iso); return MONTHS[p.m - 1] + " " + p.d; }
+function dow(iso) { const p = parts(iso); return WEEKDAY[(new Date(Date.UTC(p.y, p.m - 1, p.d)).getUTCDay() + 6) % 7]; }
+function mondayOf(iso) {
+  const p = parts(iso); const t = new Date(Date.UTC(p.y, p.m - 1, p.d));
+  t.setUTCDate(t.getUTCDate() - ((t.getUTCDay() + 6) % 7));
+  return t.toISOString().slice(0, 10);
+}
+const ROLE = {long: "Long ride", hard: "Hard ride", lit: "Easy ride", strength: "Lift"};
+
+function why(o) {
+  if (o.seeded_from === "pre-plan replay" && o.decided_weeks === 0)
+    return "This is your starting rung, set from how you were riding before the plan began. The first real decision comes when week 1 closes on Monday.";
+  return o.reason;
+}
+
+async function planView() {
+  main.replaceChildren(h("p", {class: "lede"}, "Loading…"));
+  const o = await api("GET", "/api/plan/overview");
+  if (!o.ready) {
+    main.replaceChildren(h("h2", {}, "Plan"), h("div", {class: "msg note"}, o.reason),
+      h("a", {href: "#ladder", class: "btnlink"}, h("button", {class: "primary"}, "Go to the ladder")));
+    return;
+  }
+  const t = o.tier, g = o.gate, w = o.this_week;
+
+  const hero = h("div", {class: "card"},
+    h("div", {class: "hero"}, h("span", {class: "big"}, "T" + t.index + " · " + t.hours + "h a week"),
+      h("span", {class: "sub"}, (o.block || "Plan") + ", week " + o.week_in_block +
+        (o.recovery_week ? " · recovery week" : o.week_type !== "normal" ? " · " + o.week_type + " week" : ""))),
+    h("p", {class: "hint", style: "margin-top:8px"}, why(o)),
+    h("div", {class: "rungs-bar", role: "img", "aria-label": "You are on rung " + t.index + " of " + o.top_tier},
+      o.ladder.map(r => h("div", {class: "pip" + (r.index === t.index ? " here" : r.index < t.index ? " passed" : "")},
+        h("b", {}, "T" + r.index), r.hours + "h"))),
+    h("p", {class: "rule"}, t.rides + " rides: a " + t.long_min + "-minute long ride" +
+      (t.hard ? ", a " + t.hard_min + "-minute hard ride" : "") + ", and easy rides of " + t.lit_min + " minutes."));
+
+  const max = Math.max(t.minutes, w.ride_min, 1);
+  const pct = n => Math.min(100, n / max * 100) + "%";
+  const week = h("div", {class: "card"}, h("h3", {}, "This week, so far"),
+    h("p", {class: "hint"}, "Week of " + fmt(w.week_start) + ". Rides logged count; lifts are tracked beside them."),
+    h("div", {class: "hero"}, h("span", {class: "big"}, w.ride_min + " min"),
+      h("span", {class: "sub"}, w.ride_days + " of " + g.rides + " rides · " + w.strength_sessions + " lift" + (w.strength_sessions === 1 ? "" : "s"))),
+    h("div", {class: "meter", role: "img", "aria-label": w.ride_min + " of " + g.met_min + " minutes to move up"},
+      h("div", {class: "fill", style: "width:" + pct(w.ride_min)}),
+      h("div", {class: "tick", style: "left:" + pct(g.partial_min)}),
+      h("div", {class: "tick", style: "left:" + pct(g.met_min)})),
+    h("div", {class: "ticks"},
+      h("span", {style: "left:" + pct(g.partial_min)}, g.partial_min), h("span", {style: "left:" + pct(g.met_min)}, g.met_min)),
+    h("p", {class: "rule"}, h("b", {}, g.met_min + " minutes and " + g.rides + " rides"), " moves you up a rung. ",
+      h("b", {}, g.partial_min + "–" + (g.met_min - 1)), " holds you where you are. Under ", g.partial_min,
+      " counts as a missed week: one holds you and eases the next week, two in a row step you down."),
+    o.outline.summary ? h("p", {class: "pre", style: "margin-top:12px"}, o.outline.summary.split("\n").slice(2).join("\n")) : null);
+
+  const byWeek = new Map();
+  for (const s of o.sessions) { const k = mondayOf(s.date); (byWeek.get(k) || byWeek.set(k, []).get(k)).push(s); }
+  const horizon = h("div", {class: "card"}, h("h3", {}, "Your next three weeks"),
+    h("p", {class: "hint"}, "Sessions from " + fmt(o.frozen_before) + " on are rebuilt on each sync as your riding changes; earlier ones are locked."),
+    [...byWeek].map(([monday, list]) => [
+      h("h4", {class: "wk"}, "Week of " + fmt(monday) + (monday === w.week_start ? " (this week)" : "")),
+      list.map(s => h("div", {class: "sess role-" + s.role},
+        h("span", {class: "when"}, dow(s.date) + " " + parts(s.date).d),
+        h("span", {class: "what"}, ROLE[s.role] || s.role,
+          s.frozen ? h("span", {class: "tag lock"}, "locked") : null,
+          s.on_calendar ? h("span", {class: "tag cal"}, "on calendar") : null,
+          h("small", {}, s.prescription.split("  (")[0])),
+        h("span", {class: "min"}, Math.round(s.minutes) + " min")))]));
+
+  const chips = h("div", {class: "outline"}, o.outline.weeks.map(x =>
+    h("div", {class: "wkchip" + (x.projected ? " proj" : "") + (x.week_start === w.week_start ? " now" : "") + (x.recovery ? " rec" : "")},
+      h("b", {}, fmt(x.week_start)), x.block + (x.recovery ? " (recovery)" : ""), h("br", {}), "T" + x.tier + " · " + x.hours + "h")));
+  const outline = h("div", {class: "card"}, h("h3", {}, "The shape beyond that"),
+    h("p", {class: "hint"}, "Dashed weeks are a projection on the assumption “" + o.outline.assumption + "”, not a schedule."), chips);
+
+  const recent = h("div", {class: "card"}, h("h3", {}, "The weeks the plan has looked at"),
+    h("p", {class: "hint"}, "Graded against the rung asked for that week. Rides, not lifts."),
+    h("div", {class: "scroll"}, h("table", {class: "rungs"},
+      h("thead", {}, h("tr", {}, h("th", {}, "Week of"), h("th", {}, "Asked"), h("th", {}, "Rode"), h("th", {}, "Outcome"))),
+      h("tbody", {}, [...o.recent].reverse().map(r => h("tr", {}, h("td", {}, fmt(r.week_start)), h("td", {}, "T" + r.tier),
+        h("td", {}, Math.round(r.ride_min) + " min · " + r.ride_days + " ride" + (r.ride_days === 1 ? "" : "s")),
+        h("td", {}, h("span", {class: "oc " + r.outcome}, r.outcome))))))));
+
+  const goals = o.goals.length ? h("div", {class: "card"}, h("h3", {}, "Goals"),
+    o.goals.map(x => h("div", {class: "goal"}, h("span", {}, x.description, h("span", {class: "tag"}, x.priority)),
+      h("span", {class: "detail"}, fmt(x.date) + " " + parts(x.date).y + " · " + Math.round(x.days / 7) + " weeks")))) : null;
+
+  main.replaceChildren(h("h2", {}, o.plan_name),
+    h("p", {class: "lede"}, "Where you are, what moves you, and what is next."),
+    hero, week, horizon, outline, recent, goals);
+}
+
 // ---- ladder -----------------------------------------------------------------------------------
 // The tier ladder decides every session for months, so this screen shows what a re-derive would
 // change, rung by rung and field by field, before anything is kept.
@@ -350,10 +489,10 @@ async function ladderView() {
 }
 
 // ---- routing ----------------------------------------------------------------------------------
-const views = {setup: setupView, settings: settingsView, ladder: ladderView};
+const views = {plan: planView, setup: setupView, settings: settingsView, ladder: ladderView};
 async function route() {
-  const name = (location.hash || "#setup").slice(1);
-  const view = views[name] || setupView;
+  const name = views[(location.hash || "#plan").slice(1)] ? (location.hash || "#plan").slice(1) : "plan";
+  const view = views[name];
   document.querySelectorAll("nav a[data-view]").forEach(a =>
     a.classList.toggle("on", a.dataset.view === name));
   try { await view(); }

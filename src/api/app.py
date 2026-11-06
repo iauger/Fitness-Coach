@@ -40,6 +40,7 @@ from src.analysis.training_plan import plan_summary, current_week
 from src.planning import plans, tiers_store
 from src.planning.constants import plan_name
 from src.planning.outline import from_state as plan_outline
+from src.planning.overview import overview as plan_overview_data
 from src.planning.progression import TIERS
 from src.planning.progression_store import current_state
 from src.analysis.weekly import summaries_between
@@ -243,6 +244,13 @@ def _ladder(conn) -> dict | None:
     """
     plan = plans.by_name(conn, plan_name())
     return tiers_store.load(conn, plan.id) if plan else None
+
+
+@app.get("/api/plan/overview", tags=["plan"])
+def plan_overview(on: date | None = None) -> dict:
+    """Everything the plan screen shows, in one read-only call (see planning/overview.py)."""
+    with read_connection() as conn:
+        return plan_overview_data(conn, on or today_local())
 
 
 @app.get("/api/plan/state", tags=["plan"])

@@ -107,9 +107,13 @@ than the Vite/React/TypeScript above, deliberately for now: two screens do not e
 and the move costs one file. The *Ladder* screen (`/app#ladder`) re-derives under the current settings and shows what would
 change against the stored ladder, rung by rung and field by field, before "Use this ladder" stores
 it as a new version; a second button rebuilds the stored sessions and never pushes. The derivation
-lives in `src/planning/ladder_ops.py`, shared with `bootstrap_plan.py`. Still to build: the setup
-steps that only print a command today (FTP, history sync) as buttons, goals editing, the plan
-screen, the calendar home.
+lives in `src/planning/ladder_ops.py`, shared with `bootstrap_plan.py`. The *Plan* screen is the
+home (`/app`): the rung and why, this week against what would move you (the thresholds come from
+`classify_week`, and a test pins them to it at the boundary), the next three weeks with locked and
+on-calendar marked, the projected shape, the weeks the gate has graded, and the goals. It is one
+read-only call, `GET /api/plan/overview`, built in `src/planning/overview.py`. Still to build:
+the setup steps that only print a command today (FTP, history sync) as buttons, goals editing,
+the calendar as the home.
 
 **Ride limits are built** (`max_ride_min`, `day_max_ride_min`), as the second half of what the UI's
 setup wizard has to ask. The decision that matters is *derive inside, never clamp*: a rung is
