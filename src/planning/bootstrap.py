@@ -121,7 +121,19 @@ class DerivedTier:
 
     @property
     def target_min(self) -> int:
-        return self.long_min + self.lit_min + (self.hard_min * self.hard)
+        """
+        The minutes this rung asks for: the long ride, the hard session if there is one, and
+        an easy ride for every other ride the rung declares.
+
+        It counted exactly one easy ride whatever the ride count, which is right for three
+        rides — the week this was written for — and wrong for every other. At five rides the
+        gate expected 195 minutes against 315 actually scheduled, so the hours shown on the
+        status line, in the outline and to the coach did not match the calendar; at two rides
+        with a hard session it expected a third session that was never scheduled. Measured
+        against the generator's own output in tests/test_target_minutes.py.
+        """
+        easy_rides = max(0, self.rides - 1 - self.hard)
+        return self.long_min + (self.hard_min * self.hard) + (self.lit_min * easy_rides)
 
     @property
     def target_hours(self) -> float:
@@ -397,7 +409,14 @@ def _validate(ladder: Ladder) -> None:
         # the gate can advance into with nothing changing — it reads as progress, prescribes
         # the identical sessions, and costs a week before the next real step. A 15-minute
         # rounding step produced exactly that on the first run of this derivation.
-        if upper.target_min <= lower.target_min:
+        #
+        # The one exception is the step that *introduces* the hard session. For someone who
+        # rides two days a week the hard session replaces the easy ride rather than joining it,
+        # so that step lowers the minutes a little — and it is still a real step, because the
+        # week now contains a session the one below did not. Counting minutes alone is what
+        # let the old formula hide this: it counted a third ride that two-day weeks never had.
+        introduces_hard = lower.hard == 0 and upper.hard > 0
+        if upper.target_min <= lower.target_min and not introduces_hard:
             raise BootstrapError(
                 f"T{upper.index} ({upper.target_min}min) does not ask for more than "
                 f"T{lower.index} ({lower.target_min}min); every rung must be a real step")

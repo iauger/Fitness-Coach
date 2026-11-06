@@ -82,7 +82,19 @@ class Tier:
 
     @property
     def target_min(self) -> int:
-        return self.long_min + self.lit_min + (self.hard_min * self.hard)
+        """
+        The minutes this rung asks for: the long ride, the hard session if there is one, and
+        an easy ride for every other ride the rung declares.
+
+        It counted exactly one easy ride whatever the ride count, which is right for three
+        rides — the week this was written for — and wrong for every other. At five rides the
+        gate expected 195 minutes against 315 actually scheduled, so the hours shown on the
+        status line, in the outline and to the coach did not match the calendar; at two rides
+        with a hard session it expected a third session that was never scheduled. Measured
+        against the generator's own output in tests/test_target_minutes.py.
+        """
+        easy_rides = max(0, self.rides - 1 - self.hard)
+        return self.long_min + (self.hard_min * self.hard) + (self.lit_min * easy_rides)
 
     @property
     def target_hours(self) -> float:
