@@ -280,12 +280,15 @@ def derive(weeks: list[dict], band_hours: tuple[float, float],
     and the ride-day count stay put, because changing three things per rung makes a rung
     impossible to attribute.
 
-    `max_rides` is how many ride slots the rotation's blocks declare, passed in rather than
-    imported so this module stays free of `blocks` and its whole analysis chain. It is a hard
-    ceiling, not a preference: `pattern_for` only ever *reduces* a block's pattern, so a tier
-    asking for more rides than any block declares would hand back a short week — and `Block`
-    raises at construction to stop exactly that, which would make an otherwise-valid derived
-    ladder crash the generator at import.
+    `max_rides` is the athlete's configured availability (`plan.max_ride_days`), passed in
+    rather than read here so this module keeps no imports but stdlib. It caps; it does not set.
+    History says how many days you ride, config says how many you *could* — so someone who sets
+    7 and rides 3 gets a three-ride ladder, and the ceiling only bites when their riding grows
+    into it.
+
+    This used to be the rotation's own ride-slot count, which was three for everybody because
+    the weekly template was two hardcoded lists. `blocks.rotation_for` now builds the template
+    around the ladder instead, so the ceiling is the athlete's week rather than the code's.
     """
     obs = observe(weeks)
     notes: list[str] = []
@@ -313,9 +316,9 @@ def derive(weeks: list[dict], band_hours: tuple[float, float],
     rides_floor = max(2, rides_cap - 1)
     if wanted_rides > max_rides:
         notes.append(
-            f"you ride {wanted_rides} days in a typical week but the rotation's blocks declare "
-            f"{max_rides} ride slots, so the ladder tops out at {max_rides}. The extra day is "
-            f"yours to use — the plan will not prescribe it.")
+            f"you ride {wanted_rides} days in a typical week but plan.max_ride_days is "
+            f"{max_rides}, so the ladder tops out there. Raise it if those days are really "
+            f"available; otherwise the extra day stays yours and the plan will not claim it.")
 
     longs, step = _long_sequence(long_floor, long_cap)
     if step != LONG_STEPS[0] and long_cap > long_floor:

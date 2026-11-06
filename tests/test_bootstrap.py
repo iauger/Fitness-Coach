@@ -19,7 +19,6 @@ import pytest
 from conftest import seed_ladder
 from src.db.migrations import migrate
 from src.planning import plans, tiers_store
-from src.planning.blocks import max_pattern_rides
 from src.planning.bootstrap import (
     LONG_STEPS, MIN_RIDDEN_WEEKS, RUNGS, BootstrapError, derive, observe,
 )
@@ -30,6 +29,7 @@ from src.planning.tiers_store import NotBootstrapped
 FIXTURE = Path(__file__).parent / "fixtures" / "history_2025-09_2026-11.json"
 BAND = (3.5, 4.0)
 CEILING = 120
+MAX_RIDE_DAYS = 7
 
 
 @pytest.fixture(scope="module")
@@ -39,7 +39,7 @@ def history() -> list[dict]:
 
 @pytest.fixture
 def ladder(history):
-    return derive(history, BAND, CEILING, max_pattern_rides())
+    return derive(history, BAND, CEILING, MAX_RIDE_DAYS)
 
 
 def week(start="2026-01-05", ride_min=180.0, ride_days=3, longest=60.0, strength=0) -> dict:
@@ -184,15 +184,38 @@ def test_a_band_the_history_cannot_reach_is_a_note_not_an_error():
     assert any("band" in n for n in built.notes), built.notes
 
 
-def test_more_ride_days_than_the_rotation_can_hold_is_clamped_and_said_out_loud():
+def test_configured_availability_caps_the_ride_days_and_says_so():
     """
-    `pattern_for` only ever reduces a block's pattern, and `Block` raises at construction if a
-    tier asks for more rides than any block declares. An unclamped derivation would therefore
-    crash the generator at import for a five-day-a-week athlete.
+    `plan.max_ride_days` caps; it does not set. Someone riding five days with a ceiling of
+    three gets a three-ride ladder and is told the plan is not claiming the other two.
     """
     built = derive(weeks(12, ride_min=400.0, ride_days=5, longest=90.0), BAND, CEILING, 3)
     assert all(t.rides <= 3 for t in built.tiers)
-    assert any("ride slots" in n for n in built.notes), built.notes
+    assert any("max_ride_days" in n for n in built.notes), built.notes
+
+
+def test_history_sets_the_ride_days_when_availability_allows_more():
+    """
+    The other half of "config caps, history sets": a ceiling of seven does not prescribe seven
+    to someone who rides three. A plan asking for twice what you do is ignored exactly like one
+    asking for a third.
+    """
+    built = derive(weeks(12, ride_min=180.0, ride_days=3, longest=60.0), BAND, CEILING, 7)
+    assert built.cap.rides == 3
+    assert built.notes == () or all("max_ride_days" not in n for n in built.notes)
+
+
+def test_a_five_day_athlete_gets_a_five_day_week():
+    """
+    The limitation this replaced: the weekly template was two hardcoded lists with three ride
+    slots, so three was a ceiling for everybody and the derivation was clamped to it.
+    """
+    from src.planning.blocks import rotation_for, rotation_rides
+
+    built = derive(weeks(12, ride_min=400.0, ride_days=5, longest=90.0), BAND, CEILING, 7)
+    assert built.cap.rides == 5
+    rotation = rotation_for(built.cap.rides)
+    assert rotation_rides(rotation) == 5
 
 
 # ── storage, provenance and the refusal ───────────────────────────────────────
@@ -374,3 +397,85 @@ def test_what_is_reported_is_what_was_prescribed(db, monkeypatch):
         "SELECT DISTINCT minutes FROM prescribed_sessions WHERE role = 'lit'")}
     assert prescribed == {float(ladder[state["tier"]].lit_min)}, (
         f"easy rides {prescribed} do not match the ladder being reported")
+
+
+# ── a week that is actually the athlete's, 2 to 7 days ────────────────────────
+
+@pytest.mark.parametrize("ride_days", [2, 3, 4, 5, 6, 7])
+def test_a_whole_horizon_generates_at_every_ride_day_count(db, ride_days):
+    """
+    End to end at every width, because the safety rules were written against a three-ride week.
+
+    The weekly template used to be two literal lists with three ride slots, and `pattern_for`
+    only reduces — so three was a hard ceiling for every athlete this project would ever have,
+    and `bootstrap` was clamped to it. Seven is permitted now. It is a bad idea for most
+    people, and that is the athlete's judgement to make rather than the code's.
+
+    What must hold at every width: no lower-body lift beside the long ride, at most the
+    declared number of hard sessions, the full count of lifts kept, and no day given two rides.
+    """
+    from src.planning.blocks import rotation_for
+
+    plan = plans.ensure(db, f"w{ride_days}", f"W{ride_days}", started_on="2026-11-02")
+    built = derive(weeks(16, ride_min=90.0 * ride_days, ride_days=ride_days, longest=110.0),
+                   BAND, 150, ride_days)
+    assert built.cap.rides == ride_days
+    tiers_store.save(db, plan.id, built, replace=True)
+
+    rotation = rotation_for(ride_days)
+    rolled = store_horizon(db, date(2026, 11, 4), f"W{ride_days}")
+    assert rolled["written"] > 0
+
+    rows = [dict(r) for r in db.execute(
+        "SELECT date, weekday, role, archetype, variant, volume_tier FROM prescribed_sessions "
+        "WHERE plan_name = ? ORDER BY date", (f"W{ride_days}",))]
+    from src.analysis.dates import monday_of
+
+    by_week: dict[str, list[dict]] = {}
+    for r in rows:
+        monday = monday_of(date.fromisoformat(r["date"])).isoformat()
+        by_week.setdefault(monday, []).append(r)
+    assert len(by_week) >= 2, "one week proves nothing about a weekly template"
+
+    for sessions in by_week.values():
+        long_days = {s["weekday"] for s in sessions if s["role"] == "long"}
+        for s in sessions:
+            if s["archetype"] == "strength" and s["variant"] == "lower":
+                assert not long_days & {(s["weekday"] - 1) % 7, (s["weekday"] + 1) % 7}, (
+                    f"{ride_days} ride days: lower body on weekday {s['weekday']}, "
+                    f"beside a long ride")
+        rides = [s for s in sessions if s["role"] != "strength"]
+        assert len({s["weekday"] for s in rides}) == len(rides), "two rides on one day"
+        assert sum(1 for s in sessions if s["role"] == "hard") <= 1
+
+        assert len(rides) <= ride_days, (
+            f"{len(rides)} rides in one week against a ladder asking for {ride_days}")
+
+    # The assertion that proves the *roller* built its rotation from the ladder rather than at
+    # a fixed three. `<=` alone passes trivially when the generator is narrower than the
+    # ladder, which is how two mutants — the roller hardcoding `rotation_for(3)`, and `horizon`
+    # ignoring the rotation it was handed — survived an earlier version of this test.
+    # Against the tier the gate actually used, not the cap: a fresh database has no activity
+    # history, so the pre-plan replay seeds the floor and the horizon is built there. Asserting
+    # against `ride_days` instead looked right and compared the floor's rides to the cap's.
+    widest = max(len([s for s in v if s["role"] != "strength"]) for v in by_week.values())
+    tier_used = max(r["volume_tier"] for r in rows)
+    expected = built.tiers[tier_used].rides
+    assert widest == expected, (
+        f"the widest week has {widest} rides; T{tier_used} of this athlete's ladder asks for "
+        f"{expected}. The generator is not using their weekly template.")
+
+    from src.planning.blocks import rotation_rides
+    assert rotation_rides(rotation) == ride_days
+
+
+def test_strength_is_never_trimmed_however_wide_the_week(db):
+    """
+    Two lifts a week at every tier, in recovery weeks and on re-entry — what
+    "strength-anchored" means mechanically, and it must survive the template being generated.
+    """
+    from src.planning.blocks import build_pattern
+
+    for ride_days in range(2, 8):
+        pattern = build_pattern(ride_days, strength_days=2)
+        assert sum(1 for _, r in pattern if r == "strength") == 2, (ride_days, pattern)

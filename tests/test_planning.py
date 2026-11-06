@@ -171,10 +171,24 @@ def test_block_rejects_too_many_hard_sessions():
               pattern=[(0, "hard"), (2, "hard"), (4, "hard")])
 
 
-def test_block_rejects_two_sessions_on_one_weekday():
-    with pytest.raises(ValueError, match="one weekday"):
+def test_block_rejects_two_rides_on_one_weekday():
+    """
+    Two rides on a day is a generator error every time, so it stays forbidden.
+
+    One session per weekday was the rule until ride days became configurable. At six or seven
+    riding days there is no empty day left for a lift, and a ride plus a lift on one day is
+    ordinary practice — so that is now allowed, and only the doubled *ride* is rejected.
+    """
+    with pytest.raises(ValueError, match="two rides on weekday"):
         Block(name="bad", block_type="base", weeks=1,
               pattern=[(1, "lit"), (1, "long")])
+
+
+def test_a_lift_may_share_a_day_with_a_ride():
+    """At seven ride days there is nowhere else for it to go."""
+    block = Block(name="busy", block_type="base", weeks=1,
+                  pattern=[(1, "lit"), (1, "strength"), (5, "long")])
+    assert (1, "strength") in block.pattern
 
 
 @pytest.mark.parametrize("tier", sorted(TIERS))

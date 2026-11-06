@@ -94,6 +94,11 @@ class Plan:
     slug: str | None = None
     sustainable_band_hours: tuple[float, float] = (3.5, 4.0)
     long_ride_ceiling_min: int = 120
+    # An availability ceiling, not a target. The ladder's ride-day count is read from what you
+    # actually ride; this only stops it climbing past the days you have. Seven is allowed and
+    # is a bad idea for most people, which is a judgement for the athlete rather than the code.
+    max_ride_days: int = 7
+    strength_days: int = 2
     horizon_weeks: int = 3
     goal_date: date | None = None
 
@@ -260,6 +265,16 @@ def _validate(cfg: Config) -> None:
         value = getattr(cfg.profile, name)
         if value is not None and value <= 0:
             raise ConfigError(f"profile.{name}: {value} is not a usable measurement")
+
+    if not 1 <= cfg.plan.max_ride_days <= 7:
+        raise ConfigError(
+            f"plan.max_ride_days: {cfg.plan.max_ride_days} is not a number of days in a week")
+
+    if not 0 <= cfg.plan.strength_days <= 5:
+        raise ConfigError(
+            f"plan.strength_days: {cfg.plan.strength_days} leaves no room for riding. The "
+            f"long ride and the hard session are never given over to lifting, so at most 5 "
+            f"days can carry one.")
 
     if cfg.plan.horizon_weeks < 1:
         raise ConfigError(

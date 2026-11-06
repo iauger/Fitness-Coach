@@ -40,6 +40,21 @@ look different, and the top rung reaches for `sustainable_band_hours` from your 
 exceeding what `long_ride_ceiling_min` allows — if your history cannot reach the band you asked
 for, the bootstrap says so rather than quietly bending the ladder upward to meet it.
 
+**The shape of the week is derived too**, not just its size. How many days you ride comes from
+what you actually ride, capped by `max_ride_days` — config states availability, history states
+fact, and someone who sets 7 but rides 3 gets a three-day week. Anything from two to seven days
+generates, with the long ride anchoring Saturday and lifts placed on rest days where there are
+any:
+
+| days | the week |
+|---|---|
+| 3 | Tue hard · Wed lift · Thu easy · Sat long · Sun lift |
+| 5 | Mon lift · Tue hard · Wed easy · Thu easy · Fri lift · Sat long · Sun easy |
+| 7 | every day rides; two of them also lift |
+
+Seven is permitted and is a bad idea for most people. That judgement belongs to the athlete, not
+to the code.
+
 A week that hits ≥90% of its tier's volume *and* its ride-day count advances you one rung. A
 partial week holds. A gap steps you down one rung per week and produces a **re-entry week**
 rather than dropping you into week 4 of a block you were never in. T4 is a ceiling, not a

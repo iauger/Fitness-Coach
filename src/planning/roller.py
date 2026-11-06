@@ -31,10 +31,12 @@ from datetime import date, timedelta
 
 from src.analysis.dates import monday_of
 from src.clock import today_local, utc_now_iso
-from src.planning.blocks import ROTATION, advance_position, expand_week, plan_week_row
+from src.planning.blocks import (
+    ROTATION, advance_position, expand_week, plan_week_row, rotation_for,
+)
 from src.planning import plans, tiers_store
 from src.planning.constants import (
-    configured_slug, goal_date, plan_name as configured_plan_name, plan_start_monday,
+    configured_slug, goal_date, strength_days, plan_name as configured_plan_name, plan_start_monday,
 )
 from src.planning.progression_store import current_state
 
@@ -71,7 +73,8 @@ def external_id(plan_name: str, on: str, role: str) -> str:
 
 def horizon(conn, today: date | None = None, plan_name: str | None = None,
             weeks: int = HORIZON_WEEKS, start_tier: int = 1,
-            persist_state: bool = True, tiers: dict | None = None) -> dict:
+            persist_state: bool = True, tiers: dict | None = None,
+            rotation: list | None = None) -> dict:
     """
     Build the horizon without writing it. Returns the state, the sessions and the week rows.
 
@@ -81,6 +84,11 @@ def horizon(conn, today: date | None = None, plan_name: str | None = None,
     """
     today = today or today_local()
     plan_name = plan_name or configured_plan_name()
+    # The weekly template is built around the ladder's ride-day count, not fixed at three.
+    # `pattern_for` only reduces, so a block has to declare at least as many ride slots as the
+    # top tier asks for — which means the rotation cannot be a module constant once the ladder
+    # is the athlete's.
+    rotation = rotation or ROTATION
     state = current_state(conn, today, plan_name, start_tier, persist=persist_state,
                           tiers=tiers)
 
@@ -91,7 +99,7 @@ def horizon(conn, today: date | None = None, plan_name: str | None = None,
 
     for offset in range(weeks):
         monday = monday_of(today) + timedelta(weeks=offset)
-        block = ROTATION[block_index]
+        block = rotation[block_index]
         # Only the first week can be a re-entry week: the gate decided that about the week now
         # starting, and it has said nothing about the two after it.
         week_type = state["week_type"] if offset == 0 else "normal"
@@ -139,8 +147,10 @@ def store_horizon(conn, today: date | None = None, plan_name: str | None = None,
     # stranger's measured practice and report nothing, and a plan that fits badly reads as the
     # plan being wrong about *you*. The refusal names the command that fixes it.
     ladder = tiers_store.require(conn, plan_id, plan_name)
+    rotation = rotation_for(max(t.rides for t in ladder.values()), strength_days())
 
-    built = horizon(conn, today, plan_name, weeks, start_tier, tiers=ladder)
+    built = horizon(conn, today, plan_name, weeks, start_tier, tiers=ladder,
+                    rotation=rotation)
     cutoff = built["cutoff"]
 
     # Delete only what the new horizon no longer contains, then update the rest in place.

@@ -90,3 +90,19 @@ def dated_goals() -> list[tuple[str, date, str]]:
     """
     goals = [(g.description, g.date, g.priority) for g in config().goals if g.date]
     return sorted(goals, key=lambda g: g[1])
+
+
+def max_ride_days() -> int:
+    """
+    How many days a week the athlete has available. A ceiling on the ladder, never a target.
+
+    History decides how many ride days a tier asks for; this only stops that climbing past the
+    days that exist. Seven is permitted — it is a bad idea for most people, and that is a
+    judgement for the athlete rather than for the code.
+    """
+    return config().plan.max_ride_days
+
+
+def strength_days() -> int:
+    """Lifting days per week. Never trimmed by a tier, recovery week or re-entry week."""
+    return config().plan.strength_days

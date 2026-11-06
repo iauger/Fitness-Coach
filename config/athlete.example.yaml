@@ -48,6 +48,14 @@ plan:
   sustainable_band_hours: [3.5, 4.0]
   # The long ride holds here and is extended on demand, never ramped.
   long_ride_ceiling_min: 120
+  # An availability ceiling, not a target. How many days a week the ladder asks you to ride is
+  # read from what you actually ride; this only stops it climbing past the days you have. 7 is
+  # allowed and is a bad idea for most people — that judgement is yours, not the code's.
+  max_ride_days: 7
+  # Lifting days a week. Never trimmed by a tier, a recovery week or a re-entry week: in the
+  # history this plan was designed from, lifting continued in 8 of the 21 weeks where cycling
+  # stopped, which is why it is the anchor habit rather than an extra.
+  strength_days: 2
   # How many weeks of dated sessions exist at a time. Beyond this is shape, not a schedule.
   horizon_weeks: 3
   goal_date: 2027-10-01          # labels stored plan rows; not a taper target

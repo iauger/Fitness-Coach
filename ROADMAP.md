@@ -1531,9 +1531,13 @@ to meet an aspiration is how the old plan reached 8.4h/week.
    everywhere made T0→T1 a 68% jump and compressed everything above it. The hand ladder has
    both at 75min, and the reason is that what separates them is the hard session. The strict
    rule was invented during implementation rather than read off the design.
-3. **Ride days have to be clamped to the rotation's ride slots.** Every block declares three;
-   `pattern_for` only ever reduces, and `Block` raises at construction if a tier asks for more.
-   A five-day-a-week athlete would have derived a ladder that crashed the generator at import.
+3. **Ride days collided with the rotation's ride slots.** Every block declared three;
+   `pattern_for` only ever reduces, and `Block` raised at construction if a tier asked for
+   more, so a five-day-a-week athlete derived a ladder that crashed the generator at import.
+   Fixed here with a clamp — **which was the wrong fix, and was replaced within the hour by
+   generating the weekly template instead.** See the follow-up below: a clamp that stops the
+   derivation asking for what the athlete actually does is not a constraint, it is the code's
+   limitation wearing a constraint's clothes.
 
 **The refusal.** `tiers_store.require` raises when a plan has no ladder, and `store_horizon`
 calls it before building anything. Not `load(...) or TIERS` — that one-liner generates a
@@ -1559,3 +1563,50 @@ fresh database starts on. The test now uses a ladder that overlaps the module on
 
 **Also corrected:** the README's tier table had been copied from an early design draft and was
 wrong for T1, T2 and T4. It is now generated from what the derivation actually produces.
+
+#### Step 5 follow-up: three ride days was the code's limit, not the athlete's
+
+Raised immediately after step 5 landed, and correctly: *"are we hard coding 3 ride days as the
+only configuration?"*
+
+We were — but not in the ladder. The weekly template was two literal lists:
+
+```python
+_EASY_WEEK     = [(1,"lit"),  (2,"strength"), (3,"lit"), (5,"long"), (6,"strength")]
+_EMPHASIS_WEEK = [(1,"hard"), (2,"strength"), (3,"lit"), (5,"long"), (6,"strength")]
+```
+
+Three ride slots, Monday and Friday rest, baked in for everyone. Because `pattern_for` only
+ever *reduces* a pattern, three was a hard ceiling — and `max_pattern_rides()`, added hours
+earlier in step 5, taught the derivation to respect a limit that was really just the shape of
+those two lines. A clamp dressed as a constraint.
+
+**`blocks.build_pattern(ride_days, strength_days)` generates the template.** For (3, 2) it
+reproduces both lists exactly — asserted, same discipline as the config refactor's
+byte-identical check, because this template decides every athlete's week. Two to seven days
+generate, each verified end to end.
+
+Strength days are *scored* rather than placed: rest days first, then spacing between lifts,
+then the day after a ride. For three ride days that independently picks Wednesday and Sunday,
+which is what the hand-written template said.
+
+**Decision taken: config caps, history sets.** `plan.max_ride_days` is availability, not a
+target — the ladder's ride-day count is read from what the athlete actually rides and only
+stops climbing when it meets the ceiling. Someone who sets 7 and rides 3 gets a three-day week,
+and is told nothing. Someone who rides 5 with a ceiling of 3 is told the plan is not claiming
+the other two. Consistent with `sustainable_band_hours`: config states intent, history states
+fact.
+
+**One invariant had to loosen.** `Block` rejected two sessions on one weekday. At six or seven
+riding days there is no empty day left for a lift, and a ride plus a lift on one day is
+ordinary practice — `prescribed_sessions` is keyed on `(plan, date, role)`, so both store and
+push. What stays forbidden is *two rides* on one day, which is a generator error every time.
+
+**What did not change:** this athlete's plan. History says three ride days, the ceiling is
+seven, so the ladder, the weekday layout and the pushed calendar are all identical. Verified by
+running it, not by reasoning about it.
+
+The safety rules survive every width, which is the only reason this is safe to allow: no
+lower-body lift beside the long ride (`_strength_for_week` already computed adjacency from
+whatever pattern it was handed, so it needed no change), at most one hard session, two lifts
+kept at every tier, no day given two rides. Parametrised over 2–7 ride days end to end.

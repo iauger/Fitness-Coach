@@ -51,13 +51,6 @@ MAX_HARD_PER_WEEK = 2
 # pattern_for only reduces.
 MAX_TIER_RIDES = max(t.rides for t in TIERS.values())
 
-# How many ride slots every block in the rotation declares. A derived ladder cannot ask for
-# more than this — `pattern_for` only reduces — so `bootstrap.derive` is handed it and clamps.
-# Computed from the blocks themselves rather than written down, so adding a slot to a block is
-# enough to raise the ceiling.
-def max_pattern_rides() -> int:
-    return min(sum(1 for _, r in b.pattern if r != "strength") for b in ROTATION)
-
 # Ride slots are dropped in this order when a tier asks for fewer rides than the block declares.
 # The long ride is never dropped — it is the session the plan exists to protect — and a hard slot
 # becomes an easy ride rather than disappearing, so the week keeps its session count where it can.
@@ -85,8 +78,21 @@ class Block:
         for _, role in self.pattern:
             if role not in ROLES:
                 raise ValueError(f"unknown role {role!r} in block {self.name!r}")
-        if len({d for d, _ in self.pattern}) != len(self.pattern):
-            raise ValueError(f"block {self.name!r} has two sessions on one weekday")
+        # One session per weekday was the rule until ride days became configurable. At six or
+        # seven riding days there is no empty day left for a lift, and a ride plus a lift on one
+        # day is ordinary practice rather than a mistake — `prescribed_sessions` is keyed on
+        # (plan, date, role), so both store and push. What stays forbidden is *two rides* on one
+        # day, which is a generator error every time.
+        if len(set(self.pattern)) != len(self.pattern):
+            raise ValueError(f"block {self.name!r} repeats a (weekday, role) slot")
+        rides_per_day = {}
+        for day, role in self.pattern:
+            if role != "strength":
+                rides_per_day[day] = rides_per_day.get(day, 0) + 1
+        doubled = [d for d, n in rides_per_day.items() if n > 1]
+        if doubled:
+            raise ValueError(
+                f"block {self.name!r} schedules two rides on weekday {doubled[0]}")
         if self.block_type not in BLOCK_TYPES:
             # Unvalidated, a typo fell through _hard_session's if/elif chain to threshold, so a
             # block labelled "hiit " would silently prescribe threshold work for six weeks.
@@ -95,14 +101,12 @@ class Block:
                 f"expected one of {', '.join(sorted(BLOCK_TYPES))}")
         if not any(r == "long" for _, r in self.pattern):
             raise ValueError(f"block {self.name!r} declares no long ride")
-        rides = sum(1 for _, r in self.pattern if r != "strength")
-        if rides < MAX_TIER_RIDES:
-            # pattern_for only ever reduces, so a block that declares fewer ride slots than the
-            # top tier asks for would silently hand back a short week at that tier rather than
-            # failing. Caught at construction instead.
-            raise ValueError(
-                f"block {self.name!r} declares {rides} ride slots; the top tier asks for "
-                f"{MAX_TIER_RIDES} and patterns are only ever reduced, never extended")
+        if not any(r != "strength" for _, r in self.pattern):
+            raise ValueError(f"block {self.name!r} declares no ride at all")
+        # The "enough ride slots for the top tier" check used to live here, against the module
+        # ladder. It cannot: the pattern is now built per athlete and the ladder is the plan's,
+        # so a block has no way to know what it is being asked for. `rotation_for` checks it,
+        # because that is the one place that holds both.
 
     @property
     def phase(self) -> str:
@@ -120,8 +124,104 @@ class Block:
 # workout forever", and it sits early because the source uses it to "kick-start the first couple
 # weeks of a plan" — the opposite end of the plan from where the old 32-week ramp put it.
 
-_EASY_WEEK = [(1, "lit"), (2, "strength"), (3, "lit"), (5, "long"), (6, "strength")]
-_EMPHASIS_WEEK = [(1, "hard"), (2, "strength"), (3, "lit"), (5, "long"), (6, "strength")]
+# The weekly template, generated rather than written down.
+#
+# It was two literal lists with three ride slots each, and because `pattern_for` only ever
+# *reduces* a pattern, three was a hard ceiling for every athlete the project would ever have.
+# Someone who rides five days a week had no way to say so, and `bootstrap` ended up clamping
+# its derivation to a limit that was really just the shape of these two lines.
+#
+# Generated from `(ride_days, strength_days)` instead. For (3, 2) it reproduces the two lists
+# exactly, which is asserted in tests/test_patterns.py — same discipline as the config
+# refactor's byte-identical check, because this template decides every athlete's week.
+
+LONG_DAY = 5          # Saturday. The long ride anchors the week and everything places around it.
+HARD_DAY = 1          # Tuesday. Early enough to leave the long ride intact at the weekend.
+
+# The order ride days are filled in after the long ride and the emphasis session, chosen to
+# spread sessions rather than block them together: Thursday, then Sunday beside the long ride,
+# then midweek, then the Monday and Friday that are rest days in a three-ride week.
+_RIDE_DAY_PREFERENCE = (3, 6, 2, 0, 4)
+
+
+def build_pattern(ride_days: int, strength_days: int = 2, hard: bool = True
+                  ) -> list[tuple[int, str]]:
+    """
+    One week's slots as `(weekday, role)`, for an athlete who rides `ride_days` days.
+
+    This is the *nominal* week at the top of the ladder. `pattern_for` reduces it for lower
+    tiers, which is why it is built at the cap and never per tier.
+
+    Strength days are chosen rather than fixed, by preferring rest days, then maximum spacing,
+    then the day after a ride. At six or seven ride days there are no rest days left and
+    strength doubles up onto a riding day — never onto the long ride or the hard session, which
+    is the one placement rule here that is about safety rather than tidiness.
+    """
+    if not 1 <= ride_days <= 7:
+        raise ValueError(f"ride_days must be 1-7, got {ride_days}")
+    if not 0 <= strength_days <= 7:
+        raise ValueError(f"strength_days must be 0-7, got {strength_days}")
+
+    rides = [LONG_DAY]
+    if ride_days > 1:
+        rides.append(HARD_DAY)
+    for day in _RIDE_DAY_PREFERENCE:
+        if len(rides) >= ride_days:
+            break
+        rides.append(day)
+    rides = sorted(rides[:ride_days])
+
+    pattern = []
+    for day in rides:
+        if day == LONG_DAY:
+            pattern.append((day, "long"))
+        elif day == HARD_DAY and hard and ride_days > 1:
+            pattern.append((day, "hard"))
+        else:
+            pattern.append((day, "lit"))
+
+    # Appended, not merged: at six or seven ride days a lift shares a day with a ride, and both
+    # are real sessions. `prescribed_sessions` is keyed on (plan, date, role), so two roles on
+    # one day store and push correctly.
+    pattern += [(day, "strength") for day in _strength_days(rides, strength_days)]
+    return sorted(pattern)
+
+
+def _strength_days(rides: list[int], count: int) -> list[int]:
+    """
+    Which days carry a lift, given the ride days.
+
+    Scored, not hardcoded, so the answer survives any ride-day count. Priority is rest days
+    first (a lift on an otherwise empty day is the cheapest place to put one), then spacing
+    between the lifts, then landing the day after a ride. For three ride days that produces
+    Wednesday and Sunday, which is what the hand-written template said.
+    """
+    from itertools import combinations
+
+    if count <= 0:
+        return []
+    candidates = [d for d in range(7) if d not in (LONG_DAY, HARD_DAY)]
+    if count > len(candidates):
+        raise ValueError(f"cannot place {count} strength days without using the long ride "
+                         f"or the hard session")
+
+    def gap(days: tuple[int, ...]) -> int:
+        if len(days) < 2:
+            return 7
+        ordered = sorted(days)
+        wrap = (ordered[0] + 7) - ordered[-1]
+        return min(min(b - a for a, b in zip(ordered, ordered[1:])), wrap)
+
+    def score(days: tuple[int, ...]) -> tuple[int, int, int]:
+        rest_days = sum(1 for d in days if d not in rides)
+        follows_ride = sum(1 for d in days if (d - 1) % 7 in rides)
+        return rest_days, gap(days), follows_ride
+
+    return sorted(max(combinations(candidates, count), key=score))
+
+
+_EASY_WEEK = build_pattern(3, hard=False)
+_EMPHASIS_WEEK = build_pattern(3, hard=True)
 
 ROTATION: list[Block] = [
     Block(
@@ -435,3 +535,32 @@ def intensity_split(sessions: list[dict]) -> dict:
         # ("zero to two structured high-intensity sessions each week"), not time in zone.
         "hard_sessions": hard_sessions,
     }
+
+
+def rotation_for(ride_days: int, strength_days: int = 2) -> list[Block]:
+    """
+    The rotation, with its weekly template built for an athlete who rides `ride_days` days.
+
+    `ROTATION` is this at (3, 2) and stays the module-level default, because every test and the
+    whole progression suite reasons about that shape. A plan whose derived ladder asks for more
+    builds its own.
+
+    The check that used to sit in `Block.__post_init__` lives here: `pattern_for` only ever
+    *reduces* a pattern, so a block declaring fewer ride slots than the top tier asks for hands
+    back a short week at that tier rather than failing. Only this function holds both the
+    pattern and the ladder it is being built for, so only this function can check it.
+    """
+    easy = build_pattern(ride_days, strength_days, hard=False)
+    emphasis = build_pattern(ride_days, strength_days, hard=True)
+    return [
+        Block(name=b.name, phase_label=b.phase_label, block_type=b.block_type, weeks=b.weeks,
+              pattern=list(easy if b.block_type == "base" else emphasis),
+              hard_variants=list(b.hard_variants), recovery_weeks=set(b.recovery_weeks),
+              note=b.note)
+        for b in ROTATION
+    ]
+
+
+def rotation_rides(rotation: list[Block]) -> int:
+    """How many ride slots the thinnest block in a rotation declares."""
+    return min(sum(1 for _, r in b.pattern if r != "strength") for b in rotation)
