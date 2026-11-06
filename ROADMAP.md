@@ -82,10 +82,15 @@ version behind a preview; the existing analytics embedded; the coach. Config sta
 truth — the UI validates and writes it through the loader, and must preserve its comments, which
 are half the documentation, so `ruamel.yaml` rather than PyYAML.
 
-Two things come before the first write route: an Origin check and a token. Today the API is
-almost all `GET`; a browser on loopback with no-auth write routes lets any page you visit send a
-request to `127.0.0.1:8800`, and some of those requests are a calendar push or a billed chat
-call. That is a small slice of the authentication work, not the whole of it.
+**The Origin check and token are built** (`src/api/guard.py`, `tests/test_api_guard.py`). A page
+you visit can make your browser send requests to `127.0.0.1:8800`, and DNS rebinding can let it
+read the replies; some writes are a calendar push or a billed chat call. The rule is by method, in
+one middleware, so a route added later is covered without anyone remembering: every request needs
+a loopback `Host` and, if it sends one, this server's own `Origin`; every non-GET also needs the
+per-process `X-Fitness-Token` from `GET /api/session`. No CORS header is ever set, which is what
+keeps the token from other origins. A dev frontend on another port is therefore refused by design:
+serve the UI from this app, or widen deliberately with `FITNESS_COACH_ALLOWED_HOSTS`. A small slice
+of the authentication work, not the whole of it. `ruamel.yaml` for config writes is still to do.
 
 **Ride limits are built** (`max_ride_min`, `day_max_ride_min`), as the second half of what the UI's
 setup wizard has to ask. The decision that matters is *derive inside, never clamp*: a rung is

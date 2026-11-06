@@ -9,6 +9,10 @@ Run the local Fitness Coach app.
 The server runs a background maintenance loop (pull, roll, push) while it is up —
 see src/api/app.py. Set FITNESS_COACH_NO_SCHEDULER=1 to serve without it.
 
+Requests are also screened (src/api/guard.py): a foreign Host or Origin is refused, and any
+write needs the per-run token from GET /api/session, so a web page you happen to have open
+cannot drive this server through your browser.
+
 Binding is deliberately restricted to 127.0.0.1. This process reads `.env`, so it holds the
 intervals.icu and Anthropic keys, and it has no authentication of any kind; on a routable
 interface it would be an open proxy to both. Remote access is roadmap item 16 and belongs to a

@@ -88,6 +88,13 @@ behavioural test because both behaviours look plausible in isolation:
 | no `TIERS[...]` outside the four modules that own it | a reader reporting 3.42h beside a calendar showing 3.5h |
 | no `rotation_for(` outside `blocks.py` — callers use `plan_rotation` | a preview or roller building a week that ignores the athlete's available days |
 
+## Every write route is guarded by method, in one place
+
+`src/api/guard.py` refuses a foreign `Host`/`Origin` on every request and requires
+`X-Fitness-Token` on every non-GET. Never add a CORS middleware to make a dev frontend work (it
+would let any page read the token), and never exempt a route from the guard; the sweep in
+`tests/test_api_guard.py` fails if a write route is reachable without the token.
+
 ## Read the plan's own ladder, never the module constant
 
 `progression.TIERS` is the built-in ladder and a fallback. The plan's real rungs live in the

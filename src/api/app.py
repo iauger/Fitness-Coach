@@ -26,6 +26,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.api.cache import CACHE
+from src.api.guard import Guard, TOKEN, TOKEN_PATH
 from src.api.chat import router as chat_router
 from src.analysis.activities import recent_activities, sport_distribution, weekly_load_by_sport
 from src.analysis.cycle import cycles, cycle_metrics, cycle_for_review, latest_review
@@ -112,7 +113,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(Guard)
 app.include_router(chat_router)
+
+
+@app.get(TOKEN_PATH, tags=["ops"])
+def session_token() -> dict:
+    """The write token for this server process. Readable only by this server's own pages:
+    the Guard refuses other Hosts and Origins, and no CORS header is ever set."""
+    return {"token": TOKEN}
 
 
 # ── pages ─────────────────────────────────────────────────────────────────────
@@ -359,8 +368,8 @@ def health() -> dict[str, Any]:
 @app.post("/api/cache/clear", tags=["ops"])
 def cache_clear() -> dict:
     """
-    Drop cached page builds. Not a database write — the only non-GET route in 12A, and it
-    touches nothing but this process's memory.
+    Drop cached page builds. Not a database write; it touches nothing but this process's memory. Still a
+    write by method, so it needs the token like every other.
     """
     CACHE.clear()
     return {"cleared": True}
@@ -388,7 +397,8 @@ async function go(){
 > '+question+'
 
 ');
-  const r=await fetch('/api/chat/ask',{method:'POST',headers:{'Content-Type':'application/json'},
+  const tok=(await (await fetch('/api/session')).json()).token;
+  const r=await fetch('/api/chat/ask',{method:'POST',headers:{'Content-Type':'application/json','X-Fitness-Token':tok},
     body:JSON.stringify({question,session_id:session})});
   const reader=r.body.getReader();const dec=new TextDecoder();let buf='';
   while(true){const {done,value}=await reader.read();if(done)break;
