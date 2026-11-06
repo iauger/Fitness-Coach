@@ -47,6 +47,7 @@ from src.analysis.weekly import summaries_between
 from src.db.schema import get_connection, read_connection
 from src.db.migrations import status as migration_status
 from src.visualizations.calendar_view import build_calendar_html
+from src.web.nav import with_nav
 from src.visualizations.dashboard import build_dashboard
 from src.clock import today_local
 
@@ -130,16 +131,22 @@ def session_token() -> dict:
 
 # ── pages ─────────────────────────────────────────────────────────────────────
 
-@app.get("/", response_class=HTMLResponse, tags=["pages"])
+@app.get("/", include_in_schema=False)
+def home() -> RedirectResponse:
+    """The plan is the home screen; the analytics dashboard is one click away."""
+    return RedirectResponse("/app")
+
+
+@app.get("/dashboard", response_class=HTMLResponse, tags=["pages"])
 def dashboard() -> HTMLResponse:
-    return HTMLResponse(CACHE.get("dashboard", build_dashboard))
+    return HTMLResponse(with_nav(CACHE.get("dashboard", build_dashboard), "dashboard"))
 
 
 @app.get("/calendar", response_class=HTMLResponse, tags=["pages"])
 def calendar(weeks: int = Query(6, ge=1, le=52)) -> HTMLResponse:
-    return HTMLResponse(
-        CACHE.get(f"calendar:{weeks}", lambda: build_calendar_html(weeks=weeks))
-    )
+    return HTMLResponse(with_nav(
+        CACHE.get(f"calendar:{weeks}", lambda: build_calendar_html(weeks=weeks)),
+        "calendar", bleed=True))
 
 
 @app.get("/app", response_class=HTMLResponse, tags=["pages"])
@@ -159,7 +166,7 @@ def calendar_html_alias() -> RedirectResponse:
 
 @app.get("/dashboard.html", include_in_schema=False)
 def dashboard_html_alias() -> RedirectResponse:
-    return RedirectResponse("/")
+    return RedirectResponse("/dashboard")
 
 
 # ── coaching context ──────────────────────────────────────────────────────────
