@@ -7,7 +7,7 @@ from datetime import date, timedelta
 from .fitness import current_fitness, ctl_trend, peak_ctl, ctl_history
 from .activities import recent_activities, sport_distribution, weekly_load_by_sport, yearly_volume
 from src.config import config
-from src.planning import plans, tiers_store
+from src.planning import outgrown as outgrown_check, plans, tiers_store
 from src.planning.constants import dated_goals, plan_name
 from src.planning.outline import from_state as plan_outline
 from src.planning.progression import TIERS
@@ -186,9 +186,11 @@ def _rolling_plan(today: date | None = None) -> dict | None:
                 "SELECT date, role, prescription, minutes, tss, volume_tier, week_type "
                 "FROM prescribed_sessions WHERE plan_name = ? AND date >= ? "
                 "ORDER BY date LIMIT 10", (plan_name(), today.isoformat()))]
+            outgrown = _outgrown(conn, plan, ladder, today) if plan and ladder else None
         return {
             "tier": state["tier"],
             "tier_hours": (ladder or TIERS)[state["tier"]].target_hours,
+            "outgrown": outgrown,
             "week_type": state["week_type"],
             "reason": state["reason"],
             "decided_through": state["decided_through"],
@@ -436,6 +438,13 @@ def coaching_context_text(ctx: dict | None = None) -> str:
         lines.append("  Outline:")
         for ln in plan["outline"]["summary"].splitlines():
             lines.append(f"    {ln}")
+        # Raised to the model rather than acted on. Re-deriving the ladder changes what the
+        # tiers already recorded in plan_progression meant, so it is the athlete's decision —
+        # but nothing used to notice it was worth making, and the loop is self-reinforcing:
+        # the plan asks for three days, three days get ridden, a re-derivation finds three.
+        if plan.get("outgrown"):
+            lines += ["", "  LADDER CHECK — raise this with them:",
+                      f"    {plan['outgrown']['summary']}"]
 
     adherence = ctx["training"].get("plan_adherence_8w") or {}
     if adherence.get("total_planned"):
@@ -545,3 +554,35 @@ def coaching_context_text(ctx: dict | None = None) -> str:
 if __name__ == "__main__":
     ctx = build_coaching_context()
     print(coaching_context_text(ctx))
+
+
+def _outgrown(conn, plan, ladder: dict, today: date) -> dict | None:
+    """
+    Whether the athlete's riding has moved past the ladder they are prescribed from.
+
+    Advisory, and a suggestion rather than an action: re-deriving the ladder changes what the
+    tiers already recorded in `plan_progression` meant, which is the athlete's call. This puts
+    the observation in front of the coach so it gets raised at a check-in instead of going
+    unnoticed for a year.
+
+    Wrapped in its own try: a failure here must not cost the coach the rest of the plan block,
+    which is the part it reasons about every session.
+    """
+    from src.planning.constants import max_ride_days
+    from src.planning.progression_store import rows as progression_rows
+    from src.planning.tiers_store import age_weeks, weeks_for
+
+    try:
+        found = outgrown_check.assess(
+            weeks=weeks_for(conn, today, weeks_back=outgrown_check.WINDOW_WEEKS * 2),
+            ladder=ladder,
+            decided=progression_rows(conn, plan.name),
+            max_ride_days=max_ride_days(),
+            ladder_age_weeks=age_weeks(conn, plan.id, today),
+        )
+    except Exception:
+        return None
+    if not found.summary:
+        return None
+    return {"outgrown": found.outgrown, "blocked_by_config": found.blocked_by_config,
+            "signals": list(found.signals), "summary": found.summary, "detail": found.detail}

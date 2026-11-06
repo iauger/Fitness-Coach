@@ -60,6 +60,24 @@ def require(conn, plan_id: int, plan_name: str = "") -> dict[int, Tier]:
     return ladder
 
 
+def age_weeks(conn, plan_id: int, today: date) -> float | None:
+    """
+    How long ago this ladder was derived, in weeks.
+
+    Read by the outgrown check, which leaves a recent ladder alone: re-deriving every few
+    weeks would make `tier_applied` mean a different thing in every row of the decision log.
+    """
+    row = conn.execute(
+        "SELECT MIN(created_at) FROM tiers WHERE plan_id = ?", (plan_id,)).fetchone()
+    if row is None or row[0] is None:
+        return None
+    try:
+        derived = date.fromisoformat(str(row[0])[:10])
+    except ValueError:
+        return None
+    return max(0.0, (today - derived).days / 7)
+
+
 def provenance(conn, plan_id: int) -> dict | None:
     """What the bootstrap observed, for explaining a ladder after the fact."""
     row = conn.execute(

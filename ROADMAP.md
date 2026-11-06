@@ -1610,3 +1610,54 @@ The safety rules survive every width, which is the only reason this is safe to a
 lower-body lift beside the long ride (`_strength_for_week` already computed adjacency from
 whatever pattern it was handed, so it needed no change), at most one hard session, two lifts
 kept at every tier, no day given two rides. Parametrised over 2–7 ride days end to end.
+
+#### The outgrown check, 2026-11-05
+
+Asked for right after the ride-day work, and it closes the loop that work exposed: *"wire it
+into the coaching aspect so that in a weekly or monthly check-in, the coach will prompt the
+user to re-bootstrap if they are outgrowing their ride days."*
+
+**The loop.** The ladder is derived once and then fixed — correctly, since the gate's recorded
+decisions were graded against the rungs in force when each week closed. But that is
+self-reinforcing: the plan asks for three days, three days get ridden, a re-derivation finds
+three days. `plan.max_ride_days: 7` could be set and never once be reached by the system's own
+operation. Someone could sit at the cap for a year riding five days a week and keep being
+handed three.
+
+The escape hatch already worked and nobody was using it: `week_volume` counts every ride
+whether or not it matched a prescription, so a fourth day ridden off-plan *is* visible. What
+was missing is that nothing looked.
+
+**Three signals** (`src/planning/outgrown.py`, pure functions, no database):
+
+| signal | what it means |
+|---|---|
+| `ride_days` | riding more days than the cap asks for — the headline, and the one a re-derivation cannot discover on its own |
+| `volume` | riding more than the top rung's target, by a 10% margin |
+| `held_cap` | four straight met weeks at the cap — **context, never a recommendation** |
+
+`held_cap` alone never suggests re-deriving. Holding the top rung is a good steady state, and
+the design already says going higher is a decision rather than a consequence of a good streak.
+It is reported so the coach can ask, not so the plan can push.
+
+**It only ever suggests.** Re-deriving changes what the tiers already recorded in
+`plan_progression` meant, so it stays the athlete's call. The output is a sentence the coach
+raises at a check-in, carried in `rolling_plan.outgrown` and rendered under `LADDER CHECK` in
+the context text the model reads.
+
+**Three ways it declines to nag**, each its own test: a ladder younger than eight weeks is left
+alone; fewer than three ridden weeks in the window is too thin to judge (returning from a gap
+and outgrowing a ladder are described by the same scarcity of data); and every statistic is a
+median, so one big week cannot fire it.
+
+**When re-deriving will not help**, it says so instead. `bootstrap` clamps the derived day count
+to `plan.max_ride_days`, so if the ceiling is already what the ladder uses, "re-bootstrap" sends
+the athlete round a loop that changes nothing — the config is the binding constraint and gets
+named. If volume also fired, both are said, because the rungs can lengthen even though the week
+cannot widen.
+
+12 mutants, all caught. Two survived first, and both were tests that could not fail:
+the returning-from-a-gap test used a week modest enough that no signal would have fired either
+way, so the guard it existed to protect could be deleted with the suite green; and nothing ran
+the check end to end, so `_rolling_plan` could stop calling it entirely — the detector correct,
+fully covered, and never executed.
