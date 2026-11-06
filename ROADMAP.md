@@ -21,7 +21,7 @@ back to this sentence.
 
 ---
 
-## Where this is now — 2026-11-05
+## Where this is now — 2026-11-06
 
 The single source of truth for current state. Everything below the horizontal rule after this
 section is **history**: the reasoning as it was at the time, kept because the arguments are
@@ -47,7 +47,21 @@ and calendar, and the Claude coaching layer.
 | 6 | archetype overrides, with non-configurable safety rules |
 | 7 | a first run that says what to do next |
 
-Schema at `user_version` 11. 704 tests.
+Schema at `user_version` 11. 720 tests.
+
+**The first run has been walked on a clean clone, 2026-11-06**, end to end by someone other
+than the code: clone, config, migrate, fetch, bootstrap, sync, seed FTP, serve. It worked,
+and the derivation reproduced the live ladder exactly (T0 2.08h to T4 4.08h) from a separate
+database — the first independent check that bootstrapping is reproducible rather than an
+artefact of the machine it was written on.
+
+It also found the one class of damage this project can do. **The calendar push is now off
+until configured on**, in the example, in the dataclass default, and — the part that was
+actually broken — in `sync_now.py`, which passed `push_enabled=not args.no_push` and so
+overrode the setting on every ordinary run. A second copy of this project derives the same
+plan slug and therefore the same `external_id`s, so the sandbox overwrote all twelve events
+of the real horizon on its first sync. Nothing was lost, because both had derived the same
+plan from the same history; that is luck, not a safeguard.
 
 **What is left before this is safe to host:** authentication. `serve.py` holds the intervals.icu
 and Anthropic keys, has no login, and `/api/chat/ask` spends money per call, so it binds
