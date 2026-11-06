@@ -56,6 +56,11 @@ than the code: clone, config, migrate, fetch, bootstrap, sync, seed FTP, serve. 
 and the derivation reproduced the live ladder exactly (T0 2.08h to T4 4.08h) from a separate
 database — the first independent check that bootstrapping is reproducible rather than an
 artefact of the machine it was written on.
+Cloning again before the first push found three things the real checkout had been hiding:
+`pytest` wrote `config/athlete.yaml` during *collection* (a parametrize argument reads the
+config before any fixture runs), `serve.py --help` did the same, and `seed_profile.py --help`
+created `data/fitness.db`. All fixed, and the README-commands test now runs from a throwaway
+copy so it can see them.
 
 It also found the one class of damage this project can do. **The calendar push is now off
 until configured on**, in the example, in the dataclass default, and — the part that was
