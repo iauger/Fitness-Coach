@@ -201,7 +201,10 @@ function busyButton(label, onclick, cls) {
 
 function rowAction(c) {
   const out = h("div", {class: "act"});
-  const say = (cls, text) => out.replaceChildren(h("div", {class: "msg " + cls, role: cls === "bad" ? "alert" : null}, text));
+  // Messages go in their own slot, below the controls. Replacing the whole row would delete the
+  // input and button along with the old message, so a typo would leave nothing to retry with.
+  const status = h("div", {});
+  const say = (cls, text) => status.replaceChildren(h("div", {class: "msg " + cls, role: cls === "bad" ? "alert" : null}, text));
 
   if (c.name === "database") {
     out.append(busyButton("Set up the database", async () => {
@@ -220,7 +223,7 @@ function rowAction(c) {
           s = await api("GET", "/api/history");
         }
         log.textContent = s.log.slice(-8).join("\n");
-        if (s.error) { say("bad", s.error); out.append(log); return; }
+        if (s.error) { say("bad", s.error); return; }
         const r = s.result;
         say(r.errors ? "note" : "good", "Fetched " + r.activities + " activities and " + r.wellness + " wellness days" +
             (r.errors ? ", with " + r.errors + " window(s) that failed. Run it again to retry them." : "."));
@@ -253,6 +256,7 @@ function rowAction(c) {
   } else if (c.name === "secrets") {
     out.append(h("p", {class: "hint"}, "Your intervals.icu key goes in the .env file, not on this page: a secret typed into a web page is one more place it can leak."));
   } else { return null; }
+  out.append(status);
   return out;
 }
 
@@ -407,10 +411,15 @@ function why(o) {
 
 async function planView() {
   main.replaceChildren(h("p", {class: "lede"}, "Loading…"));
-  const o = await api("GET", "/api/plan/overview");
+  let o;
+  try { o = await api("GET", "/api/plan/overview"); }
+  catch (e) {
+    // Most often a first run: no database or history yet. Setup knows which step is next.
+    o = {ready: false, reason: "The plan cannot be shown yet (" + e.message + "). Setup will say what is missing."};
+  }
   if (!o.ready) {
     main.replaceChildren(h("h2", {}, "Plan"), h("div", {class: "msg note"}, o.reason),
-      h("a", {href: "#ladder", class: "btnlink"}, h("button", {class: "primary"}, "Go to the ladder")));
+      h("a", {href: "#setup", class: "btnlink"}, h("button", {class: "primary"}, "Finish setting up")));
     return;
   }
   const t = o.tier, g = o.gate, w = o.this_week;
