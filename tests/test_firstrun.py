@@ -354,3 +354,54 @@ def test_bootstrap_migrates_before_it_reads(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match="stop here"):
         bp.main()
     assert order == ["migrate", "read"], order
+
+
+# ── the README is part of the first run ──────────────────────────────────────
+
+def test_every_command_the_readme_tells_you_to_run_exists_and_parses():
+    """
+    The documented first run *is* the feature here, so a stale command in it is a bug in the
+    same way a stale code path is. This fails on a renamed script, a removed flag, or a
+    typo — none of which any other test can see, and all of which land on whoever is following
+    the instructions for the first time.
+
+    `--help` rather than execution: it proves the entry point imports, argparse builds, and
+    every flag the README names is real, without touching a database or the network.
+    """
+    import re
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    readme = Path("README.md").read_text(encoding="utf-8")
+    commands = sorted(set(re.findall(r"`(python scripts/[^`]+)`", readme)))
+    assert len(commands) >= 6, f"only found {len(commands)} commands; has the README moved?"
+
+    problems = []
+    for command in commands:
+        parts = command.split()
+        script = Path(parts[1])
+        if not script.exists():
+            problems.append(f"{command}: {script} does not exist")
+            continue
+        result = subprocess.run([sys.executable, str(script), "--help"],
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            problems.append(f"{command}: --help exited {result.returncode}")
+            continue
+        for flag in (p for p in parts[2:] if p.startswith("--")):
+            if flag not in result.stdout:
+                problems.append(f"{command}: {script.name} has no {flag}")
+    assert not problems, "\n  ".join([""] + problems)
+
+
+def test_the_readme_opens_with_the_status_command():
+    """
+    The whole first run is 'run status, do what it says, repeat'. If that stops being the
+    first thing someone is told to run, the rest of this step stops working.
+    """
+    from pathlib import Path
+
+    readme = Path("README.md").read_text(encoding="utf-8")
+    running = readme[readme.index("## Running it"):]
+    assert "scripts/status.py" in running[:800], "status.py is not near the top of Running it"

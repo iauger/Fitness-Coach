@@ -222,16 +222,22 @@ intervals.icu ──sync──> SQLite ──> progression gate ──> rolling 
 Working and in daily use by its author: the sync, the gate, the rolling horizon, calendar push
 with device delivery confirmed on Zwift, the dashboard and calendar, and the coaching layer.
 
-Mid-refactor from *one person's plan* into *something someone else could run*. Steps 0–5 are
-done — the config loader, a plan identity that survives being renamed, athlete timezone, the
-personal constants moved into config, the sport table deduplicated, and the tier ladder derived
-from your own history. Still ahead:
+The refactor from *one person's plan* into *something someone else could run* is done:
+configuration in one file, a plan identity that survives being renamed, the athlete's timezone,
+a tier ladder derived from your own history and versioned so past decisions keep the rungs they
+were graded against, an overridable workout library with non-negotiable safety rules, and a
+first run that tells you what to do next.
 
-- Archetype overrides, validated against the safety rules that are *not* configurable
-- A first-run path that works from a clean clone
-- **Authentication, before the server can bind anywhere but loopback**
+One thing stands between this and anything networked:
 
-See [ROADMAP.md](ROADMAP.md) for the reasoning behind each, and the feature backlog.
+- **Authentication.** `serve.py` holds your API keys and has no login, so it binds loopback and
+  refuses to be useful anywhere else. Until that exists, remote access is a VPN's job.
+
+Then features: FTP that tracks your own estimates rather than a number someone typed, CTL
+computed locally so one FTP correction fixes the whole history, power curves, workout
+alternates, and Garmin delivery verification.
+
+See [ROADMAP.md](ROADMAP.md) for the reasoning behind each, and the backlog.
 
 ## Testing
 
@@ -239,16 +245,18 @@ See [ROADMAP.md](ROADMAP.md) for the reasoning behind each, and the feature back
 pytest
 ```
 
-558 tests. The convention worth knowing: new behaviour is checked by **mutation testing**, not
+704 tests. The convention worth knowing: new behaviour is checked by **mutation testing**, not
 only by a green suite. Breaking the code deliberately and confirming a test fails has
 repeatedly caught tests here that passed for the wrong reason — one asserting a constant's own
 value back at itself, a filter that worked only because of insert order. Several docstrings in
 `tests/` record exactly which mutant a test exists to catch.
 
-Two guards are greps rather than behaviour: `date.today()` anywhere outside `src/clock.py`
-fails the suite, because it is the server's day and not the athlete's; so does a second
-definition of the sport table. Tests cannot open the real database, and read the committed
-example config rather than yours.
+Several guards are greps or AST checks rather than behaviour, each added after the same defect
+appeared twice: `date.today()` outside `src/clock.py` fails the suite, because it is the
+server's day and not the athlete's; so does a second definition of the sport table; so does
+reading the built-in tier ladder where a plan has its own, which had the dashboard reporting
+3.42h beside a calendar showing 3.5h. Tests cannot open the real database, and read the
+committed example config rather than yours.
 
 ## Stack
 

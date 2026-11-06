@@ -55,3 +55,53 @@ This project's chart design is settled in `src/visualizations/` — colour palet
 and the PMC 4-panel structure. Do not load the `dataviz` skill for routine chart
 regeneration or edits that follow existing patterns; follow the modules instead. Load it
 only when designing a genuinely new chart type or reconsidering the palette.
+
+## Start with `python scripts/status.py`
+
+It reports where the setup has got to and prints the single next command. Read-only — creates
+no files, migrates nothing, calls no API. It is the first thing to run when anything behaves
+oddly, before reading code.
+
+## New behaviour is verified by breaking it, not by a green suite
+
+Write the change, then deliberately break it and confirm a test fails. This has repeatedly
+caught tests here that passed for the wrong reason:
+
+- a test asserting a constant's own value back at itself
+- a filter that worked only because of insert order
+- `len(rides) <= ride_days`, which passes trivially whenever the generator is *narrower* than
+  the ladder — so the roller could build at a fixed 3 rides and every test stayed green
+- a guard test whose fixture was mild enough that the guard it protected could be deleted
+
+Several docstrings in `tests/` name the exact mutant a test exists to catch. Keep that habit:
+it is the only thing that tells a later reader why an oddly specific assertion is that way.
+
+## Do not delete the grep/AST guard tests
+
+Each was added after the same defect appeared **twice**, and none of them can be replaced by a
+behavioural test because both behaviours look plausible in isolation:
+
+| guard | what it prevents |
+|---|---|
+| no `date.today()` outside `src/clock.py` | the server's day silently replacing the athlete's |
+| one definition of `SPORT_GROUPS` | an unrecognised activity type falling to `"other"` in three places independently |
+| no `TIERS[...]` outside the four modules that own it | a reader reporting 3.42h beside a calendar showing 3.5h |
+
+## Read the plan's own ladder, never the module constant
+
+`progression.TIERS` is the built-in ladder and a fallback. The plan's real rungs live in the
+`tiers` table and come from `tiers_store.load`. Any reader that subscripts `TIERS` directly
+will disagree with what was actually prescribed — this was fixed in the API, then the coaching
+report, then found a third time in `plan_build.py`.
+
+## Nothing generates config as a side effect
+
+`config.load(..., create_if_missing=True)` belongs to a deliberate first run and nowhere else.
+`clock.today_local()` once created `config/athlete.yaml` merely by being asked the date — and
+wrote UTC into it, moving the athlete a day forward.
+
+## Migrations are append-only and never read the clock
+
+Add a numbered step; never edit an applied one. A migration that depends on `date.today()`
+produces a different database when replayed, so dates are frozen constants in the migration
+itself even where a code constant with the same value exists.

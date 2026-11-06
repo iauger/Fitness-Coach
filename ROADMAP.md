@@ -21,7 +21,56 @@ back to this sentence.
 
 ---
 
-## Current state assessment (updated through Session 16, 2026-09-02)
+## Where this is now — 2026-11-05
+
+The single source of truth for current state. Everything below the horizontal rule after this
+section is **history**: the reasoning as it was at the time, kept because the arguments are
+still worth reading, and superseded wherever it disagrees with this.
+
+**Working and in daily use.** Sync from intervals.icu, the adherence gate, the rolling
+three-week horizon, calendar push with delivery to Zwift confirmed on the device, the dashboard
+and calendar, and the Claude coaching layer.
+
+**The refactor is done.** Steps 0–7, plus two pieces that were not planned:
+
+| | |
+|---|---|
+| 0 | `src/config.py`, strict at load |
+| 1 | `plans` table — identity survives a rename |
+| 2 | athlete timezone, not the server's |
+| 3 | the 11 personal constants read from config |
+| 4 | one sport table instead of six |
+| 5 | tier ladder derived from the athlete's own history |
+| 5a | weekly template generated, 2–7 ride days *(unplanned)* |
+| 5b | outgrown check, surfaced to the coach *(unplanned)* |
+| — | ladder versioning: a decision keeps the rungs it was graded against |
+| 6 | archetype overrides, with non-configurable safety rules |
+| 7 | a first run that says what to do next |
+
+Schema at `user_version` 11. 704 tests.
+
+**What is left before this is safe to host:** authentication. `serve.py` holds the intervals.icu
+and Anthropic keys, has no login, and `/api/chat/ask` spends money per call, so it binds
+loopback and refuses to be useful anywhere else.
+
+**Then, in order:** eFTP tracking, because four different FTP numbers disagreed and the one in
+use was chosen by argument rather than measurement; CTL computed locally from `effective_tss`,
+so one FTP correction fixes the whole history instead of only new rides; then execution
+scoring, power curve, workout alternates, and verifying Garmin delivery.
+
+**Known and deliberate:** intervals.icu does not recompute historical TSS when FTP changes, so
+`activities.tss` is stale for anything before the correction. Everything this project reasons
+with is recomputed by `_manual_tss`; `wellness.ctl` is still intervals.icu's and therefore
+built on the old number. Not a risk to the gate, which reads `SUM(moving_time)` and never
+touches TSS — a choice made for a different reason that turned out to insulate it from this.
+
+---
+
+## Historical: state as of Session 16, 2026-09-02
+
+*Superseded by the section above. Parts of this describe integrations since retired — the
+TrainerRoad iCal feed, Google Calendar as a planned-workout source — and a coaching layer
+described as CLI-only that now has an API and a dashboard behind it.*
 
 **Solid — build on this:**
 - Data pipeline: intervals.icu sync (full history + incremental), Strava archive fallback +
