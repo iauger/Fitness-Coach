@@ -23,7 +23,7 @@ athlete is absorbing it, and whether anything warrants attention or adjustment.
 Answer these questions with every check-in:
 - Is CTL trending in the right direction given the timeline and life context?
 - Are recovery signals (HRV, sleep, RHR) supporting the current load — or flagging hidden stress?
-- Is there anything in the data that should cause him to flex TR compliance this week?
+- Is there anything in the data that should cause him to flex the plan this week?
 - What is the single most important thing to focus on right now?
 
 ## How to use the PMC

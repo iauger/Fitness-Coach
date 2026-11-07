@@ -152,7 +152,7 @@ def _recent_subjective_feel(days: int = 14) -> list[dict]:
     since = (today_local() - timedelta(days=days)).isoformat()
     with read_connection() as conn:
         rows = conn.execute("""
-            SELECT date, feel_score, energy, motivation, legs, tr_compliance, notes
+            SELECT date, feel_score, energy, motivation, legs, notes
             FROM subjective_feel WHERE date >= ? ORDER BY date DESC
         """, (since,)).fetchall()
     return [dict(r) for r in rows]
@@ -565,8 +565,6 @@ def coaching_context_text(ctx: dict | None = None) -> str:
                 parts.append(f"energy {s['energy']}/10")
             if s.get("legs"):
                 parts.append(f"legs {s['legs']}/10")
-            if s.get("tr_compliance"):
-                parts.append(f"TR: {s['tr_compliance']}")
             note = f" — {s['notes']}" if s.get("notes") else ""
             lines.append(f"  {s['date']}  {', '.join(parts)}{note}")
 

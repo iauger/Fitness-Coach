@@ -54,9 +54,9 @@ TOOL_SCHEMAS = [
     {
         "name": "log_subjective_feel",
         "description": (
-            "Log how the athlete is feeling right now — energy, motivation, leg freshness, "
-            "and how the planned sessions went. Call this when the athlete describes their "
-            "current physical or mental state, or reports on their training week."
+            "Log how the athlete is feeling right now as numbers on a 1-10 scale: overall, "
+            "energy, motivation, leg freshness. Call this when the athlete gives you such a "
+            "rating. What they say in words is filed on its own when the conversation ends."
         ),
         "input_schema": {
             "type": "object",
@@ -76,11 +76,6 @@ TOOL_SCHEMAS = [
                 "legs": {
                     "type": "integer",
                     "description": "Leg freshness 1-10 (1=dead, 10=fresh)",
-                },
-                "tr_compliance": {
-                    "type": "string",
-                    "enum": ["completed_all", "skipped_some", "modified", "rest_week", "not_on_plan"],
-                    "description": "How the planned sessions went that week",
                 },
                 "notes": {
                     "type": "string",
@@ -248,17 +243,16 @@ def log_life_event(type: str, start_date: str, end_date: str = None,
 
 
 def log_subjective_feel(feel_score: int, energy: int = None, motivation: int = None,
-                        legs: int = None, tr_compliance: str = None, notes: str = None,
+                        legs: int = None, notes: str = None,
                         date: str = None, logged_via: str = "chat") -> dict:
     target_date = date or today_local_iso()
     with write_connection() as conn:
         conn.execute("""
             INSERT INTO subjective_feel
-            (date, feel_score, energy, motivation, legs, tr_compliance, notes, logged_at, logged_via)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (target_date, feel_score, energy, motivation, legs, tr_compliance, notes, NOW(), logged_via))
-    return {"status": "logged", "date": target_date, "feel_score": feel_score,
-            "tr_compliance": tr_compliance}
+            (date, feel_score, energy, motivation, legs, notes, logged_at, logged_via)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (target_date, feel_score, energy, motivation, legs, notes, NOW(), logged_via))
+    return {"status": "logged", "date": target_date, "feel_score": feel_score}
 
 
 def query_history(query_type: str, start_date: str = None, end_date: str = None,

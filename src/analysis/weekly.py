@@ -68,7 +68,7 @@ def week_metrics(week_start: date, plan_name: str | None = None) -> dict:
 
         subjective = [
             dict(r) for r in conn.execute(
-                "SELECT date, feel_score, energy, legs, tr_compliance, notes FROM subjective_feel "
+                "SELECT date, feel_score, energy, legs, notes FROM subjective_feel "
                 "WHERE date BETWEEN ? AND ? ORDER BY date", (start, end)).fetchall()
         ]
 

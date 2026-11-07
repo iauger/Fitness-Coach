@@ -37,8 +37,7 @@ def prompt_for_feel() -> str:
     context string for the prompt.
 
     The answers are written here rather than left for the model to log. These are the most
-    structured inputs in the whole system — numbers on a fixed scale and a compliance value
-    from a closed enum — and until now they were formatted into prose and passed to the model,
+    structured inputs in the whole system — numbers on a fixed scale — and until now they were formatted into prose and passed to the model,
     reaching the database only if it happened to call log_subjective_feel. Across 7 check-ins
     that produced 4 stored rows.
     """
@@ -57,21 +56,6 @@ def prompt_for_feel() -> str:
     if legs:
         lines.append(f"Leg freshness: {legs}/10")
 
-    print("  TrainerRoad compliance this week:")
-    print("    1) Completed all workouts")
-    print("    2) Skipped some")
-    print("    3) Modified workouts")
-    print("    4) Rest week")
-    print("    5) Not on a TR plan right now")
-    tr = input("  Choice (1-5, or Enter to skip): ").strip()
-    tr_map = {
-        "1": "completed_all", "2": "skipped_some",
-        "3": "modified", "4": "rest_week", "5": "not_on_plan",
-    }
-    tr_compliance = tr_map.get(tr)
-    if tr_compliance:
-        lines.append(f"TR compliance: {tr_compliance}")
-
     notes = input("  Anything else worth flagging? (injury, illness, stress, etc): ").strip()
     if notes:
         lines.append(f"Notes: {notes}")
@@ -81,7 +65,7 @@ def prompt_for_feel() -> str:
     if overall is not None:
         log_subjective_feel(
             feel_score=overall, energy=energy, legs=legs,
-            tr_compliance=tr_compliance, notes=notes or None, logged_via="checkin",
+            notes=notes or None, logged_via="checkin",
         )
         print("  [logged to subjective_feel]")
     elif lines:

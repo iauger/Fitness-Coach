@@ -366,3 +366,48 @@ def test_recorded_is_per_source_and_reference_and_counts_dismissed_rows(db):
     assert not signals.recorded("conversation", "abd") and not signals.recorded("feel_note", "abc")
     signals.dismiss(sid)
     assert signals.recorded("conversation", "abc")
+
+
+# -- the TrainerRoad-era columns -----------------------------------------------------------------
+
+def test_the_trainerroad_era_columns_are_gone_and_replaying_the_migration_is_harmless(tmp_path):
+    """Mutant: an unguarded DROP COLUMN, which fails on the replay every fresh database performs."""
+    from src.db.migrations import _m015_retire_trainerroad_columns
+    path = tmp_path / "tr.db"
+    migrate(path)
+    c = sqlite3.connect(path)
+    cols = lambda t: {r[1] for r in c.execute(f"PRAGMA table_info({t})")}
+    assert "tr_compliance" not in cols("subjective_feel") and "gcal_updated" not in cols("planned_workouts")
+    _m015_retire_trainerroad_columns(c)                       # nothing left to drop
+    c.close()
+
+
+def test_the_drop_keeps_every_other_column_and_row(tmp_path):
+    path = tmp_path / "keep.db"
+    migrate(path)
+    c = sqlite3.connect(path)
+    c.execute("INSERT INTO subjective_feel (date, feel_score, notes, logged_at, logged_via) "
+              "VALUES ('2026-09-01', 8, 'fine', 'x', 'chat')")
+    c.commit()
+    c.execute("ALTER TABLE subjective_feel ADD COLUMN tr_compliance TEXT")
+    c.execute("UPDATE subjective_feel SET tr_compliance = 'completed_all'")
+    from src.db.migrations import _m015_retire_trainerroad_columns
+    _m015_retire_trainerroad_columns(c)
+    c.commit()
+    assert c.execute("SELECT date, feel_score, notes FROM subjective_feel").fetchall() == [("2026-09-01", 8, "fine")]
+    c.close()
+
+
+def test_nothing_outside_the_migrations_mentions_the_dropped_columns():
+    """The grep guard: a reader of a column that no longer exists fails only when that path runs."""
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[1]
+    offenders = []
+    for folder in ("src", "scripts"):
+        for f in (root / folder).rglob("*.py"):
+            if f.name == "migrations.py":
+                continue
+            text = f.read_text(encoding="utf-8")
+            if "tr_compliance" in text or "gcal_updated" in text:
+                offenders.append(str(f.relative_to(root)))
+    assert offenders == []

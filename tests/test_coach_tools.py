@@ -250,3 +250,17 @@ def test_a_real_answer_comes_back_unchanged(monkeypatch):
     monkeypatch.setattr(stream, "stream_turn",
                         _Turn(stream.Event("turn_end", text="Ride easy today.")))
     assert stream.run_turn(None, "model", "system", [], 100) == "Ride easy today."
+
+
+# ── TrainerRoad-era leftovers are gone ─────────────────────────────────────────
+
+def test_feel_logging_takes_numbers_and_words_and_knows_nothing_of_a_trainerroad_plan(db):
+    schema_props = next(t for t in tools.TOOL_SCHEMAS if t["name"] == "log_subjective_feel")["input_schema"]["properties"]
+    assert "tr_compliance" not in schema_props
+    out = tools.log_subjective_feel(7, energy=6, legs=5, notes="steady", date="2026-11-02")
+    assert out == {"status": "logged", "date": "2026-11-02", "feel_score": 7}
+    conn = sqlite3.connect(db)
+    assert conn.execute("SELECT feel_score, energy, legs, notes FROM subjective_feel").fetchall() == [(7, 6, 5, "steady")]
+    conn.close()
+    with pytest.raises(TypeError):
+        tools.log_subjective_feel(7, tr_compliance="completed_all")

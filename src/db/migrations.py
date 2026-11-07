@@ -852,6 +852,24 @@ def _m014_followups(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE chat_sessions ADD COLUMN followups TEXT")
 
 
+def _m015_retire_trainerroad_columns(conn: sqlite3.Connection) -> None:
+    """
+    Drop the two columns that only the TrainerRoad era used.
+
+    `subjective_feel.tr_compliance` held how the week went against a TrainerRoad plan (five
+    answers to a menu in the weekly script; five rows carried one, all `completed_all`).
+    `planned_workouts.gcal_updated` was the Google Calendar event's timestamp, and nothing has
+    read or written it since the calendar feed went. Plan adherence is measured now, from rides
+    against the sessions the rolling plan prescribed, so neither has a reader to serve.
+
+    Guarded, because the baseline step adds the first one back on a fresh database and the suite
+    replays migrations over databases that already lack them.
+    """
+    for table, column in (("subjective_feel", "tr_compliance"), ("planned_workouts", "gcal_updated")):
+        if column in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+            conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+
+
 # (version, name, step). Append only — never renumber or edit an applied migration.
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "baseline schema as of phase 12B", _m001_baseline),
@@ -868,6 +886,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (12, "conversations carry their own summary", _m012_session_memory),
     (13, "the signal ledger, with life events folded in", _m013_signals),
     (14, "follow-ups on the conversation they came from", _m014_followups),
+    (15, "drop the TrainerRoad-era columns", _m015_retire_trainerroad_columns),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)
