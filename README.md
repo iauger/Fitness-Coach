@@ -124,6 +124,28 @@ Three properties make it behave:
   more days out, so an evening sync cannot change tomorrow morning's ride, and past
   prescriptions survive as the record of what was asked.
 
+### How the coach remembers
+
+The coach has no memory of its own. Each time you talk to it, it starts fresh and is handed a
+briefing: your training data, plus a few short notes about earlier conversations. Everything it
+"remembers" is what is written in that briefing.
+
+- **Every conversation is stored in full**, in the app or on the command line, so you can reopen
+  it. The coach does not read these; they are too long to hand over each time.
+- **When a conversation ends, a short note is written** (4-6 bullets of what is worth keeping).
+  In the app, starting a new conversation ends the previous one; on the command line, `quit`
+  does. A conversation left open is noted the next time a conversation or check-in begins.
+  The note is made by a separate, small request that sees only the words and cannot change any
+  of your records.
+- **The coach is shown the last four conversation notes and the last weekly check-in.** Older
+  notes are kept but not read. Goals, life events and how you feel are recorded separately and
+  are always read.
+- **You can see and correct it.** The Coach screen's "What the coach remembers" lists exactly what
+  the coach is given, and lets you edit or forget a conversation note.
+
+Hard facts (an injury, a goal, a change at work) belong in the structured records, not in a note:
+the notes are a short rolling window, and the oldest fall out of it.
+
 ### Why it is built this way
 
 It was built for one athlete, from nine years of their own data, and the shape came out of
