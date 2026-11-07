@@ -685,6 +685,20 @@ async function coachView() {
   const send = h("button", {class: "primary"}, "Send");
   const picker = h("select", {"aria-label": "Past conversations"});
   const fresh = h("button", {}, "New conversation");
+  const finish = h("button", {hidden: true}, "End conversation");
+  // A closed conversation is read-only: it can be reopened to read, never continued, so a
+  // check-in stays one event rather than a thread that grows for ever.
+  let closed = false;
+  const closedNote = h("div", {class: "msg note", hidden: true, role: "status"},
+    "This conversation has ended. Start a new one to keep talking. ");
+  const startOver = h("button", {class: "primary", type: "button"}, "Start a new conversation");
+  closedNote.append(startOver);
+  function setClosed(on) {
+    closed = on;
+    box.disabled = on; send.disabled = on || busy;
+    closedNote.hidden = !on;
+    finish.hidden = on || !sessionId || !log.querySelector(".bubble");
+  }
 
   const bubble = (who, ...kids) => h("div", {class: "bubble " + who}, ...kids);
   const toBottom = () => { const el = document.scrollingElement; el.scrollTop = el.scrollHeight; };
@@ -709,7 +723,7 @@ async function coachView() {
   async function run(label, body, structured) {
     if (busy || (!structured && !body.question.trim())) return;
     busy = true; send.disabled = true; box.value = ""; lockStarts(true);
-    if (structured) { sessionId = null; remember(null); log.replaceChildren(); }
+    if (structured) { sessionId = null; closed = false; remember(null); log.replaceChildren(); }
     else if (log.querySelector(".starters")) log.replaceChildren();
     log.append(bubble("you", label));
     let text = "", answer = null, chips = [], current = null, statusLine = null;
@@ -729,7 +743,8 @@ async function coachView() {
       if (!text && !answer && !chips.length) log.append(h("div", {class: "msg note"}, "The coach sent no reply."));
     } catch (e) {
       log.append(h("div", {class: "msg bad", role: "alert"}, e.message));
-    } finally { busy = false; send.disabled = false; lockStarts(false); loadPast(); refreshDue(); }
+      if (/has ended/.test(e.message)) closed = true;      // it closed while the page was open
+    } finally { busy = false; lockStarts(false); setClosed(closed); loadPast(); refreshDue(); }
   }
   const ask = q => run(q, {question: q}, false);
 
@@ -783,9 +798,12 @@ async function coachView() {
 
   async function open(id, scroll = true) {
     sessionId = id || null; remember(sessionId);
-    if (!id) { empty(); picker.value = ""; return; }
-    try { showHistory((await api("GET", "/api/chat/sessions/" + id)).messages); if (scroll) toBottom(); }
-    catch (e) { sessionId = null; remember(null); empty(); }
+    if (!id) { empty(); picker.value = ""; setClosed(false); return; }
+    try {
+      const detail = await api("GET", "/api/chat/sessions/" + id);
+      showHistory(detail.messages); if (scroll) toBottom();
+      setClosed(detail.closed);
+    } catch (e) { sessionId = null; remember(null); empty(); setClosed(false); }
   }
 
   async function loadPast() {
@@ -849,14 +867,25 @@ async function coachView() {
   send.addEventListener("click", () => ask(box.value));
   box.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(box.value); } });
   fresh.addEventListener("click", () => { if (!busy) { endCurrent(); open(null); } });
+  startOver.addEventListener("click", () => { if (!busy) open(null); });
+  finish.addEventListener("click", () => { if (!busy) { endCurrent(); setClosed(true); } });
   picker.addEventListener("change", () => { if (!busy && picker.value) { endCurrent(); open(picker.value); } });
 
   main.replaceChildren(...head, duePanel, memBox,
-    h("div", {class: "coachbar"}, picker, fresh, h("span", {class: "detail"}, st.model)),
-    log, h("div", {class: "bar composer"}, box, send));
+    h("div", {class: "coachbar"}, picker, fresh, finish, h("span", {class: "detail"}, st.model)),
+    log, closedNote, h("div", {class: "bar composer"}, box, send));
   refreshDue();
   await loadPast();
-  if (sessionId) await open(sessionId, false); else empty();
+  // Resume the conversation you were in only if it is still open. A closed one is over: start
+  // fresh, and it stays reachable (read-only) from the list of past conversations.
+  if (sessionId) {
+    try {
+      const detail = await api("GET", "/api/chat/sessions/" + sessionId);
+      if (detail.closed) { sessionId = null; remember(null); empty(); }
+      else { showHistory(detail.messages); setClosed(false); }
+    } catch (e) { sessionId = null; remember(null); empty(); }
+  } else empty();
+  setClosed(false);
 }
 
 // ---- ladder -----------------------------------------------------------------------------------

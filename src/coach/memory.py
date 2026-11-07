@@ -14,11 +14,12 @@ request to "summarise" could have called `update_goal`, and it paid for ~8,000 t
 context to produce five bullets. A note is a compression job. It gets its own short prompt and
 no tools.
 
-**When a note is written.** There is no "end" in the app, since conversations resume, so three
-things stand in for one: the athlete starting a new conversation (the previous one is over);
-a conversation that has been idle for `IDLE_MINUTES` when the next conversation or check-in
-begins (an abandoned one is caught up then); and the command line's `quit`. A note is written
-again if the conversation continued afterwards (`summarised_at < updated_at`), replacing the old.
+**When a note is written.** Once, when the conversation closes. A conversation closes when the
+athlete ends it or starts a new one, when the command line quits, or when it has been idle for
+`chat_store.IDLE_CLOSE_MINUTES` (closed as of its last message, the next time anything asks). A
+closed conversation is locked: it can be read, never continued, so a note is never out of date and
+is never written twice. One whose attempt failed stays unnoted and is picked up at the next
+catch-up, which runs when a conversation or check-in begins.
 
 **What is not remembered.** A conversation with nothing the athlete said worth carrying forward
 gets no note, and neither does one that is only a server-written check-in opening: the check-in
@@ -26,14 +27,13 @@ is already filed on its own.
 """
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 from src.clock import local_date_of, utc_now_iso
 from src.coach import chat_store
 from src.coach import settings as coach_settings
 from src.db.schema import get_connection, write_connection
 
-IDLE_MINUTES = 30
 # What the athlete said has to be at least this long to be worth a note ("hi" is not).
 MIN_CHARS = 20
 # The tail of a very long conversation, not the whole of it, is what reaches the model.
@@ -59,14 +59,6 @@ adherence or session counts. Do not give advice and do not coach: you are taking
 
 If the athlete said nothing worth carrying forward, reply with exactly: {NOTHING}
 """.strip()
-
-
-def _parse(stamp: str | None) -> datetime | None:
-    """A stored timestamp as an aware UTC datetime. They are naive UTC in the database."""
-    if not stamp:
-        return None
-    moment = datetime.fromisoformat(stamp)
-    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
 
 
 def _visible_text(content) -> str:
@@ -185,32 +177,28 @@ def summarise_session(session_id: str, client=None) -> str | None:
     return summarise(session_id, client)[0]
 
 
-def stale_sessions(idle_minutes: int = IDLE_MINUTES, now: datetime | None = None) -> list[str]:
+def stale_sessions(idle_minutes: int = chat_store.IDLE_CLOSE_MINUTES,
+                   now: datetime | None = None) -> list[str]:
     """
-    Conversations that have gone quiet and whose note is missing or out of date, oldest first.
+    Closed conversations that have no note yet, oldest first.
 
-    "Out of date" is `summarised_at < updated_at`: the conversation continued after it was
-    summarised. Idle is measured from the last message, so a conversation still being had is
-    never summarised from under the athlete.
+    A conversation is noted once, when it closes, and a closed one never continues, so there is
+    no "out of date" case. Idle ones are closed first (as of their last message), so a
+    conversation still being had is never summarised from under the athlete. A failed attempt
+    leaves it unnoted, and it is picked up again here.
     """
-    cutoff = (now or datetime.now(timezone.utc)) - timedelta(minutes=idle_minutes)
+    chat_store.close_idle(idle_minutes, now.replace(tzinfo=None) if now and now.tzinfo else now)
     conn = get_connection()
     try:
-        rows = conn.execute("SELECT session_id, updated_at, summarised_at FROM chat_sessions "
-                            "ORDER BY updated_at").fetchall()
+        rows = conn.execute("SELECT session_id FROM chat_sessions "
+                            "WHERE ended_at IS NOT NULL AND summarised_at IS NULL "
+                            "ORDER BY ended_at").fetchall()
     finally:
         conn.close()
-    out = []
-    for r in rows:
-        updated, done = _parse(r["updated_at"]), _parse(r["summarised_at"])
-        if updated is None or updated > cutoff:
-            continue
-        if done is None or done < updated:
-            out.append(r["session_id"])
-    return out
+    return [r["session_id"] for r in rows]
 
 
-def summarise_pending(idle_minutes: int = IDLE_MINUTES, limit: int = 3, client=None,
+def summarise_pending(idle_minutes: int = chat_store.IDLE_CLOSE_MINUTES, limit: int = 3, client=None,
                       on_error=None) -> list[str]:
     """
     Catch up on abandoned conversations before a new one begins. Best-effort and bounded: at

@@ -220,26 +220,32 @@ def test_a_conversation_still_being_had_is_left_alone(db):
     assert memory.stale_sessions(now=NOW) == []
 
 
-def test_an_idle_unsummarised_conversation_is_waiting(db):
-    sid = make(db, talk(LONG, "ok"), updated=stamp(45))
+def test_an_idle_conversation_is_closed_as_of_its_last_message_and_then_waits(db):
+    sid = make(db, talk(LONG, "ok"), updated=stamp(90))
+    assert memory.stale_sessions(now=NOW) == [sid]
+    assert rows(db, f"SELECT ended_at FROM chat_sessions WHERE session_id='{sid}'") == [(stamp(90),)]
+
+
+def test_an_ended_conversation_waits_even_if_it_was_just_ended(db):
+    sid = make(db, talk(LONG, "ok"), updated=stamp(2))
+    chat_store.end_session(sid)
     assert memory.stale_sessions(now=NOW) == [sid]
 
 
-def test_a_summarised_conversation_is_not_waiting_until_it_continues(db):
-    done = make(db, talk(LONG, "ok"), updated=stamp(120), summarised=stamp(100))
-    cont = make(db, talk(LONG, "ok"), updated=stamp(60), summarised=stamp(100) )
+def test_a_noted_conversation_never_waits_again(db):
+    """There is no continuing it, so there is nothing to re-note: the staleness rule is gone."""
+    sid = make(db, talk(LONG, "ok"), updated=stamp(120), summarised=stamp(100))
+    assert memory.stale_sessions(now=NOW) == []
     c = sqlite3.connect(db)
-    c.execute("UPDATE chat_sessions SET summarised_at = ? WHERE session_id = ?", (stamp(90), cont))
-    c.execute("UPDATE chat_sessions SET updated_at = ? WHERE session_id = ?", (stamp(50), cont))
+    c.execute("UPDATE chat_sessions SET updated_at = ? WHERE session_id = ?", (stamp(50), sid))
     c.commit(); c.close()
-    waiting = memory.stale_sessions(now=NOW)
-    assert done not in waiting and cont in waiting
+    assert memory.stale_sessions(now=NOW) == []
 
 
 def test_the_idle_threshold_is_a_parameter(db):
     sid = make(db, talk(LONG, "ok"), updated=stamp(10))
-    assert memory.stale_sessions(idle_minutes=5, now=NOW) == [sid]
     assert memory.stale_sessions(idle_minutes=30, now=NOW) == []
+    assert memory.stale_sessions(idle_minutes=5, now=NOW) == [sid]
 
 
 def test_catching_up_spends_at_most_the_limit_in_model_calls(db):

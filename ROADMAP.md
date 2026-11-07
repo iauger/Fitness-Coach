@@ -213,8 +213,12 @@ longer ranges through a tool that is SQL, not a model call.
 - **Signals are stored silently**, no per-conversation confirmation. They are visible and
   correctable afterwards on the memory screen. A dismissal is a soft delete with a reason (the one
   mutable column), so dismissals become known-wrong examples for the validation set.
-- **Advisory only.** A signal can raise a check-in prompt and sit prominently in the briefing; it
-  does not change a prescription by itself. A mis-graded "burnout" must not reshape the plan.
+- **Advisory only for now, with a seam so that it need not stay that way.** A signal can raise a
+  check-in prompt and sit prominently in the briefing; it does not change a prescription by
+  itself, because a mis-graded "burnout" must not reshape the plan. It is expected to influence
+  progression later, so the hand-off is designed now (see "The plan-advisory seam" below) and is
+  live from the first release: advisories are computed and *shown* as "what the signals would do,
+  not applied", which is also how their quality gets judged before anyone lets them act.
 - **No model-written "about you" blob.** The always-shown picture of the athlete is derived by
   code from long-running threads, plus the athlete's own `athlete.notes` from the config.
 
@@ -266,8 +270,10 @@ ledger is the first run of that evaluation. The `life_events` row migrates with 
 
 **Phases, each useful on its own**
 
-1. **Locking.** Closed conversations are read-only, idle auto-close, the "End conversation"
-   control, the command line locked at quit. Small, and it simplifies the memory writer.
+1. **Locking.** *(built)* Closed conversations are read-only, idle auto-close after 60 minutes,
+   an "End conversation" control, the command line locked at quit, and a closed one opens read-only
+   from the list. Check-ins follow the same rules, so a reply to one is possible until it is ended.
+   Each conversation is noted once, at close; the "continued after it was noted" case is gone.
 2. **Ledger, no model.** Table, validation, `record`, the summary, timeline and watch-list
    queries, the severity maths, the `life_events` migration, `log_life_event` pointed at it.
 3. **Extractor, gold set, evaluation, backfill.** Replaces the note writer on the same
@@ -275,9 +281,23 @@ ledger is the first run of that evaluation. The `life_events` row migrates with 
 4. **Briefing and tool.** Watch list, digest, derived picture, `query_signals`, age-stamped
    gists, drop check-in-as-memory.
 5. **Screens.** A timeline with filters and dismissal, a watch strip on the Plan screen, and
-   severity as a reason for a check-in prompt.
-6. **Later, optional.** Correlate signals with HRV and load; feed `workouts_too_easy` into the
-   ladder's outgrown check; ingest ride notes as they sync.
+   severity as a reason for a check-in prompt. The plan-advisory seam goes in here, displayed and
+   not applied.
+6. **Later.** Let a first, easier-only advisory act on the plan (see the seam); correlate signals
+   with HRV and load; feed `workouts_too_easy` into the ladder's outgrown check; ingest ride notes
+   as they sync.
+
+**The plan-advisory seam.** A pure function, `plan_advisories(watch_list, gate_state)`, turns
+the watch list into typed advisories: `hold` the tier this week, `ease` the week, `add_recovery`,
+`consider_harder`, each with a reason and the ids of the mentions behind it, and `applied: false`.
+They appear on the Plan screen and in the coach's briefing as not applied. The gate
+(`next_state`) gains an optional `advisories` argument that defaults to none; turning an action
+on later is one config entry per action (`plan.signal_effects`, absent today), not a rewrite,
+and a test pins that with nothing applied every decision is byte-identical to today's. Nothing is
+declared in config until something reads it. Rules of the road when it is switched on: only
+actions that make the plan easier or hold it (never one that raises the load) are eligible to
+apply on a single signal; every applied advisory is written beside the decision it affected, so
+the log still says why; and the athlete can decline one, which is itself recorded.
 
 **Risks.** "Burnout" and "illness" are health-adjacent: the coach states them as observations
 ("you mentioned..."), never as diagnoses, and every signal is visible and deletable. With a few

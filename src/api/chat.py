@@ -216,6 +216,10 @@ async def ask(req: AskRequest) -> StreamingResponse:
         raise HTTPException(409, "There is no closed block waiting for a review.")
 
     session_id = req.session_id
+    if session_id is not None and chat_store.session_exists(session_id) \
+            and chat_store.is_closed(session_id):
+        # Conversations lock when they close, so a check-in stays a discrete event.
+        raise HTTPException(409, "This conversation has ended. Start a new one to keep talking.")
     if session_id is None:
         session_id = chat_store.new_session(
             coach_settings.model(), mode=req.mode,
@@ -338,7 +342,8 @@ def sessions(limit: int = 25) -> list[dict]:
 def session_detail(session_id: str) -> dict:
     if not chat_store.session_exists(session_id):
         raise HTTPException(404, f"unknown session {session_id}")
-    return {"session_id": session_id, "messages": chat_store.load_history(session_id)}
+    return {"session_id": session_id, "closed": chat_store.is_closed(session_id),
+            "messages": chat_store.load_history(session_id)}
 
 
 @router.post("/sessions/{session_id}/end")

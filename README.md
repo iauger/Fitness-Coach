@@ -131,10 +131,12 @@ briefing: your training data, plus a few short notes about earlier conversations
 "remembers" is what is written in that briefing.
 
 - **Every conversation is stored in full**, in the app or on the command line, so you can reopen
-  it. The coach does not read these; they are too long to hand over each time.
-- **When a conversation ends, a short note is written** (4-6 bullets of what is worth keeping).
-  In the app, starting a new conversation ends the previous one; on the command line, `quit`
-  does. A conversation left open is noted the next time a conversation or check-in begins.
+  it. The coach does not read these; they are too long to hand over each time. A conversation
+  ends when you end it or start a new one, or after an hour of silence, and a finished one is
+  read-only: to keep talking you start a new one, so a check-in stays one event.
+- **When a conversation ends, a short note is written** (4-6 bullets of what is worth keeping),
+  once. A conversation that ended without one (you closed the tab) is noted the next time a
+  conversation or check-in begins.
   The note is made by a separate, small request that sees only the words and cannot change any
   of your records.
 - **The coach is shown the last four conversation notes and the last weekly check-in.** Older
