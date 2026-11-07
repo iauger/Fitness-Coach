@@ -158,6 +158,15 @@ def _recent_subjective_feel(days: int = 14) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def _plan_limits() -> str:
+    from src.planning.constants import max_ride_days
+    plan = config().plan
+    text = f"at most {max_ride_days()} rides a week"
+    if plan.max_ride_min is not None:
+        text += f", rides up to {plan.max_ride_min} minutes"
+    return text
+
+
 def athlete_profile() -> dict:
     """
     Who the athlete is, from configuration — the block the coach prompt opens with.
@@ -185,6 +194,9 @@ def athlete_profile() -> dict:
         # would be saying something the athlete never said. Present, it is what stops a
         # suggestion to "add an easy spin Monday" landing on someone who cannot train Mondays.
         "available_days": [names[d] for d in days] if days is not None else None,
+        # The limits the plan is held inside, so a suggestion to change one starts from the
+        # number the athlete actually has.
+        "plan_limits": _plan_limits(),
         "long_ride_day": names[long_day] if long_day is not None else None,
     }
 
@@ -353,6 +365,7 @@ def coaching_context_text(ctx: dict | None = None) -> str:
                          ("Life context", who.get("notes")),
                          ("Can train on", ", ".join(who.get("available_days") or [])),
                          ("Long ride day", who.get("long_ride_day")),
+                         ("Plan limits", who.get("plan_limits")),
                          ("Tools", ", ".join(who.get("current_tools") or []))):
         if value:
             lines.append(f"  {label}: {value}")

@@ -202,6 +202,11 @@ the snapshot doesn't cover, go get it rather than hedging or generalising:
   in passing: every conversation is read once it ends and what he said about himself is filed
   then, so it is there next time without you.
 
+- `suggest_change` — offers a button for a plan limit (rides a week, longest ride). Only when they
+  asked for more or less, or what they told you and the data clearly point that way, and only one
+  at a time. They press the button, or do not; you cannot change anything, and you must never say
+  a change has been made. Your reason should rest on what they said or the data, not on a hunch.
+
 Reaching for real history is usually the difference between a generic observation and one that
 tells him something he didn't already know.
 """.strip()

@@ -152,6 +152,10 @@ briefing: your training data, plus a few short notes about earlier conversations
   conversation gists and lets you edit or forget one. The Plan screen shows what is open, and what
   it would do to your plan if it were allowed to. It is not: nothing you say changes the plan yet.
   A serious signal can make a check-in due.
+- **The coach can offer a change but never make one.** If you say the sessions feel too easy and
+  the number of rides a week is what is holding you back, it can put a button in the conversation
+  ("rides a week 3 → 4, because..."). Nothing happens until you press Apply, which saves that one
+  setting; your ladder is not rebuilt until you review it on the Ladder screen.
 
 Hard facts (an injury, a goal, a change at work) belong in the structured records, not in a note:
 the notes are a short rolling window, and the oldest fall out of it.

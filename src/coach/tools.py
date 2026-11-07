@@ -6,6 +6,7 @@ Each tool has a schema (sent to Claude) and an execute function (called locally)
 import json
 from datetime import date
 from src import signals
+from src.coach.suggest import suggest_change
 from src.db.schema import read_connection, write_connection
 from src.clock import today_local, today_local_iso, utc_now_iso
 
@@ -158,6 +159,30 @@ TOOL_SCHEMAS = [
                 "end_date": {"type": "string", "description": "To this date YYYY-MM-DD"},
                 "limit": {"type": "integer", "description": "Max rows (default 20)"},
             },
+        },
+    },
+    {
+        "name": "suggest_change",
+        "description": (
+            "Offer the athlete a button to change one plan limit: how many days a week the plan "
+            "may ask them to ride, or the longest ride on any day. Use it only when they have "
+            "asked for more or less, or when what they have told you and the data clearly point "
+            "that way (they say the sessions feel too easy and the limit is what holds them "
+            "back). One suggestion at a time. Nothing changes until they press Apply, and the "
+            "ladder is then re-derived on its own screen where they review it. Their current "
+            "limits are in the snapshot; the tool refuses a value that is the current one or "
+            "that cannot fit."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "setting": {"type": "string", "enum": ["plan.max_ride_days", "plan.max_ride_min"],
+                            "description": "Which limit"},
+                "value": {"type": "integer", "description": "The new value (days, or minutes)"},
+                "reason": {"type": "string",
+                           "description": "One or two sentences for the athlete, shown beside the button"},
+            },
+            "required": ["setting", "value", "reason"],
         },
     },
     {
@@ -458,6 +483,7 @@ TOOL_FN_MAP = {
     "log_subjective_feel": log_subjective_feel,
     "query_history": query_history,
     "query_signals": query_signals,
+    "suggest_change": suggest_change,
     "calculate_ramp_target": calculate_ramp_target,
     "update_goal": update_goal,
 }

@@ -113,6 +113,14 @@ that decides how long something stays on the coach's mind (`threads`, `watch_lis
 is retired: it is left in the schema and never written. The ledger is append-only except for the
 dismissal columns, and nothing in it changes a prescription.
 
+## The coach suggests; the athlete applies
+
+`suggest_change` (`src/coach/suggest.py`) validates a proposal and returns a card. It writes nothing.
+The button's Apply goes through `PUT /api/settings`, the same whitelisted, validated, guarded route as
+the Settings screen, and the ladder is then re-derived through its preview. A setting may only be
+suggested if it is also in `setup._FIELDS` (a test holds the two together), so a button can never be
+offered that the settings route would refuse.
+
 ## Read the plan's own ladder, never the module constant
 
 `progression.TIERS` is the built-in ladder and a fallback. The plan's real rungs live in the
