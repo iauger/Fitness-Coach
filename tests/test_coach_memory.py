@@ -22,7 +22,8 @@ from src.analysis import report
 from src.api import chat
 from src.api.app import app
 from src.api.guard import TOKEN, TOKEN_HEADER
-from src.coach import chat_store, memory, session
+from src import signals
+from src.coach import chat_store, extract, memory, session
 from src.coach import settings as coach_settings
 from src.db import schema
 from src.db.migrations import migrate
@@ -38,21 +39,25 @@ def db(tmp_path, monkeypatch):
     for module in (chat_store, memory):
         for name in ("get_connection", "write_connection"):
             monkeypatch.setattr(module, name, functools.partial(getattr(schema, name), path))
+    for name in ("read_connection", "write_connection"):
+        monkeypatch.setattr(signals, name, functools.partial(getattr(schema, name), path))
     monkeypatch.setattr(coach_settings, "model", lambda: "claude-test")
+    monkeypatch.setattr(coach_settings, "extractor_model", lambda: "claude-extract")
     return path
 
 
 class FakeClient:
-    """Records every request and answers with a fixed note."""
+    """Records every request and answers with a filing: a gist, and any signals and follow-ups."""
 
-    def __init__(self, reply="- felt strong\n- sleeping better"):
+    def __init__(self, gist="felt strong, sleeping better", signals=None, followups=None):
         self.calls = []
         self.messages = SimpleNamespace(create=self._create)
-        self.reply = reply
+        self.filing = {"signals": signals or [], "followups": followups or [], "gist": gist}
 
     def _create(self, **kw):
         self.calls.append(kw)
-        return SimpleNamespace(content=[SimpleNamespace(text=self.reply)])
+        return SimpleNamespace(content=[SimpleNamespace(type="tool_use", name="record_signals",
+                                                        input=self.filing)])
 
 
 def make(db, messages, mode="conversation", updated=None, summarised=None):
@@ -107,60 +112,61 @@ def test_a_one_word_message_is_not_worth_a_note():
     assert memory.eligible(talk(LONG, "ok")) is True
 
 
-def test_the_transcript_names_who_spoke_and_what_was_recorded():
-    msgs = talk(LONG, "I will note that.") + [
-        {"role": "assistant", "content": [
-            {"type": "text", "text": "Logged."},
-            {"type": "tool_use", "name": "log_life_event", "input": {"type": "injury"}},
-            {"type": "tool_use", "name": "query_history", "input": {"q": "rides"}}]},
-        {"role": "user", "content": [{"type": "tool_result", "content": "SECRET-RESULT"}]}]
-    text = memory.render_transcript(msgs)
-    assert f"ATHLETE: {LONG}" in text and "COACH: I will note that." in text
-    assert "[coach recorded: log_life_event {'type': 'injury'}]" in text
-    assert "query_history" not in text and "SECRET-RESULT" not in text
+# -- filing a conversation --------------------------------------------------------------------
+
+KNEE = {"kind": "injury_pain", "topic": "left knee", "severity": 2, "quote": "left knee has been aching"}
 
 
-def test_a_very_long_conversation_keeps_its_tail():
-    msgs = talk(*(f"line {i} " + "x" * 500 for i in range(200)))
-    text = memory.render_transcript(msgs)
-    assert len(text) == memory.MAX_TRANSCRIPT_CHARS and "line 199" in text and "line 0 " not in text
-
-
-# -- writing the note -------------------------------------------------------------------------
-
-def test_a_note_is_written_to_the_conversation_and_to_the_coachs_memory(db):
+def test_a_gist_is_written_to_the_conversation_and_to_the_coachs_memory(db):
     sid = make(db, talk(LONG, "Noted."), updated="2026-11-05T14:00:00")
     note = memory.summarise_session(sid, FakeClient())
-    assert note == "- felt strong\n- sleeping better"
+    assert note == "felt strong, sleeping better"
     assert rows(db, f"SELECT summary FROM chat_sessions WHERE session_id='{sid}'") == [(note,)]
-    assert rows(db, f"SELECT session_id, type, model, content, date FROM coaching_log") == \
-        [(sid, "session_summary", "claude-test", note, "2026-11-05")]
+    assert rows(db, "SELECT session_id, type, model, content, date FROM coaching_log") == \
+        [(sid, "session_summary", "claude-extract", note, "2026-11-05")]
 
 
-def test_the_note_is_made_with_no_tools_and_its_own_short_prompt(db):
-    """Mutant: reuse the coaching turn loop. A request to summarise could then call update_goal."""
+def test_the_athletes_words_become_signals_with_the_conversations_day_and_source(db):
+    sid = make(db, talk(LONG, "Noted."), updated="2026-11-05T14:00:00")
+    memory.summarise_session(sid, FakeClient(signals=[KNEE]))
+    assert rows(db, "SELECT kind, topic, severity, on_date, source, source_ref, extractor_version, quote "
+                    "FROM signals") == [("injury_pain", "left knee", 2, "2026-11-05", "conversation", sid,
+                                         "x1", "left knee has been aching")]
+
+
+def test_follow_ups_are_kept_on_the_conversation(db):
+    sid = make(db, talk(LONG, "Noted."))
+    memory.summarise_session(sid, FakeClient(followups=["raise the knee next week"]))
+    assert rows(db, f"SELECT followups FROM chat_sessions WHERE session_id='{sid}'") == \
+        [('["raise the knee next week"]',)]
+
+
+def test_only_the_athletes_words_reach_the_model_and_it_has_one_forced_tool(db):
+    """Mutants: send the whole transcript (the coach's guesses get filed as the athlete's feelings);
+    reuse the coaching turn loop (a request to summarise could call update_goal)."""
     client = FakeClient()
-    memory.summarise_session(make(db, talk(LONG, "Noted.")), client)
+    msgs = talk(LONG, "COACH-GUESS you seem burnt out", "I sleep fine.", "ok")
+    memory.summarise_session(make(db, msgs), client)
     (call,) = client.calls
-    assert "tools" not in call and call["system"] == memory.SYSTEM
-    assert call["max_tokens"] == memory.MAX_TOKENS and call["model"] == "claude-test"
-    assert f"ATHLETE: {LONG}" in call["messages"][0]["content"]
+    body = call["messages"][0]["content"]
+    assert LONG in body and "I sleep fine." in body and "COACH-GUESS" not in body
+    assert [t["name"] for t in call["tools"]] == ["record_signals"]
+    assert call["tool_choice"] == {"type": "tool", "name": "record_signals"}
+    assert call["model"] == "claude-extract" and call["system"] == extract.SYSTEM
 
 
-def test_nothing_notable_leaves_no_note_but_counts_as_done(db):
+def test_nothing_to_file_leaves_no_note_but_counts_as_done(db):
     sid = make(db, talk(LONG, "ok"))
-    assert memory.summarise_session(sid, FakeClient("NOTHING NOTABLE")) is None
+    assert memory.summarise_session(sid, FakeClient(gist="")) is None
     assert rows(db, "SELECT COUNT(*) FROM coaching_log") == [(0,)]
     assert rows(db, f"SELECT summary, summarised_at IS NOT NULL FROM chat_sessions "
                     f"WHERE session_id='{sid}'") == [(None, 1)]
 
 
-def test_a_marker_the_model_tacked_onto_real_bullets_is_not_stored(db):
-    """Mutant: only a leading marker is recognised. This exact reply reached the screen."""
+def test_a_signal_whose_quote_is_not_in_the_conversation_is_not_filed(db):
     sid = make(db, talk(LONG, "ok"))
-    note = memory.summarise_session(sid, FakeClient("- knee is sore\n- sleeping better\n\nNOTHING NOTABLE"))
-    assert note == "- knee is sore\n- sleeping better"
-    assert rows(db, "SELECT content FROM coaching_log") == [(note,)]
+    memory.summarise_session(sid, FakeClient(signals=[{**KNEE, "quote": "my knee is destroyed"}]))
+    assert rows(db, "SELECT COUNT(*) FROM signals") == [(0,)]
 
 
 def test_an_empty_conversation_makes_no_call_and_is_marked_done(db):
@@ -177,18 +183,20 @@ def test_a_check_in_with_no_follow_up_makes_no_call(db):
     assert memory.summarise(sid, client) == (None, False) and client.calls == []
 
 
-def test_summarising_again_replaces_the_note_rather_than_adding_one(db):
-    """Mutant: INSERT without the DELETE. The coach would be shown the same conversation twice."""
+def test_filing_again_replaces_the_note_and_does_not_double_the_signals(db):
+    """Mutants: INSERT without the DELETE (the coach would see one conversation twice); no
+    `recorded` check (a retry after a failed note write would file every signal again)."""
     sid = make(db, talk(LONG, "ok"))
-    memory.summarise_session(sid, FakeClient("- first"))
-    memory.summarise_session(sid, FakeClient("- second"))
-    assert rows(db, "SELECT content FROM coaching_log") == [("- second",)]
+    memory.summarise_session(sid, FakeClient("first", signals=[KNEE]))
+    memory.summarise_session(sid, FakeClient("second", signals=[KNEE]))
+    assert rows(db, "SELECT content FROM coaching_log") == [("second",)]
+    assert rows(db, "SELECT COUNT(*) FROM signals") == [(1,)]
 
 
-def test_a_conversation_that_becomes_nothing_notable_loses_its_old_note(db):
+def test_a_conversation_that_becomes_nothing_loses_its_old_note(db):
     sid = make(db, talk(LONG, "ok"))
-    memory.summarise_session(sid, FakeClient("- first"))
-    memory.summarise_session(sid, FakeClient("NOTHING NOTABLE"))
+    memory.summarise_session(sid, FakeClient("first"))
+    memory.summarise_session(sid, FakeClient(""))
     assert rows(db, "SELECT COUNT(*) FROM coaching_log") == [(0,)]
 
 
@@ -332,7 +340,7 @@ def test_a_command_line_conversation_is_stored_as_it_happens(db, cli):
 def test_quitting_writes_the_note_through_the_shared_writer(db, cli):
     cli.ask(LONG)
     note = cli.end_session()
-    assert note == "- felt strong\n- sleeping better"
+    assert note == "felt strong, sleeping better"
     assert rows(db, "SELECT type, session_id FROM coaching_log") == [("session_summary", cli.session_id)]
     assert rows(db, f"SELECT ended_at IS NOT NULL FROM chat_sessions WHERE session_id='{cli.session_id}'") == [(1,)]
 

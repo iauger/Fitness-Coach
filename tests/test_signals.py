@@ -347,3 +347,22 @@ def test_the_severity_check_constraint_holds_in_the_table(db):
         c.execute("INSERT INTO signals (observed_at, on_date, kind, severity, source) "
                   "VALUES ('x', '2026-11-01', 'illness', 4, 'manual')")
     c.close()
+
+
+# -- what the extractor is shown, and whether a source was already filed -------------------------
+
+def test_recent_threads_include_minor_ones_but_not_resolved_or_stale(db):
+    """Mutants: dropping the resolved filter (a closed illness is "continued"), or the silence limit."""
+    signals.record("nutrition", topic="fuelling", severity=1, on_date="2026-11-08")         # minor: shown
+    signals.record("illness", severity=3, state="resolved", on_date="2026-11-08")           # over: hidden
+    signals.record("stress", severity=3, on_date="2026-10-12")                              # 29 days: hidden
+    signals.record("fatigue", severity=3, on_date="2026-10-13")                             # 28 days: shown
+    assert sorted(t["kind"] for t in signals.recent_threads(TODAY)) == ["fatigue", "nutrition"]
+
+
+def test_recorded_is_per_source_and_reference_and_counts_dismissed_rows(db):
+    sid = signals.record("illness", source="conversation", source_ref="abc", on_date="2026-11-08")
+    assert signals.recorded("conversation", "abc")
+    assert not signals.recorded("conversation", "abd") and not signals.recorded("feel_note", "abc")
+    signals.dismiss(sid)
+    assert signals.recorded("conversation", "abc")

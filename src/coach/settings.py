@@ -19,11 +19,19 @@ from src.config import config
 
 ENV_MODEL = "COACH_MODEL"
 ENV_KEY = "ANTHROPIC_API_KEY"
+ENV_EXTRACTOR = "COACH_EXTRACTOR_MODEL"
+# Reading what an athlete said and filing it is a classification job, not coaching: the small
+# model is the right one, and swapping it is a one-line change here or an environment variable.
+DEFAULT_EXTRACTOR = "claude-haiku-4-5"
 
 
 def model() -> str:
     """The environment wins, so a one-off `COACH_MODEL=... python scripts/ask.py` still works."""
     return os.environ.get(ENV_MODEL) or config().coach.model
+
+
+def extractor_model() -> str:
+    return os.environ.get(ENV_EXTRACTOR) or DEFAULT_EXTRACTOR
 
 
 def enabled() -> bool:

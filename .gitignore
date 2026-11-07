@@ -25,3 +25,6 @@ devlog.md
 config/athlete.yaml
 config/athlete.yaml.bak
 config/athlete.yaml.tmp
+
+# The athlete's own words, used to check the signal extractor. Never commit.
+tests/fixtures/signals_gold.private.json

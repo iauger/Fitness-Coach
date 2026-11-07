@@ -210,6 +210,25 @@ def watch_list(today: str | None = None) -> list[dict]:
     return shown
 
 
+def recent_threads(today: str | None = None) -> list[dict]:
+    """
+    Threads the extractor should know about so it can continue them rather than start a duplicate:
+    anything not resolved and mentioned within SILENT_DAYS, whatever its level. Wider than the
+    watch list on purpose: a level-1 knee twinge is not worth the coach's attention, but it is
+    worth recognising when the athlete mentions it again.
+    """
+    today = today or today_local().isoformat()
+    return [t for t in threads(_rows(), today)
+            if t["state"] != "resolved" and _days(today, t["last_seen"]) <= SILENT_DAYS]
+
+
+def recorded(source: str, source_ref: str) -> bool:
+    """Whether anything has already been taken from this source (dismissed or not)."""
+    with read_connection() as conn:
+        return conn.execute("SELECT 1 FROM signals WHERE source = ? AND source_ref = ? LIMIT 1",
+                            (source, source_ref)).fetchone() is not None
+
+
 # -- reads for the coach, the screens and the tool ----------------------------------------------
 
 def timeline(*, since: str | None = None, until: str | None = None, kind: str | None = None,

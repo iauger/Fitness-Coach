@@ -1,18 +1,19 @@
 """
 What the coach remembers from a conversation.
 
-A conversation is stored in full (`chat_sessions` / `chat_messages`), and once it is over a
-short note of it goes into `coaching_log` as a `session_summary`, which is what the next
-conversation and the next check-in are briefed from. This module is the only thing that writes
-that note, whether the conversation happened in the app or on the command line.
+A conversation is stored in full (`chat_sessions` / `chat_messages`), and once it is over it is
+read once by the extractor (`extract.py`): what the athlete said about themselves becomes
+signals in the ledger, and a gist of at most 40 words goes into `coaching_log` as a
+`session_summary`, with any follow-ups on the conversation itself. This module is the only thing
+that does that, whether the conversation happened in the app or on the command line.
 
 It used to be two mechanisms. The command line wrote a note when you typed `quit`; the app's
 conversations were never summarised, so anything said to the coach in the app was forgotten by
 the next one. And the command line's note was written by re-running the whole coaching turn
 loop on the whole conversation, with the full athlete snapshot and every tool available: a
 request to "summarise" could have called `update_goal`, and it paid for ~8,000 tokens of
-context to produce five bullets. A note is a compression job. It gets its own short prompt and
-no tools.
+context to produce five bullets. Filing a conversation is a classification job. It gets its own
+short prompt, sees only the athlete's words, and its one tool is never run.
 
 **When a note is written.** Once, when the conversation closes. A conversation closes when the
 athlete ends it or starts a new one, when the command line quits, or when it has been idle for
@@ -26,46 +27,16 @@ gets no note, and neither does one that is only a server-written check-in openin
 is already filed on its own.
 """
 
-import os
+import json
 from datetime import datetime
 
 from src.clock import local_date_of, utc_now_iso
-from src.coach import chat_store
+from src.coach import chat_store, extract
 from src.coach import settings as coach_settings
 from src.db.schema import get_connection, write_connection
 
-# What the athlete said has to be at least this long to be worth a note ("hi" is not).
+# What the athlete said has to be at least this long to be worth reading ("hi" is not).
 MIN_CHARS = 20
-# The tail of a very long conversation, not the whole of it, is what reaches the model.
-MAX_TRANSCRIPT_CHARS = 24000
-MAX_TOKENS = 500
-NOTHING = "NOTHING NOTABLE"
-
-# Tools that change a record. A read-only lookup is not worth a line in the note; a write is
-# something the athlete should be able to see was acted on.
-WRITE_TOOLS = {"log_life_event", "log_subjective_feel", "update_goal"}
-
-SYSTEM = f"""
-You take notes on a conversation between an endurance athlete and their coach, for the coach to
-read in a later conversation when the transcript is no longer in front of them.
-
-Write four to six short hyphen bullets. Keep what only this conversation can tell a coach: what
-the athlete shared about how they feel, their life, injuries, sleep or motivation; decisions or
-priorities they settled on; anything the coach recorded (lines marked "[coach recorded ...]" are
-real records); and any follow-up worth raising next time. Keep the athlete's own framing.
-
-Drop anything the database already holds: do not restate training load, fitness numbers, HRV,
-adherence or session counts. Do not give advice and do not coach: you are taking notes.
-
-If the athlete said nothing worth carrying forward, reply with exactly: {NOTHING}
-""".strip()
-
-
-def _visible_text(content) -> str:
-    if isinstance(content, str):
-        return content
-    return " ".join(b.get("text", "") for b in content
-                    if isinstance(b, dict) and b.get("type") == "text").strip()
 
 
 def athlete_turns(messages: list[dict], mode: str = "conversation") -> list[str]:
@@ -84,51 +55,21 @@ def eligible(messages: list[dict], mode: str = "conversation") -> bool:
     return any(len(t.strip()) >= MIN_CHARS for t in athlete_turns(messages, mode))
 
 
-def render_transcript(messages: list[dict]) -> str:
-    """The conversation as plain labelled lines: what was said, and which records were changed."""
-    lines = []
-    for m in messages:
-        content = m["content"]
-        if m["role"] == "user" and isinstance(content, str):
-            lines.append(f"ATHLETE: {content}")
-        elif m["role"] == "assistant":
-            text = _visible_text(content)
-            if text:
-                lines.append(f"COACH: {text}")
-            for block in (content if isinstance(content, list) else []):
-                if isinstance(block, dict) and block.get("type") == "tool_use" \
-                        and block.get("name") in WRITE_TOOLS:
-                    lines.append(f"[coach recorded: {block['name']} {block.get('input', {})}]")
-    text = "\n".join(lines)
-    return text[-MAX_TRANSCRIPT_CHARS:]
-
-
-def clean_note(text: str) -> str | None:
-    """
-    The note, or None if the model said there is nothing to keep.
-
-    The instruction is to reply with exactly NOTHING NOTABLE when there is nothing. Models do
-    not always keep to "exactly": one wrote real bullets and then added the phrase on a line of
-    its own, and it was stored as part of the note and shown to the athlete. So the marker is
-    removed wherever it stands, as a line, and what remains is the note (possibly nothing).
-    """
-    kept = [line for line in (text or "").splitlines()
-            if line.strip().strip("-*. ").upper() != NOTHING]
-    note = "\n".join(kept).strip()
-    return note or None
-
-
 def _client():
+    import os
+
     from anthropic import Anthropic
     return Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 
-def _write(session_id: str, summary: str | None, model: str, local_date: str) -> None:
+def _write(session_id: str, summary: str | None, model: str, local_date: str,
+           followups: list[str] | None = None) -> None:
     """Record the outcome. NULL means "looked at it, nothing to keep" and still counts as done."""
     now = utc_now_iso()
     with write_connection() as conn:
-        conn.execute("UPDATE chat_sessions SET summary = ?, summarised_at = ? WHERE session_id = ?",
-                     (summary, now, session_id))
+        conn.execute("UPDATE chat_sessions SET summary = ?, summarised_at = ?, followups = ? "
+                     "WHERE session_id = ?",
+                     (summary, now, json.dumps(followups) if followups else None, session_id))
         # One note per conversation: a re-summary replaces the old one, and a conversation that
         # now has nothing notable must not leave a stale note behind.
         conn.execute("DELETE FROM coaching_log WHERE type = 'session_summary' AND session_id = ?",
@@ -142,8 +83,9 @@ def _write(session_id: str, summary: str | None, model: str, local_date: str) ->
 
 def summarise(session_id: str, client=None) -> tuple[str | None, bool]:
     """
-    `(note, called_the_model)` for one conversation. The note is None when there is nothing
-    worth keeping; the second value says whether that cost an API call.
+    `(gist, called_the_model)` for one conversation. The gist is None when there is nothing
+    worth keeping; the second value says whether that cost an API call. Signals are filed as a
+    side effect, once per conversation.
     """
     conn = get_connection()
     try:
@@ -161,15 +103,13 @@ def summarise(session_id: str, client=None) -> tuple[str | None, bool]:
         return None, False
 
     client = client or _client()
-    model = coach_settings.model()
-    # No tools, a short system prompt, and only the words: the cheap path, and one that cannot
-    # act on anything it reads.
-    reply = client.messages.create(
-        model=model, max_tokens=MAX_TOKENS, system=SYSTEM,
-        messages=[{"role": "user", "content": render_transcript(messages)}])
-    text = " ".join(b.text for b in reply.content if hasattr(b, "text")).strip()
-    note = clean_note(text)
-    _write(session_id, note, model, when)
+    # Only the athlete's words reach the model, and its one tool is never run: it can file, not act.
+    text = "\n\n".join(t.strip() for t in athlete_turns(messages, row["mode"]) if t.strip())
+    found = extract.extract(text, when, client)
+    extract.file_signals(found, source="conversation", source_ref=session_id,
+                         observed_at=row["updated_at"])
+    note = found.gist or None
+    _write(session_id, note, coach_settings.extractor_model(), when, found.followups)
     return note, True
 
 

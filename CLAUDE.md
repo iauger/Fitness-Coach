@@ -99,7 +99,9 @@ would let any page read the token), and never exempt a route from the guard; the
 ## Coach notes have one writer
 
 `src/coach/memory.py` writes every `session_summary` in `coaching_log`, for the app and the
-command line alike, with no tools and its own prompt. Do not summarise a conversation by re-running
+command line alike. It does it through `src/coach/extract.py`: one forced-tool call that sees only
+the athlete's words, returns signals plus a gist of at most 40 words, and whose tool is never run.
+Every signal must quote the athlete word for word or it is dropped (`extract.quoted`). Do not summarise a conversation by re-running
 the coaching loop on it: that path had every tool available (a request to "summarise" could call
 `update_goal`) and re-sent the whole athlete snapshot to produce five bullets. A check-in is not a
 conversation note: it is filed by `finish_checkin`, and the due-status reads it.

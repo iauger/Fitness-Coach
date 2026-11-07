@@ -279,8 +279,13 @@ ledger is the first run of that evaluation. The `life_events` row migrates with 
    summary, timeline and digest. `life_events` rows were carried in (the table is left in place,
    unwritten) and `log_life_event` writes the ledger; the coach's briefing and `query_history`
    read it. Nothing writes signals from conversations yet: that is phase 3.
-3. **Extractor, gold set, evaluation, backfill.** Replaces the note writer on the same
-   triggers. Exit: the bar above.
+3. **Extractor, gold set, evaluation, backfill.** *(built; gold set awaiting review)* Replaces the
+   note writer on the same triggers (`src/coach/extract.py`, wired through `memory.summarise`):
+   one forced-tool Haiku call per closed conversation, filing signals, follow-ups (on the
+   conversation) and a 40-word gist. `scripts/eval_signals.py` scores it against the gold set
+   (`src/coach/signal_eval.py`); `scripts/backfill_signals.py` reads the athlete's earlier feel
+   notes, ride notes and conversations (preview by default). Exit: the bar above on the frozen
+   gold set, which is `tests/fixtures/signals_gold.draft.json` until the athlete has reviewed it.
 4. **Briefing and tool.** Watch list, digest, derived picture, `query_signals`, age-stamped
    gists, drop check-in-as-memory.
 5. **Screens.** A timeline with filters and dismissal, a watch strip on the Plan screen, and

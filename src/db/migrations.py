@@ -845,6 +845,13 @@ def _m013_signals(conn: sqlite3.Connection) -> None:
              "resolved" if r[2] else "ongoing", (r[5] or "")[:280], r[1], r[2], ref))
 
 
+def _m014_followups(conn: sqlite3.Connection) -> None:
+    """What the athlete committed to, or asked the coach to raise, kept on the conversation it came from (JSON list)."""
+    have = {r[1] for r in conn.execute("PRAGMA table_info(chat_sessions)")}
+    if "followups" not in have:
+        conn.execute("ALTER TABLE chat_sessions ADD COLUMN followups TEXT")
+
+
 # (version, name, step). Append only — never renumber or edit an applied migration.
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "baseline schema as of phase 12B", _m001_baseline),
@@ -860,6 +867,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (11, "a plan may have no goal date", _m011_optional_goal_date),
     (12, "conversations carry their own summary", _m012_session_memory),
     (13, "the signal ledger, with life events folded in", _m013_signals),
+    (14, "follow-ups on the conversation they came from", _m014_followups),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)

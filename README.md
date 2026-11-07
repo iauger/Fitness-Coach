@@ -134,11 +134,12 @@ briefing: your training data, plus a few short notes about earlier conversations
   it. The coach does not read these; they are too long to hand over each time. A conversation
   ends when you end it or start a new one, or after an hour of silence, and a finished one is
   read-only: to keep talking you start a new one, so a check-in stays one event.
-- **When a conversation ends, a short note is written** (4-6 bullets of what is worth keeping),
-  once. A conversation that ended without one (you closed the tab) is noted the next time a
-  conversation or check-in begins.
-  The note is made by a separate, small request that sees only the words and cannot change any
-  of your records.
+- **When a conversation ends, it is read once** by a separate, small request that sees only your
+  words and cannot change any of your records. It files what you said about how you are (illness,
+  sleep, stress, work, motivation, how sessions felt...) as dated, graded **signals**, and writes
+  a gist of up to 40 words. Every signal has to quote you word for word or it is thrown away.
+  A conversation that ended without being read (you closed the tab) is read the next time a
+  conversation or check-in begins. Signals are stored silently; nothing in them changes your plan.
 - **The coach is shown the last four conversation notes and the last weekly check-in.** Older
   notes are kept but not read. Goals, life events and how you feel are recorded separately and
   are always read.
