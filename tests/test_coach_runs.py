@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from src.api import chat
 from src.api.app import app
 from src.api.guard import TOKEN, TOKEN_HEADER
-from src.coach import chat_store, session
+from src.coach import chat_store, memory, session
 from src.coach import settings as coach_settings
 from src.coach.stream import Event
 from src.db import schema
@@ -40,6 +40,7 @@ def env(tmp_path, monkeypatch):
     migrate(path)
     for name in ("get_connection", "write_connection"):
         monkeypatch.setattr(chat_store, name, functools.partial(getattr(schema, name), path))
+        monkeypatch.setattr(memory, name, functools.partial(getattr(schema, name), path))
     monkeypatch.setattr(coach_settings, "refusal", lambda: None)
     monkeypatch.setattr(coach_settings, "model", lambda: "claude-test")
     monkeypatch.setattr(chat, "_client", lambda: object())

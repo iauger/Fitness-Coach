@@ -4,10 +4,8 @@ Model: the COACH_MODEL environment variable if set, else coach.model in the conf
 """
 
 import os
-import json
 import uuid
 from datetime import date
-from pathlib import Path
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
@@ -21,6 +19,7 @@ from src.analysis.weekly import (
 )
 from src.coach.summarize import weekly_narrative
 from src.coach.prompt import build_system_prompt
+from src.coach import chat_store, memory
 from src.coach.settings import model as coach_model
 from src.coach.stream import run_turn
 from src.db.schema import write_connection
@@ -29,7 +28,6 @@ from src.clock import today_local_iso, utc_now_iso
 
 load_dotenv()
 
-TRANSCRIPT_DIR = Path(__file__).parent.parent.parent / "data" / "transcripts"
 # Headroom for the 500-700 word check-in target set in prompt.py. The old 1024 ceiling
 # (~750 words) left almost no margin — a longer reasoned answer would have been cut mid-sentence.
 MAX_TOKENS = 2048
@@ -204,14 +202,18 @@ def cycle_review(on: date | None = None, verbose: bool = False) -> str | None:
 
 class CoachSession:
     """
-    Multi-turn conversational session with tool use and transcript saving.
+    Multi-turn conversational session with tool use, kept in the same tables as the app's.
+
+    The conversation is stored as it happens (`chat_store`), so a crash loses nothing and the
+    command line and the app see the same conversations. When it ends the note for the coach's
+    memory is written by `memory.summarise_session`, the one place that does it.
     """
 
     def __init__(self, model: str = None, verbose: bool = False):
         self.model = model or coach_model()
         self.verbose = verbose
         self.client = _client()
-        self.session_id = str(uuid.uuid4())[:8]
+        self.session_id = chat_store.new_session(self.model)
         self.started_at = utc_now_iso()
         self.history: list[dict] = []
 
@@ -235,58 +237,21 @@ class CoachSession:
         # stream_turn now records every turn as content blocks, and appending again would
         # duplicate the answer in the history sent with the next question.
         self.history = working
+        # Stored after every answer, not only at the end, so quitting badly loses nothing.
+        chat_store.replace_history(self.session_id, self.history)
+        chat_store.set_title_if_unset(self.session_id, question)
         return reply
 
     def end_session(self) -> str | None:
-        """Save transcript, generate summary, store in coaching_log. Returns summary."""
+        """Close the conversation and write its note to the coach's memory. Returns the note."""
         if not self.history:
             return None
-
-        ended_at = utc_now_iso()
-        turns = sum(1 for m in self.history if m["role"] == "user")
-
-        # save raw transcript
-        TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
-        date_str = today_local_iso()
-        transcript_path = TRANSCRIPT_DIR / f"{date_str}-{self.session_id}.json"
-        transcript_data = {
-            "session_id": self.session_id,
-            "started_at": self.started_at,
-            "ended_at": ended_at,
-            "model": self.model,
-            "messages": self.history,
-        }
-        transcript_path.write_text(json.dumps(transcript_data, indent=2))
-
-        # generate session summary
-        summary_messages = list(self.history) + [{
-            "role": "user",
-            "content": (
-                "Summarize this coaching session in 4-6 bullet points. Focus only on: "
-                "key things the athlete shared, decisions or priorities discussed, "
-                "anything logged (life events, goals, feel), and any follow-up to watch for. "
-                "Be terse — this summary will be injected into future coaching sessions as memory."
-            ),
-        }]
-        summary = _run_tool_loop(
-            self.client, self.model, self.system, summary_messages
-        )
-
-        # persist everything
-        with write_connection() as conn:
-            conn.execute("""
-                INSERT OR REPLACE INTO transcripts
-                (session_id, started_at, ended_at, model, turns, summary, file_path)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (self.session_id, self.started_at, ended_at, self.model,
-                  turns, summary, str(transcript_path)))
-            conn.execute("""
-                INSERT INTO coaching_log (session_id, date, type, model, content, created_at)
-                VALUES (?, ?, 'session_summary', ?, ?, ?)
-            """, (self.session_id, date_str, self.model, summary,
-                  utc_now_iso()))
-
-        return summary
+        chat_store.end_session(self.session_id)
+        return memory.summarise_session(self.session_id, self.client)
 
     def reset(self) -> None:
+        """Start again. The conversation so far stays stored and is noted later like any other."""
+        if self.history:
+            chat_store.end_session(self.session_id)
         self.history = []
+        self.session_id = chat_store.new_session(self.model)

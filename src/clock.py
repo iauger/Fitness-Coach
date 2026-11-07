@@ -79,3 +79,16 @@ def today_local() -> date:
 
 def today_local_iso() -> str:
     return today_local().isoformat()
+
+
+def local_date_of(utc_iso: str) -> date:
+    """
+    The athlete's calendar date for a stored UTC timestamp.
+
+    The timestamps in the database are naive UTC. A conversation held at 9pm US Eastern is
+    stored as tomorrow, and filing its memory under tomorrow's date puts the note in the future.
+    """
+    moment = datetime.fromisoformat(utc_iso)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(athlete_timezone()).date()

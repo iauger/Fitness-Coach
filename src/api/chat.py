@@ -21,17 +21,17 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from src.analysis.report import coaching_context_text
+from src.analysis.report import MEMORY_PER_TYPE, coaching_context_text, coaching_memory_entries
 from src.api.cache import freshness_key
 from src import maintenance
 from src.clock import today_local
-from src.coach import chat_store, due
+from src.coach import chat_store, due, memory
 from src.coach import session as coach_session
 from src.coach.prompt import build_system_prompt
 from src.coach import settings as coach_settings
 from src.coach.session import MAX_TOKENS, _client
 from src.coach.stream import Event, stream_turn
-from src.db.schema import read_connection
+from src.db.schema import read_connection, write_connection
 from src.planning.constants import plan_name
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -115,10 +115,26 @@ def _sync_quietly(queue: Queue) -> None:
         queue.put({"type": "status", "text": f"Could not sync ({exc}); using what is already stored."})
 
 
+def _catch_up_memory(queue: Queue) -> None:
+    """
+    Write the notes for conversations that were left open, before a new one begins.
+
+    There is no "end" in the app, so an abandoned conversation is only summarised when something
+    else starts. Best-effort and quiet unless there is work: a failure is reported as a status
+    line and the conversation carries on.
+    """
+    if not memory.stale_sessions():
+        return
+    queue.put({"type": "status", "text": "Updating the coach's notes from earlier conversations..."})
+    memory.summarise_pending(on_error=lambda sid, exc: queue.put(
+        {"type": "status", "text": f"Could not summarise {sid}: {exc}"}))
+
+
 def _run_structured(session_id: str, mode: str, note: str | None, queue: Queue) -> None:
     """A check-in or block review: sync, build the prompt, stream it, and record it if it worked."""
     try:
         _sync_quietly(queue)
+        _catch_up_memory(queue)
         if mode == "checkin":
             inputs = coach_session.checkin_inputs(note or "")
         else:
@@ -149,6 +165,13 @@ def _run_structured(session_id: str, mode: str, note: str | None, queue: Queue) 
         queue.put(_SENTINEL)
 
 
+def _summarise_quietly(session_id: str) -> None:
+    try:
+        memory.summarise_session(session_id)
+    except Exception:
+        pass
+
+
 def _sse(event: Event | dict) -> str:
     payload = event.to_json() if isinstance(event, Event) else json.dumps(event)
     return f"data: {payload}\n\n"
@@ -158,6 +181,8 @@ def _run_and_enqueue(session_id: str, question: str, queue: Queue) -> None:
     """Run one turn on a worker thread, pushing events onto the queue as they arrive."""
     try:
         history = chat_store.load_history(session_id)
+        if not history:
+            _catch_up_memory(queue)          # a new conversation: first, remember the old ones
         history.append({"role": "user", "content": question})
         system = _system_for(session_id)
 
@@ -235,6 +260,69 @@ def due_status() -> dict:
         return due.status(conn, today_local())
 
 
+# ── what the coach remembers ──────────────────────────────────────────────────
+
+class NoteBody(BaseModel):
+    content: str = Field(min_length=1, max_length=4000)
+
+
+def _note(conn, note_id: int):
+    row = conn.execute("SELECT id, session_id, type FROM coaching_log WHERE id = ?",
+                       (note_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, f"no note {note_id}")
+    if row["type"] != "session_summary":
+        # A check-in is a record of what was said to the athlete and the due-status reads it;
+        # only the notes the coach wrote *about a conversation* are the athlete's to correct.
+        raise HTTPException(403, "only a conversation note can be changed here")
+    return row
+
+
+@router.get("/memory")
+def memory_list(limit: int = 15) -> dict:
+    """
+    What the coach has on file, newest first, and which of it is in its briefing right now
+    (`shown`). The briefing selection is the one the coach is actually given, not a copy.
+    """
+    shown = {e["id"] for e in coaching_memory_entries()}
+    with read_connection() as conn:
+        rows = conn.execute(
+            "SELECT id, session_id, date, type, content FROM coaching_log "
+            "WHERE type IN ('checkin', 'session_summary') ORDER BY created_at DESC LIMIT ?",
+            (max(1, min(limit, 100)),)).fetchall()
+    return {"per_type": MEMORY_PER_TYPE,
+            "entries": [{**dict(r), "shown": r["id"] in shown,
+                         "editable": r["type"] == "session_summary"} for r in rows]}
+
+
+@router.put("/memory/{note_id}")
+def memory_edit(note_id: int, body: NoteBody) -> dict:
+    """Correct a conversation note: the coach will be told the corrected version."""
+    text = body.content.strip()
+    if not text:
+        raise HTTPException(422, "a note cannot be empty; delete it instead")
+    with write_connection() as conn:
+        row = _note(conn, note_id)
+        conn.execute("UPDATE coaching_log SET content = ? WHERE id = ?", (text, note_id))
+        conn.execute("UPDATE chat_sessions SET summary = ? WHERE session_id = ?",
+                     (text, row["session_id"]))
+    return {"id": note_id, "content": text}
+
+
+@router.delete("/memory/{note_id}")
+def memory_delete(note_id: int) -> dict:
+    """
+    Make the coach forget a conversation note. The conversation itself stays; only the note goes,
+    and it is not rewritten unless the conversation later continues.
+    """
+    with write_connection() as conn:
+        row = _note(conn, note_id)
+        conn.execute("DELETE FROM coaching_log WHERE id = ?", (note_id,))
+        conn.execute("UPDATE chat_sessions SET summary = NULL WHERE session_id = ?",
+                     (row["session_id"],))
+    return {"deleted": note_id}
+
+
 @router.get("/status")
 def status() -> dict:
     """Whether the coach can run, and on what: the page reads this before offering a chat."""
@@ -258,4 +346,8 @@ def session_end(session_id: str) -> dict:
     if not chat_store.session_exists(session_id):
         raise HTTPException(404, f"unknown session {session_id}")
     chat_store.end_session(session_id)
+    # The note is written in the background: it is one model call, and the athlete who just
+    # started a new conversation should not wait for it. If it fails, the conversation is still
+    # stale and is caught up the next time anything starts.
+    _EXECUTOR.submit(_summarise_quietly, session_id)
     return {"ended": session_id}

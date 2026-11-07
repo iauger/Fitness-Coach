@@ -61,6 +61,7 @@ def test_a_session_defaults_to_the_configured_model(monkeypatch):
     """Mutant: the session falling back to a hard-coded model instead of asking settings."""
     monkeypatch.setattr(cs, "config", fake_config(model="claude-from-config"))
     monkeypatch.setattr(session, "_client", lambda: object())
+    monkeypatch.setattr(session.chat_store, "new_session", lambda model, *a, **k: "abcd1234")
     monkeypatch.setattr(session, "incremental_sync", lambda **k: None)
     monkeypatch.setattr(session, "build_coaching_context", lambda: {})
     monkeypatch.setattr(session, "coaching_context_text", lambda ctx: "")

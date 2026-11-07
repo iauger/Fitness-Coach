@@ -40,6 +40,9 @@ def repo(tmp_path, monkeypatch):
     monkeypatch.setattr(C, "EXAMPLE_PATH", example)
     monkeypatch.setattr(C, "CONFIG_PATH", tmp_path / "config" / "athlete.yaml")
     monkeypatch.delenv("INTERVALS_API_KEY", raising=False)
+    # The coach check reads this too, and `src.coach.session` loads the real .env into the
+    # process the moment any test imports it, so without this the result depended on test order.
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     C.reset()
     yield tmp_path
     C.reset()
@@ -53,8 +56,9 @@ def first_blocked(found: list):
     return next((c for c in found if not c.ok and c.blocking), None)
 
 
-def write_env(repo, key="abc123"):
-    (repo / ".env").write_text(f"INTERVALS_API_KEY={key}\n", encoding="utf-8")
+def write_env(repo, key="abc123", anthropic="sk-test"):
+    lines = f"INTERVALS_API_KEY={key}\n" + (f"ANTHROPIC_API_KEY={anthropic}\n" if anthropic else "")
+    (repo / ".env").write_text(lines, encoding="utf-8")
 
 
 def write_config(repo, name="Real Person"):
@@ -593,3 +597,12 @@ def test_the_limits_note_reaches_the_status_report(repo):
     assert not limits.ok and not limits.blocking
     assert "Threshold" in limits.detail
     assert "Threshold" in firstrun.report(db)
+
+
+def test_a_missing_coach_key_is_a_warning_not_a_stop(repo):
+    """The coach is optional: everything else works without a key, so it must never block."""
+    db = _ready_repo(repo, "false")
+    write_env(repo, anthropic=None)         # after the helper, which writes a full .env
+    coach = named(firstrun.checks(db))["coach"]
+    assert coach.ok is False and coach.blocking is False
+    assert firstrun.ready(db)

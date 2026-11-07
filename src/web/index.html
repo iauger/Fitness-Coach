@@ -83,6 +83,13 @@
   .pill { font-size:12px; padding:1px 9px; border-radius:10px; border:1px solid var(--border); color:var(--sub); }
   .pill.due { border-color:var(--warn); color:var(--warn); } .pill.overdue { border-color:var(--bad); color:var(--bad); }
   .pill.ok { border-color:var(--ok); color:var(--ok); }
+  details.memory { margin-bottom:16px; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:10px 16px; }
+  details.memory summary { cursor:pointer; font-weight:600; font-size:14px; }
+  details.memory[open] summary { margin-bottom:8px; }
+  .note { border-top:1px solid var(--border); padding:10px 0; }
+  .note.shown .notehead span:first-child { color:var(--text); }
+  .notehead { display:flex; justify-content:space-between; gap:8px; align-items:center; color:var(--sub); font-size:12px; margin-bottom:4px; }
+  .notebody { font-size:14px; } .notebody textarea { width:100%; }
   .coachbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:12px; }
   .coachbar select { width:auto; min-width:0; flex:1 1 160px; max-width:360px; }
   .chatlog { display:flex; flex-direction:column; gap:10px; padding-bottom:12px; min-height:30vh; }
@@ -791,12 +798,60 @@ async function coachView() {
     } catch (e) { /* the list is a convenience; the chat works without it */ }
   }
 
+  // ---- what the coach remembers ---------------------------------------------------------------
+  // The notes the coach is briefed from, shown as it is given them, so a wrong one can be fixed.
+  const memList = h("div", {});
+  const memBox = h("details", {class: "memory"}, h("summary", {}, "What the coach remembers"), memList);
+  const KIND = {session_summary: "Conversation note", checkin: "Check-in"};
+  async function loadMemory() {
+    let m; try { m = await api("GET", "/api/chat/memory"); } catch (e) { return; }
+    memList.replaceChildren(
+      h("p", {class: "hint"}, "These are the notes the coach reads before it speaks to you. The ones marked are in its briefing right now; older ones are kept but not read. Correct or remove anything that is wrong."),
+      ...(m.entries.length ? m.entries.map(noteCard) : [h("p", {class: "hint"}, "Nothing yet. A note is written when a conversation ends.")]));
+  }
+  function noteCard(e) {
+    const body = h("div", {class: "notebody"}, markdown(e.content));
+    const msg = h("div", {});
+    const actions = h("div", {class: "inline-actions"});
+    if (e.editable) {
+      const edit = h("button", {type: "button"}, "Edit"), forget = h("button", {type: "button"}, "Forget");
+      edit.addEventListener("click", () => {
+        const area = h("textarea", {rows: 5, "aria-label": "Edit note"}, e.content);
+        const save = h("button", {class: "primary", type: "button"}, "Save"), cancel = h("button", {type: "button"}, "Cancel");
+        save.addEventListener("click", async () => {
+          try { await api("PUT", "/api/chat/memory/" + e.id, {content: area.value}); await loadMemory(); }
+          catch (err) { msg.replaceChildren(h("div", {class: "msg bad", role: "alert"}, err.message)); }
+        });
+        cancel.addEventListener("click", loadMemory);
+        body.replaceChildren(area); actions.replaceChildren(save, cancel);
+      });
+      forget.addEventListener("click", async () => {
+        if (!confirm("Make the coach forget this note? The conversation itself is kept.")) return;
+        try { await api("DELETE", "/api/chat/memory/" + e.id); await loadMemory(); }
+        catch (err) { msg.replaceChildren(h("div", {class: "msg bad", role: "alert"}, err.message)); }
+      });
+      actions.append(edit, forget);
+    }
+    return h("div", {class: "note" + (e.shown ? " shown" : "")},
+      h("div", {class: "notehead"}, h("span", {}, e.date + " · " + (KIND[e.type] || e.type)),
+        e.shown ? h("span", {class: "pill ok"}, "in its briefing") : h("span", {class: "pill"}, "kept, not read")),
+      body, actions, msg);
+  }
+  memBox.addEventListener("toggle", () => { if (memBox.open) loadMemory(); });
+
+  // Leaving a conversation is what ends it: the previous one is noted in the background.
+  function endCurrent() {
+    if (!sessionId || !log.querySelector(".bubble")) return;
+    api("POST", "/api/chat/sessions/" + sessionId + "/end").catch(() => {});
+    setTimeout(() => { if (memBox.open) loadMemory(); }, 6000);
+  }
+
   send.addEventListener("click", () => ask(box.value));
   box.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(box.value); } });
-  fresh.addEventListener("click", () => { if (!busy) open(null); });
-  picker.addEventListener("change", () => { if (!busy && picker.value) open(picker.value); });
+  fresh.addEventListener("click", () => { if (!busy) { endCurrent(); open(null); } });
+  picker.addEventListener("change", () => { if (!busy && picker.value) { endCurrent(); open(picker.value); } });
 
-  main.replaceChildren(...head, duePanel,
+  main.replaceChildren(...head, duePanel, memBox,
     h("div", {class: "coachbar"}, picker, fresh, h("span", {class: "detail"}, st.model)),
     log, h("div", {class: "bar composer"}, box, send));
   refreshDue();

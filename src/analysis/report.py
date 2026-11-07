@@ -40,9 +40,15 @@ def _with_weekday(iso_date: str) -> str:
 # Total characters of coaching memory allowed into the snapshot. A check-in runs 1500-3000
 # chars, so this holds the most recent of each type in full with room to spare.
 MEMORY_CHAR_BUDGET = 6000
-# Most recent N of each coaching_log.type. One is enough: the job of this block is to stop the
-# coach repeating last week verbatim, and the longer arc now lives in cycle_reviews.
-MEMORY_PER_TYPE = 1
+# How many of each coaching_log.type the coach is shown, most recent first.
+#
+# One check-in is enough: the job of that entry is to stop the coach repeating last week
+# verbatim, and the longer arc lives in cycle_reviews. Conversation notes are the opposite. They
+# are short (about 600-900 characters), they are the only record of what the athlete said in
+# passing (an ache, a worry, a change at work), and a fortnight of conversations is several of
+# them. One slot meant that talking to the coach twice in a week made it forget the first.
+MEMORY_PER_TYPE = {"checkin": 1, "session_summary": 4}
+DEFAULT_MEMORY_PER_TYPE = 1
 
 
 # How far back raw per-session detail (including full athlete notes) stays in the snapshot.
@@ -70,9 +76,27 @@ def _earlier_week_summaries() -> list[dict]:
             if s["week_end"] < horizon]
 
 
-def _recent_coaching_memory(limit: int = MEMORY_PER_TYPE) -> list[str]:
+def coaching_memory_entries(per_type: dict | None = None) -> list[dict]:
     """
-    Most recent `limit` entries of *each* coaching_log type, in full.
+    The coaching_log entries the coach is briefed from, oldest first: `MEMORY_PER_TYPE` of each
+    type. One selection, used by the briefing and by the screen that shows the athlete what the
+    coach remembers, so the two cannot disagree about what "remembered" means.
+    """
+    per_type = MEMORY_PER_TYPE if per_type is None else per_type
+    with read_connection() as conn:
+        rows = []
+        for kind in [r[0] for r in conn.execute("SELECT DISTINCT type FROM coaching_log")]:
+            rows += conn.execute(
+                "SELECT id, session_id, date, type, content, created_at FROM coaching_log "
+                "WHERE type = ? ORDER BY created_at DESC LIMIT ?",
+                (kind, per_type.get(kind, DEFAULT_MEMORY_PER_TYPE))).fetchall()
+    rows.sort(key=lambda r: r["created_at"])
+    return [dict(r) for r in rows]
+
+
+def _recent_coaching_memory(per_type: dict | None = None) -> list[str]:
+    """
+    The most recent entries of *each* coaching_log type, in full: `MEMORY_PER_TYPE` of each.
 
     Replaces an `ORDER BY created_at DESC LIMIT 3` with no type filter and a 300-char
     truncation at render. Both were doing real damage: every one of the stored entries ran
@@ -83,18 +107,8 @@ def _recent_coaching_memory(limit: int = MEMORY_PER_TYPE) -> list[str]:
     a trimmed entry is cut at a paragraph boundary with an explicit marker rather than
     silently mid-word.
     """
-    with read_connection() as conn:
-        rows = conn.execute("""
-            SELECT date, type, content FROM coaching_log
-            WHERE id IN (
-                SELECT id FROM coaching_log c2
-                WHERE c2.type = coaching_log.type
-                ORDER BY created_at DESC LIMIT ?
-            )
-            ORDER BY created_at
-        """, (limit,)).fetchall()
-
-    entries = [(r["date"], r["type"], r["content"] or "") for r in rows]
+    entries = [(r["date"], r["type"], r["content"] or "")
+               for r in coaching_memory_entries(per_type)]
     total = sum(len(c) for _, _, c in entries)
     out = []
     for i, (d, t, content) in enumerate(entries):
@@ -288,7 +302,7 @@ def build_coaching_context(
             # three type-blind slots, where three weekly check-ins would evict it inside a
             # month — exactly when the next cycle needs it.
             "last_cycle_review": latest_review(),
-            "coaching_notes": _recent_coaching_memory(limit=3),
+            "coaching_notes": _recent_coaching_memory(),
             "life_events": _recent_life_events(days=90),
             "subjective_feel": _recent_subjective_feel(days=14),
         },

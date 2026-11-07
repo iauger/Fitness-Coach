@@ -134,9 +134,17 @@ shows on the Coach tab on every page and a card on the Plan screen. Both runs sy
 recorded only when the model returned something (the log row is what the status reads, and an
 empty review row would mark a block reviewed for ever), and share their briefing with the command
 line (`checkin_inputs`, `cycle_review_inputs`), which now syncs before it builds the briefing
-rather than after. Still to build: ending a conversation with a saved summary as the CLI does
-(app conversations leave no memory yet), and suggestions the coach makes as buttons (raise the
-limit, add a day) instead of text.
+rather than after. What the coach remembers is now one mechanism (`src/coach/memory.py`). Conversations are stored
+in one place whether they happen in the app or on the command line (`ask.py` writes to the same
+tables; its JSON files and `transcripts` rows are retired, and `scripts/import_transcripts.py`
+brought the old ones across). A note is written when a conversation ends, and an abandoned one is
+caught up when the next conversation or check-in begins, so what you say in the app now reaches
+the coach's memory (before, it did not at all). The note is made with no tools and its own short
+prompt: the old command-line summary re-ran the whole coaching loop, with every tool available,
+over the whole snapshot. The coach is shown the last four conversation notes and the last
+check-in, and the Coach screen shows the athlete exactly that list, marked, with Edit and Forget
+on conversation notes. Still to build: coach suggestions as buttons (raise the limit, add a day)
+instead of text.
 
 **Ride limits are built** (`max_ride_min`, `day_max_ride_min`), as the second half of what the UI's
 setup wizard has to ask. The decision that matters is *derive inside, never clamp*: a rung is

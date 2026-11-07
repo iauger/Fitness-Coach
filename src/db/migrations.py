@@ -772,6 +772,27 @@ def _m011_optional_goal_date(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _m012_session_memory(conn: sqlite3.Connection) -> None:
+    """
+    A conversation carries its own summary, so it can be remembered once it is over.
+
+    Summaries lived in two places that did not know about each other: the command line wrote one
+    to `transcripts` and `coaching_log` when it quit, and the app's conversations, stored in
+    `chat_sessions`, were never summarised at all, so anything said to the coach in the app was
+    forgotten by the next conversation.
+
+    `summary` is the note (NULL when nothing was worth carrying forward) and `summarised_at`
+    says when it was written, so a conversation that continues after being summarised is
+    recognisably stale (`summarised_at < updated_at`) and gets summarised again.
+    """
+    # Guarded, like every other step here: the suite replays migrations over a database that
+    # already has the columns, and ALTER TABLE ADD COLUMN has no IF NOT EXISTS.
+    have = {r[1] for r in conn.execute("PRAGMA table_info(chat_sessions)")}
+    for column in ("summary", "summarised_at"):
+        if column not in have:
+            conn.execute(f"ALTER TABLE chat_sessions ADD COLUMN {column} TEXT")
+
+
 # (version, name, step). Append only — never renumber or edit an applied migration.
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "baseline schema as of phase 12B", _m001_baseline),
@@ -785,6 +806,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (9, "tiers table: the ladder as data, with its provenance", _m009_tiers_table),
     (10, "ladder versions, and which one graded each week", _m010_ladder_versions),
     (11, "a plan may have no goal date", _m011_optional_goal_date),
+    (12, "conversations carry their own summary", _m012_session_memory),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)
