@@ -1,7 +1,7 @@
 """
 Run the signal extractor over the gold set and report how it did.
 
-    python scripts/eval_signals.py                  # tests/fixtures/signals_gold.json
+    python scripts/eval_signals.py                  # tests/fixtures/signals_gold.json + data/signals_gold.private.json
     python scripts/eval_signals.py --gold PATH      # e.g. the draft, before it is frozen
     python scripts/eval_signals.py --cases w-burnout,w-fatigue
     python scripts/eval_signals.py --save out.json  # every raw prediction, for reading

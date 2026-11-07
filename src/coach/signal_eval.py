@@ -20,22 +20,24 @@ import json
 from pathlib import Path
 
 GOLD_PATH = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "signals_gold.json"
+# The athlete's own writing, kept under data/ (git-ignored, like the database) and never in tests/.
+PRIVATE_PATH = Path(__file__).resolve().parents[2] / "data" / "signals_gold.private.json"
 BAR = 0.10
 HIGH = 2
 
 
-def load(path: Path = GOLD_PATH, private: bool = True) -> list[dict]:
+def load(path: Path = GOLD_PATH, private: Path | None | bool = True) -> list[dict]:
     """
-    The gold cases, plus the athlete's own writing if `signals_gold.private.json` sits beside them.
+    The gold cases, plus the athlete's own writing if `data/signals_gold.private.json` exists.
 
     The repository is public and an athlete's notes and conversations are not, so the real cases
-    are kept in a git-ignored file and merged in when present. Everything else runs without it.
+    live under data/, which is never committed, and are merged in when present. Everything else
+    runs without them. `private` may be False (none) or a path (somewhere else).
     """
-    path = Path(path)
-    cases = json.loads(path.read_text(encoding="utf-8"))["cases"]
-    extra = path.with_name("signals_gold.private.json")
-    if private and extra.exists():
-        cases += json.loads(extra.read_text(encoding="utf-8"))["cases"]
+    cases = json.loads(Path(path).read_text(encoding="utf-8"))["cases"]
+    extra = PRIVATE_PATH if private is True else private
+    if extra and Path(extra).exists():
+        cases += json.loads(Path(extra).read_text(encoding="utf-8"))["cases"]
     return cases
 
 

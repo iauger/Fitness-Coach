@@ -14,7 +14,7 @@ import pytest
 from src import signals
 from src.coach import signal_eval as ev
 
-GOLD = ev.GOLD_PATH.with_name("signals_gold.draft.json")
+GOLD = ev.GOLD_PATH
 
 
 def p(kind, severity=1, quote="q"):
@@ -135,10 +135,20 @@ def test_the_athletes_own_writing_is_merged_in_when_present_and_never_required(t
     """Mutant: private cases required (a fresh clone fails) or ignored (the real check never runs)."""
     gold = tmp_path / "signals_gold.json"
     gold.write_text(json.dumps({"cases": [{"id": "a"}]}), encoding="utf-8")
-    assert [c["id"] for c in ev.load(gold)] == ["a"]
-    (tmp_path / "signals_gold.private.json").write_text(json.dumps({"cases": [{"id": "b"}]}), encoding="utf-8")
-    assert [c["id"] for c in ev.load(gold)] == ["a", "b"]
     assert [c["id"] for c in ev.load(gold, private=False)] == ["a"]
+    own = tmp_path / "mine.json"
+    own.write_text(json.dumps({"cases": [{"id": "b"}]}), encoding="utf-8")
+    assert [c["id"] for c in ev.load(gold, private=own)] == ["a", "b"]
+    assert [c["id"] for c in ev.load(gold, private=False)] == ["a"]
+    assert [c["id"] for c in ev.load(gold, private=tmp_path / "absent.json")] == ["a"]
+
+
+def test_the_athletes_writing_is_looked_for_under_data_which_is_never_committed():
+    import subprocess
+    assert ev.PRIVATE_PATH.parent.name == "data"
+    ignored = subprocess.run(["git", "check-ignore", "-q", str(ev.PRIVATE_PATH)],
+                             cwd=ev.PRIVATE_PATH.parents[1]).returncode
+    assert ignored == 0
 
 
 def test_nothing_in_the_public_gold_file_is_marked_real(cases):
