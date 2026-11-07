@@ -192,14 +192,25 @@ TOOL_SCHEMAS = [
 
 # ── Tool implementations ───────────────────────────────────────────────────────
 
+# The tool keeps its original vocabulary; the ledger has its own (src/signals.py).
+_LIFE_EVENT_KINDS = {"vacation": "travel", "illness": "illness", "injury": "injury_pain",
+                     "life_stress": "stress", "gear_change": "gear", "other": "other"}
+_LIFE_EVENT_SEVERITY = {"mild": 1, "moderate": 2, "severe": 3}
+
+
 def log_life_event(type: str, start_date: str, end_date: str = None,
                    severity: str = None, note: str = None,
                    logged_via: str = "chat") -> dict:
-    with write_connection() as conn:
-        conn.execute("""
-            INSERT INTO life_events (start_date, end_date, type, severity, note, logged_at, logged_via)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (start_date, end_date, type, severity, note, NOW(), logged_via))
+    """Record a life event. It is a signal like any other; the ledger is the one place they live."""
+    from src import signals
+    try:
+        signals.record(
+            _LIFE_EVENT_KINDS.get(type, "other"), source="coach_tool", source_ref=logged_via,
+            severity=_LIFE_EVENT_SEVERITY.get(severity, 1), quote=note or "",
+            on_date=start_date, start_date=start_date, end_date=end_date,
+            state="resolved" if end_date and end_date <= today_local_iso() else "ongoing")
+    except signals.SignalError as e:
+        return {"error": str(e)}
     end_str = f" to {end_date}" if end_date else ""
     return {"status": "logged", "event": f"{type}{end_str}: {note or ''}"}
 
@@ -283,11 +294,10 @@ def query_history(query_type: str, start_date: str = None, end_date: str = None,
             result = [dict(r) for r in rows]
 
         elif query_type == "life_events":
-            rows = conn.execute("""
-                SELECT start_date, end_date, type, severity, note, logged_via
-                FROM life_events ORDER BY start_date DESC LIMIT ?
-            """, (limit,)).fetchall()
-            result = [dict(r) for r in rows]
+            from src import signals
+            result = [{"date": r["on_date"], "end_date": r["end_date"], "kind": r["kind"],
+                       "topic": r["topic"], "severity": r["severity"], "state": r["state"],
+                       "note": r["quote"]} for r in signals.timeline(limit=limit)]
 
         elif query_type == "subjective_feel":
             rows = conn.execute("""

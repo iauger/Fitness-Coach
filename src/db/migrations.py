@@ -793,6 +793,58 @@ def _m012_session_memory(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE chat_sessions ADD COLUMN {column} TEXT")
 
 
+def _m013_signals(conn: sqlite3.Connection) -> None:
+    """
+    The signal ledger: everything the athlete says about how life and training are going, as
+    dated, graded, append-only mentions.
+
+    `life_events` is folded in (a life event is a signal with a date range) and left in place,
+    unwritten, because an applied step is never edited and nothing here deletes data. The
+    mappings are frozen in this step rather than imported, so a replay years from now builds the
+    same ledger even if the live vocabulary has moved on.
+
+    The only mutable columns are `dismissed_at` / `dismissed_reason`: a dismissal is a soft delete
+    that keeps the row, since a signal the athlete called wrong is the best test case there is.
+    """
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS signals (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            observed_at      TEXT NOT NULL,
+            on_date          TEXT NOT NULL,
+            kind             TEXT NOT NULL,
+            topic            TEXT NOT NULL DEFAULT '',
+            severity         INTEGER NOT NULL CHECK (severity BETWEEN 0 AND 3),
+            state            TEXT NOT NULL DEFAULT 'new',
+            quote            TEXT NOT NULL DEFAULT '',
+            start_date       TEXT,
+            end_date         TEXT,
+            source           TEXT NOT NULL,
+            source_ref       TEXT,
+            extractor_version TEXT,
+            dismissed_at     TEXT,
+            dismissed_reason TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_signals_on_date ON signals(on_date);
+        CREATE INDEX IF NOT EXISTS idx_signals_kind ON signals(kind, topic);
+    """)
+    kind = {"vacation": "travel", "illness": "illness", "injury": "injury_pain",
+            "life_stress": "stress", "gear_change": "gear", "other": "other"}
+    severity = {"mild": 1, "moderate": 2, "severe": 3}
+    rows = conn.execute("SELECT id, start_date, end_date, type, severity, note, logged_at "
+                        "FROM life_events ORDER BY id").fetchall()
+    for r in rows:
+        ref = str(r[0])
+        if conn.execute("SELECT 1 FROM signals WHERE source = 'life_event' AND source_ref = ?",
+                        (ref,)).fetchone():
+            continue                                  # replay: already carried over
+        conn.execute(
+            "INSERT INTO signals (observed_at, on_date, kind, topic, severity, state, quote, "
+            "start_date, end_date, source, source_ref) "
+            "VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, 'life_event', ?)",
+            (r[6], r[1], kind.get(r[3], "other"), severity.get(r[4], 1),
+             "resolved" if r[2] else "ongoing", (r[5] or "")[:280], r[1], r[2], ref))
+
+
 # (version, name, step). Append only — never renumber or edit an applied migration.
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "baseline schema as of phase 12B", _m001_baseline),
@@ -807,6 +859,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (10, "ladder versions, and which one graded each week", _m010_ladder_versions),
     (11, "a plan may have no goal date", _m011_optional_goal_date),
     (12, "conversations carry their own summary", _m012_session_memory),
+    (13, "the signal ledger, with life events folded in", _m013_signals),
 ]
 
 LATEST_VERSION = max(v for v, _, _ in MIGRATIONS)

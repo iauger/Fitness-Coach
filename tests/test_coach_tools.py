@@ -45,6 +45,9 @@ def db(tmp_path, monkeypatch):
                         functools.partial(schema.read_connection, path))
     monkeypatch.setattr(tools, "write_connection",
                         functools.partial(schema.write_connection, path))
+    from src import signals
+    for name in ("read_connection", "write_connection"):
+        monkeypatch.setattr(signals, name, functools.partial(getattr(schema, name), path))
 
     conn = sqlite3.connect(path)
     for i in range(40):
@@ -162,9 +165,9 @@ def test_a_life_event_is_logged(db):
     out = tools.log_life_event("illness", "2026-11-01", note="flu")
     assert out["status"] == "logged"
     conn = sqlite3.connect(db)
-    rows = conn.execute("SELECT type, start_date, note FROM life_events").fetchall()
+    rows = conn.execute("SELECT kind, on_date, quote, source FROM signals").fetchall()
     conn.close()
-    assert rows == [("illness", "2026-11-01", "flu")]
+    assert rows == [("illness", "2026-11-01", "flu", "coach_tool")]
 
 
 def test_subjective_feel_defaults_to_the_athletes_today_not_utc(db):

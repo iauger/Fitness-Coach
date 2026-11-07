@@ -274,8 +274,11 @@ ledger is the first run of that evaluation. The `life_events` row migrates with 
    an "End conversation" control, the command line locked at quit, and a closed one opens read-only
    from the list. Check-ins follow the same rules, so a reply to one is possible until it is ended.
    Each conversation is noted once, at close; the "continued after it was noted" case is gone.
-2. **Ledger, no model.** Table, validation, `record`, the summary, timeline and watch-list
-   queries, the severity maths, the `life_events` migration, `log_life_event` pointed at it.
+2. **Ledger, no model.** *(built)* `src/signals.py` and migration 13: the `signals` table,
+   validation, `record`, `dismiss`/`restore`, thread grouping, the severity maths, the watch list,
+   summary, timeline and digest. `life_events` rows were carried in (the table is left in place,
+   unwritten) and `log_life_event` writes the ledger; the coach's briefing and `query_history`
+   read it. Nothing writes signals from conversations yet: that is phase 3.
 3. **Extractor, gold set, evaluation, backfill.** Replaces the note writer on the same
    triggers. Exit: the bar above.
 4. **Briefing and tool.** Watch list, digest, derived picture, `query_signals`, age-stamped

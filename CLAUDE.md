@@ -104,6 +104,13 @@ the coaching loop on it: that path had every tool available (a request to "summa
 `update_goal`) and re-sent the whole athlete snapshot to produce five bullets. A check-in is not a
 conversation note: it is filed by `finish_checkin`, and the due-status reads it.
 
+## Signals have one writer and one judge
+
+`src/signals.py` is the only place that writes the `signals` table (`record`) and the only place
+that decides how long something stays on the coach's mind (`threads`, `watch_list`). `life_events`
+is retired: it is left in the schema and never written. The ledger is append-only except for the
+dismissal columns, and nothing in it changes a prescription.
+
 ## Read the plan's own ladder, never the module constant
 
 `progression.TIERS` is the built-in ladder and a fallback. The plan's real rungs live in the

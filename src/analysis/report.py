@@ -126,14 +126,10 @@ def _recent_coaching_memory(per_type: dict | None = None) -> list[str]:
 
 
 def _recent_life_events(days: int = 90) -> list[dict]:
-    """Life events from the last N days."""
+    """Signals worth knowing about (level 1+) from the last N days, newest first."""
+    from src import signals
     since = (today_local() - timedelta(days=days)).isoformat()
-    with read_connection() as conn:
-        rows = conn.execute("""
-            SELECT start_date, end_date, type, severity, note
-            FROM life_events WHERE start_date >= ? ORDER BY start_date DESC
-        """, (since,)).fetchall()
-    return [dict(r) for r in rows]
+    return signals.timeline(since=since, min_severity=1, limit=200)
 
 
 def _recent_subjective_feel(days: int = 14) -> list[dict]:
@@ -543,12 +539,12 @@ def coaching_context_text(ctx: dict | None = None) -> str:
 
     life_events = memory.get("life_events", [])
     if life_events:
-        lines += ["", "LIFE EVENTS (last 90 days)"]
+        lines += ["", "THINGS THE ATHLETE HAS MENTIONED (last 90 days; severity 1-3)"]
         for e in life_events:
             end = f" to {e['end_date']}" if e.get("end_date") else ""
-            sev = f" [{e['severity']}]" if e.get("severity") else ""
-            note = f" — {e['note']}" if e.get("note") else ""
-            lines.append(f"  {e['start_date']}{end}  {e['type']}{sev}{note}")
+            topic = f" ({e['topic']})" if e.get("topic") else ""
+            note = f" — {e['quote']}" if e.get("quote") else ""
+            lines.append(f"  {e['on_date']}{end}  {e['kind']}{topic} [{e['severity']}]{note}")
 
     subjective = memory.get("subjective_feel", [])
     if subjective:
