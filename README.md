@@ -140,9 +140,12 @@ briefing: your training data, plus a few short notes about earlier conversations
   a gist of up to 40 words. Every signal has to quote you word for word or it is thrown away.
   A conversation that ended without being read (you closed the tab) is read the next time a
   conversation or check-in begins. Signals are stored silently; nothing in them changes your plan.
-- **The coach is shown the last four conversation notes and the last weekly check-in.** Older
-  notes are kept but not read. Goals, life events and how you feel are recorded separately and
-  are always read.
+- **The coach is shown a short block built from those signals**: what is open and serious (the
+  "watch list"), a one-line summary of the last four weeks, and themes that keep coming back,
+  worked out by code rather than written by a model. It also gets the gists and follow-ups of
+  your last four conversations, each with its age. The last weekly check-in is no longer handed
+  back to it. Anything older it can look up with a tool (`query_signals`), and where what you
+  said disagrees with your data, it is told the data wins.
 - **You can see and correct it.** The Coach screen's "What the coach remembers" lists exactly what
   the coach is given, and lets you edit or forget a conversation note.
 

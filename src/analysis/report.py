@@ -3,12 +3,14 @@ Assembles all analysis signals into a structured coaching context.
 This is what gets passed to Claude as the data payload.
 """
 
+import json
 from datetime import date, timedelta
 from .fitness import current_fitness, ctl_trend, peak_ctl, ctl_history
 from .activities import recent_activities, sport_distribution, weekly_load_by_sport, yearly_volume
 from src.config import config
 from src.planning import outgrown as outgrown_check, plans, tiers_store
 from src import goals as goals_store
+from src import signal_briefing
 from src.planning.constants import plan_name
 from src.planning.outline import from_state as plan_outline
 from src.planning.progression import (
@@ -47,7 +49,12 @@ MEMORY_CHAR_BUDGET = 6000
 # are short (about 600-900 characters), they are the only record of what the athlete said in
 # passing (an ache, a worry, a change at work), and a fortnight of conversations is several of
 # them. One slot meant that talking to the coach twice in a week made it forget the first.
-MEMORY_PER_TYPE = {"checkin": 1, "session_summary": 4}
+#
+# A check-in is no longer memory (0): the coach is not shown last week's check-in. What the athlete
+# said in reply to it is filed as signals and a gist like any conversation, and the due-status
+# reads the check-in row itself. Showing last week's prose back to the coach was the second-best
+# way to keep it from repeating itself, and the worst way to hand it a number that has gone stale.
+MEMORY_PER_TYPE = {"checkin": 0, "session_summary": 4}
 DEFAULT_MEMORY_PER_TYPE = 1
 
 
@@ -107,8 +114,12 @@ def _recent_coaching_memory(per_type: dict | None = None) -> list[str]:
     a trimmed entry is cut at a paragraph boundary with an explicit marker rather than
     silently mid-word.
     """
-    entries = [(r["date"], r["type"], r["content"] or "")
-               for r in coaching_memory_entries(per_type)]
+    found = coaching_memory_entries(per_type)
+    follow = _followups([r["session_id"] for r in found if r["session_id"]])
+    today = today_local().isoformat()
+    entries = [(r["date"] or "", f"{r['type']}, {signal_briefing.age(r['date'], today)}" if r["date"] else r["type"],
+                (r["content"] or "") + "".join(f"\n  Follow-up: {f}" for f in follow.get(r["session_id"], [])))
+               for r in found]
     total = sum(len(c) for _, _, c in entries)
     out = []
     for i, (d, t, content) in enumerate(entries):
@@ -125,11 +136,15 @@ def _recent_coaching_memory(per_type: dict | None = None) -> list[str]:
     return out
 
 
-def _recent_life_events(days: int = 90) -> list[dict]:
-    """Signals worth knowing about (level 1+) from the last N days, newest first."""
-    from src import signals
-    since = (today_local() - timedelta(days=days)).isoformat()
-    return signals.timeline(since=since, min_severity=1, limit=200)
+def _followups(session_ids: list[str]) -> dict[str, list[str]]:
+    """What the athlete committed to, or asked the coach to raise, per conversation."""
+    if not session_ids:
+        return {}
+    with read_connection() as conn:
+        rows = conn.execute(
+            f"SELECT session_id, followups FROM chat_sessions WHERE followups IS NOT NULL "
+            f"AND session_id IN ({','.join('?' * len(session_ids))})", session_ids).fetchall()
+    return {r["session_id"]: json.loads(r["followups"]) for r in rows}
 
 
 def _recent_subjective_feel(days: int = 14) -> list[dict]:
@@ -299,7 +314,7 @@ def build_coaching_context(
             # month — exactly when the next cycle needs it.
             "last_cycle_review": latest_review(),
             "coaching_notes": _recent_coaching_memory(),
-            "life_events": _recent_life_events(days=90),
+            "signals": signal_briefing.block(),
             "subjective_feel": _recent_subjective_feel(days=14),
         },
     }
@@ -537,14 +552,8 @@ def coaching_context_text(ctx: dict | None = None) -> str:
             for para in review["content"].split("\n\n"):
                 lines.append(f"  {para}")
 
-    life_events = memory.get("life_events", [])
-    if life_events:
-        lines += ["", "THINGS THE ATHLETE HAS MENTIONED (last 90 days; severity 1-3)"]
-        for e in life_events:
-            end = f" to {e['end_date']}" if e.get("end_date") else ""
-            topic = f" ({e['topic']})" if e.get("topic") else ""
-            note = f" — {e['quote']}" if e.get("quote") else ""
-            lines.append(f"  {e['on_date']}{end}  {e['kind']}{topic} [{e['severity']}]{note}")
+    if memory.get("signals"):
+        lines += ["", memory["signals"]]
 
     subjective = memory.get("subjective_feel", [])
     if subjective:
@@ -562,7 +571,7 @@ def coaching_context_text(ctx: dict | None = None) -> str:
 
     coaching_notes = memory.get("coaching_notes", [])
     if coaching_notes:
-        lines += ["", "COACHING MEMORY (most recent of each kind, in full)"]
+        lines += ["", "RECENT CONVERSATIONS (a gist of each; what was said is filed above)"]
         for note in coaching_notes:
             # No truncation here. The 300-char cut this replaces was discarding ~85% of every
             # stored entry mid-sentence; _recent_coaching_memory() now enforces a budget at

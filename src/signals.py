@@ -200,11 +200,18 @@ def threads(rows: list[dict], today: str) -> list[dict]:
     return out
 
 
+def all_threads(today: str | None = None) -> list[dict]:
+    """Every thread in the ledger (dismissed rows excluded), graded as of `today`."""
+    return threads(_rows(), today or today_local().isoformat())
+
+
 def watch_list(today: str | None = None) -> list[dict]:
     """Open threads that are serious (level 2+) or recurring, most pressing first."""
-    today = today or today_local().isoformat()
-    shown = [t for t in threads(_rows(), today)
-             if t["open"] and (t["severity"] >= 2 or t["recurring"])]
+    return watch_list_from(all_threads(today))
+
+
+def watch_list_from(grouped: list[dict]) -> list[dict]:
+    shown = [t for t in grouped if t["open"] and (t["severity"] >= 2 or t["recurring"])]
     shown.sort(key=lambda t: (-t["severity"], -t["recurring"], -t["count"],
                               -date.fromisoformat(t["last_seen"]).toordinal()))
     return shown

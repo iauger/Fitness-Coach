@@ -153,3 +153,22 @@ def test_weekly_volume_reports_an_empty_week_rather_than_omitting_it(empty):
     assert week["ride_min"] == 0
     assert week["ride_days"] == 0
     assert week["any_activity"] is False
+
+
+def test_the_briefing_carries_what_the_athlete_has_told_the_coach(empty):
+    """Mutant: the block built and never put in the snapshot. The coach would be told nothing."""
+    import sqlite3
+
+    from src.analysis.report import coaching_context_text
+    from src.clock import today_local_iso
+
+    # Written directly: this fixture's write_connection does not commit.
+    c = sqlite3.connect(empty)
+    c.execute("INSERT INTO signals (observed_at, on_date, kind, topic, severity, state, quote, source) "
+              "VALUES ('x', ?, 'injury_pain', 'left knee', 3, 'new', 'knee is bad', 'manual')",
+              (today_local_iso(),))
+    c.commit()
+    c.close()
+    text = coaching_context_text()
+    assert "WHAT THE ATHLETE HAS TOLD YOU" in text and "injury pain / left knee" in text
+    assert "the data wins" in text

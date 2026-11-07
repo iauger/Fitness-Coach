@@ -10,7 +10,7 @@ conversations not reaching memory at all; and the coach shown only the single la
 import functools
 import json
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -433,8 +433,9 @@ def shown(db, monkeypatch):
     monkeypatch.setattr(report, "read_connection", functools.partial(schema.read_connection, db))
 
 
-def test_the_coach_sees_the_last_four_notes_and_one_check_in(db, shown):
-    """Mutant: one slot each. Talking to the coach twice in a week made it forget the first."""
+def test_the_coach_sees_the_last_four_notes_and_no_check_in(db, shown):
+    """Mutants: one slot each (talking to the coach twice in a week made it forget the first);
+    a check-in slot (last week's prose, with its numbers, handed back to the coach as memory)."""
     for i in range(6):
         log(db, "session_summary", f"2026-11-0{i + 1}", f"note {i}", f"2026-11-0{i + 1}T10:00:00")
     for i in range(3):
@@ -442,7 +443,24 @@ def test_the_coach_sees_the_last_four_notes_and_one_check_in(db, shown):
     out = report._recent_coaching_memory()
     text = "\n".join(out)
     assert [n for n in range(6) if f"note {n}" in text] == [2, 3, 4, 5]
-    assert [n for n in range(3) if f"checkin {n}" in text] == [2]
+    assert "checkin" not in text.replace("session_summary", "")
+
+
+def test_each_note_is_age_stamped_and_carries_its_follow_ups(db, shown, monkeypatch):
+    """Mutants: no age (a note from September reads as news); follow-ups left on the shelf."""
+    monkeypatch.setattr(report, "today_local", lambda: date(2026, 11, 10))
+    sid = make(db, talk(LONG, "ok"))
+    c = sqlite3.connect(db)
+    c.execute("UPDATE chat_sessions SET followups = ? WHERE session_id = ?",
+              ('["raise the knee next week", "decide on the fourth day"]', sid))
+    c.commit(); c.close()
+    c = sqlite3.connect(db)
+    c.execute("INSERT INTO coaching_log (session_id, date, type, content, created_at) "
+              "VALUES (?, '2026-11-07', 'session_summary', 'knee talk', '2026-11-07T10:00:00')", (sid,))
+    c.commit(); c.close()
+    (out,) = report._recent_coaching_memory()
+    assert out.startswith("[2026-11-07 session_summary, 3 days ago] knee talk")
+    assert "Follow-up: raise the knee next week" in out and "Follow-up: decide on the fourth day" in out
 
 
 def test_the_notes_are_shown_oldest_first(db, shown):
@@ -459,4 +477,4 @@ def test_a_kind_not_listed_gets_the_default(db, shown):
 
 
 def test_the_per_type_counts_are_what_the_comment_says():
-    assert report.MEMORY_PER_TYPE == {"checkin": 1, "session_summary": 4}
+    assert report.MEMORY_PER_TYPE == {"checkin": 0, "session_summary": 4}

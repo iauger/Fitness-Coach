@@ -287,8 +287,15 @@ ledger is the first run of that evaluation. The `life_events` row migrates with 
    notes, ride notes and conversations (preview by default). Exit: the bar above on the frozen
    gold set, `tests/fixtures/signals_gold.json` (40 written cases, reviewed and frozen 2026-11-07),
    plus the athlete's own 13 cases in `data/signals_gold.private.json`, which is never committed.
-4. **Briefing and tool.** Watch list, digest, derived picture, `query_signals`, age-stamped
-   gists, drop check-in-as-memory.
+4. **Briefing and tool.** *(built)* `src/signal_briefing.py` renders the watch list (at most 6),
+   the 28-day digest and the long-running themes not already on the watch list (at most 4), under
+   a header that says it is the athlete's own account, filed automatically and possibly wrong,
+   and that the data wins. Conversation gists are age-stamped and carry their follow-ups; the
+   check-in is no longer memory (`MEMORY_PER_TYPE["checkin"]` is 0; the due-status still reads
+   it). `query_signals` (summary, timeline or watch; says how many rows it cut). The athlete's
+   `athlete.notes` stay where they were, as "Life context". The three long prose notes from
+   before the extractor are still among the four shown until newer gists push them out; they can
+   be forgotten on the memory screen.
 5. **Screens.** A timeline with filters and dismissal, a watch strip on the Plan screen, and
    severity as a reason for a check-in prompt. The plan-advisory seam goes in here, displayed and
    not applied.

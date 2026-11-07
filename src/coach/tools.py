@@ -5,6 +5,7 @@ Each tool has a schema (sent to Claude) and an execute function (called locally)
 
 import json
 from datetime import date
+from src import signals
 from src.db.schema import read_connection, write_connection
 from src.clock import today_local, today_local_iso, utc_now_iso
 
@@ -131,6 +132,37 @@ TOOL_SCHEMAS = [
                 },
             },
             "required": ["query_type"],
+        },
+    },
+    {
+        "name": "query_signals",
+        "description": (
+            "Look up what the athlete has told you about how they are doing: illness, injury or "
+            "pain, sleep, fatigue, motivation, work and family demands, travel, how sessions "
+            "felt, nutrition, gear, and wishes for more or less training. Each entry is dated and "
+            "graded 0-3 (0 passing, 1 worth knowing, 2 affecting training, 3 needs action). The "
+            "briefing carries only the watch list and the last four weeks; use this for anything "
+            "longer: 'has the knee come up before?', 'how has sleep been since September?'. "
+            "These are the athlete's words as filed, not measurements."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "view": {
+                    "type": "string",
+                    "enum": ["summary", "timeline", "watch"],
+                    "description": ("summary: one line per kind and topic with counts; timeline: the "
+                                    "individual mentions, newest first; watch: the open threads "
+                                    "worth attention now. Default summary."),
+                },
+                "kind": {"type": "string", "enum": list(signals.KINDS), "description": "Only this kind"},
+                "topic": {"type": "string", "description": "Only topics containing this text, e.g. 'knee'"},
+                "min_severity": {"type": "integer", "minimum": 0, "maximum": 3,
+                                 "description": "Only this severity or worse (default 1)"},
+                "start_date": {"type": "string", "description": "From this date YYYY-MM-DD"},
+                "end_date": {"type": "string", "description": "To this date YYYY-MM-DD"},
+                "limit": {"type": "integer", "description": "Max rows (default 20)"},
+            },
         },
     },
     {
@@ -405,12 +437,33 @@ def update_goal(action: str, description: str = None, target_date: str = None,
     return {"status": "no_op"}
 
 
+def query_signals(view: str = "summary", kind: str = None, topic: str = None,
+                  min_severity: int = 1, start_date: str = None, end_date: str = None,
+                  limit: int = 20) -> dict:
+    """
+    Read the ledger. Says how many rows matched and whether the list was cut, for the reason
+    `query_history` does: a model shown the first 20 of 32 concludes there were 20.
+    """
+    if view == "watch":
+        rows = signals.watch_list()
+        return {"view": view, "total": len(rows), "truncated": len(rows) > limit, "rows": rows[:limit]}
+    filters = dict(since=start_date, until=end_date, kind=kind, topic=topic, min_severity=min_severity)
+    if view == "timeline":
+        rows = signals.timeline(limit=100000, **filters)
+        shown = [{k: r[k] for k in ("on_date", "kind", "topic", "severity", "state", "quote",
+                                    "start_date", "end_date")} for r in rows[:limit]]
+        return {"view": view, "total": len(rows), "truncated": len(rows) > limit, "rows": shown}
+    rows = signals.summary(**filters)
+    return {"view": "summary", "total": len(rows), "truncated": len(rows) > limit, "rows": rows[:limit]}
+
+
 # ── Dispatch ───────────────────────────────────────────────────────────────────
 
 TOOL_FN_MAP = {
     "log_life_event": log_life_event,
     "log_subjective_feel": log_subjective_feel,
     "query_history": query_history,
+    "query_signals": query_signals,
     "calculate_ramp_target": calculate_ramp_target,
     "update_goal": update_goal,
 }
