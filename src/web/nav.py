@@ -14,6 +14,7 @@ import re
 ITEMS = (
     ("Plan", "/app#plan", "plan"),
     ("Coach", "/app#coach", "coach"),
+    ("Signals", "/app#signals", "signals"),
     ("Setup", "/app#setup", "setup"),
     ("Settings", "/app#settings", "settings"),
     ("Ladder", "/app#ladder", "ladder"),

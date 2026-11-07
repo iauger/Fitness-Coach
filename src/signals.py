@@ -118,7 +118,8 @@ def restore(signal_id: int) -> bool:
 
 
 def _rows(*, since: str | None = None, until: str | None = None, kind: str | None = None,
-          topic: str | None = None, min_severity: int = 0, dismissed: bool = False) -> list[dict]:
+          topic: str | None = None, min_severity: int = 0, dismissed: bool = False,
+          conn=None) -> list[dict]:
     where, args = ["severity >= ?"], [min_severity]
     if not dismissed:
         where.append("dismissed_at IS NULL")
@@ -134,10 +135,11 @@ def _rows(*, since: str | None = None, until: str | None = None, kind: str | Non
     if topic:
         where.append("topic LIKE ?")
         args.append(f"%{topic.strip().lower()}%")
-    with read_connection() as conn:
-        found = conn.execute(f"SELECT * FROM signals WHERE {' AND '.join(where)} "
-                             f"ORDER BY on_date, id", args).fetchall()
-    return [dict(r) for r in found]
+    sql = f"SELECT * FROM signals WHERE {' AND '.join(where)} ORDER BY on_date, id"
+    if conn is not None:                  # the caller's own connection (the check-in status uses one)
+        return [dict(r) for r in conn.execute(sql, args).fetchall()]
+    with read_connection() as own:
+        return [dict(r) for r in own.execute(sql, args).fetchall()]
 
 
 # -- threads and the watch list: pure, so the judgement is testable ------------------------------
@@ -200,14 +202,14 @@ def threads(rows: list[dict], today: str) -> list[dict]:
     return out
 
 
-def all_threads(today: str | None = None) -> list[dict]:
+def all_threads(today: str | None = None, conn=None) -> list[dict]:
     """Every thread in the ledger (dismissed rows excluded), graded as of `today`."""
-    return threads(_rows(), today or today_local().isoformat())
+    return threads(_rows(conn=conn), today or today_local().isoformat())
 
 
-def watch_list(today: str | None = None) -> list[dict]:
+def watch_list(today: str | None = None, conn=None) -> list[dict]:
     """Open threads that are serious (level 2+) or recurring, most pressing first."""
-    return watch_list_from(all_threads(today))
+    return watch_list_from(all_threads(today, conn))
 
 
 def watch_list_from(grouped: list[dict]) -> list[dict]:
@@ -248,10 +250,10 @@ def timeline(*, since: str | None = None, until: str | None = None, kind: str | 
 
 
 def summary(*, since: str | None = None, until: str | None = None, kind: str | None = None,
-            topic: str | None = None, min_severity: int = 0) -> list[dict]:
+            topic: str | None = None, min_severity: int = 0, conn=None) -> list[dict]:
     """One line per kind and topic: how often, how bad, when. Worst first."""
     groups: dict[tuple[str, str], dict] = {}
-    for r in _rows(since=since, until=until, kind=kind, topic=topic, min_severity=min_severity):
+    for r in _rows(since=since, until=until, kind=kind, topic=topic, min_severity=min_severity, conn=conn):
         g = groups.setdefault((r["kind"], r["topic"]), {
             "kind": r["kind"], "topic": r["topic"], "mentions": 0, "max_severity": 0,
             "first_seen": r["on_date"], "last_seen": r["on_date"]})
@@ -262,12 +264,12 @@ def summary(*, since: str | None = None, until: str | None = None, kind: str | N
     return sorted(groups.values(), key=lambda g: (-g["max_severity"], -g["mentions"], g["kind"]))
 
 
-def digest(today: str | None = None, days: int = 28) -> str:
+def digest(today: str | None = None, days: int = 28, conn=None) -> str:
     """One line on the recent window. Reads fine when the ledger is empty, which it will be."""
     today = today or today_local().isoformat()
     since = (date.fromisoformat(today) - timedelta(days=days)).isoformat()
     per_kind: dict[str, list[int]] = {}          # kind -> [mentions, peak severity]
-    for g in summary(since=since, until=today, min_severity=1):
+    for g in summary(since=since, until=today, min_severity=1, conn=conn):
         mentions, peak = per_kind.setdefault(g["kind"], [0, 0])
         per_kind[g["kind"]] = [mentions + g["mentions"], max(peak, g["max_severity"])]
     if not per_kind:

@@ -129,6 +129,61 @@ def test_a_hold_is_not_worth_a_prompt(db):
     assert due.checkin_status(db, date(2026, 11, 12))["state"] == "ok"
 
 
+# -- what the athlete has told the coach --------------------------------------------------------
+
+def told(conn, kind, severity, day, topic="", state="new"):
+    conn.execute("INSERT INTO signals (observed_at, on_date, kind, topic, severity, state, quote, source) "
+                 "VALUES ('x', ?, ?, ?, ?, ?, 'q', 'manual')", (day, kind, topic, severity, state))
+
+
+def test_something_needing_action_makes_a_check_in_due_even_when_no_week_has_closed(db):
+    """Mutant: signals not consulted. Someone who has just said they are ill is told "all good"."""
+    checkin(db, "2026-11-09", "2026-11-09T09:00:00")
+    told(db, "illness", 3, "2026-11-11")
+    s = due.checkin_status(db, date(2026, 11, 12))
+    assert s["state"] == "due"
+    assert s["reasons"] == ["You told the coach about illness (needs action) on 2026-11-11."]
+
+
+def test_a_level_two_raised_since_the_last_check_in_counts_and_one_raised_before_it_does_not(db):
+    checkin(db, "2026-11-09", "2026-11-09T09:00:00")
+    told(db, "injury_pain", 2, "2026-11-10", topic="left knee")
+    told(db, "fatigue", 2, "2026-11-05")
+    s = due.checkin_status(db, date(2026, 11, 12))
+    assert s["state"] == "due" and len(s["reasons"]) == 1 and "left knee" in s["reasons"][0]
+
+
+def test_a_level_two_already_discussed_is_not_a_reason_again(db):
+    checkin(db, "2026-11-09", "2026-11-09T09:00:00")
+    told(db, "fatigue", 2, "2026-11-05")
+    assert due.checkin_status(db, date(2026, 11, 12))["state"] == "ok"
+
+
+def test_a_level_three_stays_a_reason_until_it_leaves_the_watch_list(db):
+    checkin(db, "2026-11-09", "2026-11-09T09:00:00")
+    told(db, "burnout", 3, "2026-11-05")
+    assert due.checkin_status(db, date(2026, 11, 12))["state"] == "due"
+
+
+def test_a_resolved_signal_is_no_reason(db):
+    checkin(db, "2026-11-09", "2026-11-09T09:00:00")
+    told(db, "illness", 3, "2026-11-11", state="resolved")
+    assert due.checkin_status(db, date(2026, 11, 12))["state"] == "ok"
+
+
+def test_a_signal_does_not_nag_straight_after_a_check_in(db):
+    checkin(db, "2026-11-12", "2026-11-12T09:00:00")
+    told(db, "illness", 3, "2026-11-12")
+    assert due.checkin_status(db, date(2026, 11, 13))["state"] == "ok"
+
+
+def test_signals_add_to_the_other_reasons_rather_than_replace_them(db):
+    checkin(db, "2026-11-09")
+    told(db, "illness", 3, "2026-11-14")
+    s = due.checkin_status(db, date(2026, 11, 16))
+    assert len(s["reasons"]) == 2 and s["reasons"][0].startswith("A week has closed")
+
+
 # -- block review -----------------------------------------------------------------------------
 
 def cyc(start="2026-11-02", end="2026-11-22", closed=True, weeks=3, plan=None):

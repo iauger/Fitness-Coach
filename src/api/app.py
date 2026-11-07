@@ -30,6 +30,7 @@ from src.api.cache import CACHE
 from src.api.guard import Guard, TOKEN, TOKEN_PATH
 from src.api.chat import router as chat_router
 from src.api.setup import router as setup_router
+from src.api.signals import router as signals_router
 from src.analysis.activities import recent_activities, sport_distribution, weekly_load_by_sport
 from src.analysis.cycle import cycles, cycle_metrics, cycle_for_review, latest_review
 from src.analysis.derive import derived_metrics
@@ -120,6 +121,7 @@ app = FastAPI(
 app.add_middleware(Guard)
 app.include_router(chat_router)
 app.include_router(setup_router)
+app.include_router(signals_router)
 
 
 @app.get(TOKEN_PATH, tags=["ops"])

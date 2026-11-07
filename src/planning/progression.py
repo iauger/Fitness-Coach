@@ -24,7 +24,7 @@ Two deliberate exclusions:
 """
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 # Fractions of the week's target that define each outcome. The 0.90 band is one short session's
 # worth of slack — it also absorbs the 5-8 minute wobble between hard-session variants, since the
@@ -214,7 +214,25 @@ def _may_enter_tier(tier: int, window: list[dict]) -> tuple[bool, str]:
                    f"{STRENGTH_WINDOW} weeks; {held} of {len(window)} held")
 
 
-def next_state(history: list[dict], tier: int) -> Decision:
+def next_state(history: list[dict], tier: int, advisories: list[dict] | None = None) -> Decision:
+    """
+    The gate's decision, then, if any advisory was *applied*, the one adjustment those may make.
+
+    `advisories` come from `planning.advisories.plan_advisories` and default to none, in which case
+    this is `_decide` and nothing else: with nothing applied every decision is what it was before
+    the seam existed (a test pins that over the reference year). The only adjustment today is that
+    an applied `hold` turns an advance into a hold. Nothing marks an advisory applied yet, and an
+    action that raises load is never honoured, whatever it says.
+    """
+    decision = _decide(history, tier)
+    holds = [a for a in advisories or () if a.get("applied") and a.get("action") == "hold"]
+    if holds and decision.verdict == "advance":
+        return replace(decision, tier=tier, verdict="hold",
+                       reason=f"{decision.reason}; held by what you told the coach ({holds[0]['reason']})")
+    return decision
+
+
+def _decide(history: list[dict], tier: int) -> Decision:
     """
     Decide the next week from the decided weeks behind it.
 

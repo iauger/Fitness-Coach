@@ -146,8 +146,12 @@ briefing: your training data, plus a few short notes about earlier conversations
   your last four conversations, each with its age. The last weekly check-in is no longer handed
   back to it. Anything older it can look up with a tool (`query_signals`), and where what you
   said disagrees with your data, it is told the data wins.
-- **You can see and correct it.** The Coach screen's "What the coach remembers" lists exactly what
-  the coach is given, and lets you edit or forget a conversation note.
+- **You can see and correct it.** The Signals screen lists everything filed from your words, with
+  the quote it came from. "That is wrong" sets one aside (kept, with your reason) and the coach
+  stops being told it at once. The Coach screen's "What the coach remembers" lists the
+  conversation gists and lets you edit or forget one. The Plan screen shows what is open, and what
+  it would do to your plan if it were allowed to. It is not: nothing you say changes the plan yet.
+  A serious signal can make a check-in due.
 
 Hard facts (an injury, a goal, a change at work) belong in the structured records, not in a note:
 the notes are a short rolling window, and the oldest fall out of it.

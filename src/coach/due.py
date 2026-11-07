@@ -17,6 +17,9 @@ the most recent closed block is offered (the review compares against the previou
 older skipped one is history). Superseded plans are ignored: the TrainerRoad blocks are not
 something to review now. Before the block closes it says when that will be.
 
+What the athlete has told the coach is a reason too: a signal needing action, or one affecting
+training raised since the last check-in, makes it due.
+
 Each reason is a sentence for the athlete, in the order the page shows them.
 """
 
@@ -74,6 +77,23 @@ def _progression_since(conn, created_after: str | None) -> list[str]:
     return notes
 
 
+def _told_the_coach(conn, today: date, last: date | None) -> list[str]:
+    """
+    Reasons from what the athlete has said: something needing action, or something affecting
+    training that was raised after the last check-in. A check-in is the place to talk it through,
+    and "a week has closed" says nothing about someone who has just told the coach they are ill.
+    """
+    from src import signals
+    out = []
+    for t in signals.watch_list(today.isoformat(), conn):
+        new = last is None or t["last_seen"] > last.isoformat()
+        if t["severity"] >= 3 or (t["severity"] >= 2 and new):
+            name = t["kind"].replace("_", " ") + (f" ({t['topic']})" if t["topic"] else "")
+            out.append(f"You told the coach about {name} ({signals.SEVERITY_LABELS[t['severity']]}) "
+                       f"on {t['last_seen']}.")
+    return out
+
+
 def checkin_status(conn, today: date) -> dict:
     last = _last_checkin(conn)
     last_date, last_created = (last if last else (None, None))
@@ -91,17 +111,18 @@ def checkin_status(conn, today: date) -> dict:
                        f"day{'s' if days_since != 1 else ''} ago).")
 
     events = _progression_since(conn, last_created)
+    told = _told_the_coach(conn, today, last_date)
     too_soon = days_since is not None and days_since < MIN_GAP_DAYS
     if too_soon:
         state, reasons, events = "ok", [], []
     elif last_date is None or (days_since or 0) >= OVERDUE_DAYS or closed >= OVERDUE_WEEKS:
         state = "overdue"
-    elif closed or events:
+    elif closed or events or told:
         state = "due"
     else:
         state = "ok"
     if state != "ok":
-        reasons += events
+        reasons += events + told
 
     return {"kind": "checkin", "state": state, "reasons": reasons,
             "last_date": last_date.isoformat() if last_date else None,

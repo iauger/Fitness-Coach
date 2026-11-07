@@ -255,6 +255,7 @@ def build_coaching_context(
     # computed from the tail of it. Passing 7 here made those strings inaccurate (Session 14).
     flags = recovery_flags(days=30)
 
+    rolling = _rolling_plan()
     plan_adherence = compliance_summary(weeks=8)
     recent_planned = recent_planned_workouts(days=14)
 
@@ -305,7 +306,7 @@ def build_coaching_context(
             "recent_planned_workouts": recent_planned,
             # None when today falls outside any seeded plan — see seed_training_plan.py.
             "plan_position": plan_summary(),
-            "rolling_plan": _rolling_plan(),
+            "rolling_plan": rolling,
             "earlier_week_summaries": _earlier_week_summaries(),
         },
         "memory": {
@@ -314,7 +315,7 @@ def build_coaching_context(
             # month — exactly when the next cycle needs it.
             "last_cycle_review": latest_review(),
             "coaching_notes": _recent_coaching_memory(),
-            "signals": signal_briefing.block(),
+            "signals": signal_briefing.block(week_type=(rolling or {}).get("week_type")),
             "subjective_feel": _recent_subjective_feel(days=14),
         },
     }

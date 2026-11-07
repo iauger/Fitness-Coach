@@ -52,7 +52,7 @@ def test_the_header_tells_the_coach_how_far_to_trust_it():
 def test_a_watch_line_says_what_how_bad_how_often_and_how_long_ago(db):
     put(severity=2, day="2026-11-06", quote="knee aches on climbs")
     put(severity=2, day="2026-11-08", quote="knee still aches on climbs")
-    (line,) = [ln for ln in sb.block(TODAY).splitlines() if "left knee" in ln]
+    (line,) = [ln for ln in sb.block(TODAY).splitlines() if "left knee" in ln and "mention" in ln]
     for part in ("injury pain / left knee", "affecting training", "2 mentions", "2026-11-06 to 2026-11-08",
                  "last 2 days ago", '"knee still aches on climbs"'):
         assert part in line
@@ -66,7 +66,7 @@ def test_a_thread_that_flared_says_it_is_rising(db):
 
 def test_a_long_quote_is_cut(db):
     put(severity=3, quote="x" * 300)
-    line = next(ln for ln in sb.block(TODAY).splitlines() if "left knee" in ln)
+    line = next(ln for ln in sb.block(TODAY).splitlines() if "left knee" in ln and "mention" in ln)
     assert "x" * sb.QUOTE_CHARS in line and "x" * (sb.QUOTE_CHARS + 1) not in line and '..."' in line
 
 
@@ -74,7 +74,7 @@ def test_the_watch_list_is_bounded_and_worst_first(db):
     for i, kind in enumerate(["stress", "fatigue", "poor_sleep", "nutrition", "gear", "travel", "work_event", "illness"]):
         put(kind=kind, topic="", severity=2, day=f"2026-11-0{i + 1}")
     put(kind="burnout", topic="", severity=3, day="2026-10-20")
-    lines = [ln for ln in sb.block(TODAY).splitlines() if ln.startswith("  - ")]
+    lines = [ln for ln in sb.block(TODAY).splitlines() if ln.startswith("  - ") and "mention" in ln]
     assert len(lines) == sb.WATCH_MAX and lines[0].startswith("  - burnout")
 
 
@@ -190,3 +190,24 @@ def test_the_watch_view_is_the_watch_list(db):
 
 def test_a_bad_argument_is_an_error_result_not_a_crash(db):
     assert "error" in call(view="timeline", bogus=1)
+
+
+# -- what the signals would do to the plan ------------------------------------------------------
+
+def test_the_briefing_says_what_the_signals_would_do_and_that_it_has_not_happened(db):
+    put(kind="injury_pain", topic="left knee", severity=3, day="2026-11-09")
+    text = sb.block(TODAY)
+    assert "NOT applied" in text and "must not tell the athlete it has changed" in text
+    assert "injury pain (left knee): would ease the week." in text
+
+
+def test_a_re_entry_week_is_passed_through_to_the_advisories(db):
+    for d in ("2026-11-02", "2026-11-05"):
+        put(kind="workouts_too_easy", topic="", severity=1, day=d)
+    assert "consider asking for more" in sb.block(TODAY, week_type="normal")
+    assert "consider asking for more" not in sb.block(TODAY, week_type="reentry")
+
+
+def test_no_advisory_section_when_nothing_argues_for_one(db):
+    put(kind="travel", topic="", severity=2, day="2026-11-09")
+    assert "NOT applied" not in sb.block(TODAY)

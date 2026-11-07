@@ -18,6 +18,7 @@ from datetime import date
 
 from src import signals
 from src.clock import today_local
+from src.planning.advisories import plan_advisories
 
 WATCH_MAX = 6
 THEMES_MAX = 4
@@ -73,16 +74,36 @@ def themes(all_threads: list[dict], today: str) -> list[dict]:
     return sorted(out, key=lambda t: (-t["count"], t["first_seen"]))[:THEMES_MAX]
 
 
-def block(today: str | None = None) -> str:
+def advisory_lines(advisories: list[dict]) -> list[str]:
+    """What the signals would do to the plan, and a plain statement that they have not."""
+    if not advisories:
+        return []
+    return (["  If these were allowed to change the plan they would (NOT applied; the plan is unchanged, "
+             "and you must not tell the athlete it has changed):"]
+            + [f"  - {a['reason']}" for a in advisories])
+
+
+def strip(today: str, week_type: str | None = None, conn=None) -> dict:
+    """The same picture for the Plan screen: the watch list and what it would do, not applied."""
+    watch = signals.watch_list(today, conn)
+    return {"watch": [{**t, "label": signals.SEVERITY_LABELS[t["severity"]], "age": age(t["last_seen"], today)}
+                      for t in watch[:WATCH_MAX]],
+            "advisories": plan_advisories(watch, {"week_type": week_type}),
+            "digest": signals.digest(today, conn=conn)}
+
+
+def block(today: str | None = None, week_type: str | None = None) -> str:
     today = today or today_local().isoformat()
     every = signals.all_threads(today)
-    watch = signals.watch_list_from(every)[:WATCH_MAX]
+    full_watch = signals.watch_list_from(every)
+    watch = full_watch[:WATCH_MAX]
     lines = [HEADER]
     if watch:
         lines.append("  Watch list (most pressing first):")
         lines += [watch_line(t, today) for t in watch]
     else:
         lines.append("  Watch list: nothing open.")
+    lines += advisory_lines(plan_advisories(full_watch, {"week_type": week_type}))
     lines.append(f"  {signals.digest(today)}")
     picture = themes(every, today)
     if picture:

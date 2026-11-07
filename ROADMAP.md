@@ -296,9 +296,14 @@ ledger is the first run of that evaluation. The `life_events` row migrates with 
    `athlete.notes` stay where they were, as "Life context". The three long prose notes from
    before the extractor are still among the four shown until newer gists push them out; they can
    be forgotten on the memory screen.
-5. **Screens.** A timeline with filters and dismissal, a watch strip on the Plan screen, and
-   severity as a reason for a check-in prompt. The plan-advisory seam goes in here, displayed and
-   not applied.
+5. **Screens.** *(built)* A Signals screen (filters by kind, severity and topic; "that is wrong" sets
+   a signal aside with a reason, and Restore undoes it), a watch strip on the Plan screen, and
+   "you told the coach about..." as a reason a check-in is due (a level 3, or a level 2 raised
+   since the last check-in). The plan-advisory seam is `planning/advisories.py`: shown on the Plan
+   screen and in the briefing as "if these could change your plan (they do not)". `next_state`
+   takes `advisories`; with none, or none applied, every decision over the reference year is
+   pinned identical to the gate's own. Only an applied `hold` is honoured, and nothing marks one
+   applied yet.
 6. **Later.** Let a first, easier-only advisory act on the plan (see the seam); correlate signals
    with HRV and load; feed `workouts_too_easy` into the ladder's outgrown check; ingest ride notes
    as they sync.

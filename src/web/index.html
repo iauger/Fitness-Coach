@@ -114,6 +114,22 @@
   .act .hint { color:var(--sub); font-size:13px; margin:8px 0 0; }
   pre.joblog { margin:8px 0 0; padding:8px 10px; background:#0b1220; border-radius:6px; font:12px ui-monospace, monospace;
                color:#d1d5db; overflow-x:auto; max-height:11em; }
+  .sev { font-size:12px; padding:1px 9px; border-radius:10px; border:1px solid var(--border); color:var(--sub); white-space:nowrap; }
+  .sev.s1 { border-color:var(--accent); color:var(--accent); } .sev.s2 { border-color:var(--warn); color:var(--warn); }
+  .sev.s3 { border-color:var(--bad); color:var(--bad); }
+  .sig { border-top:1px solid var(--border); padding:10px 0; }
+  .sig:first-child { border-top:0; }
+  .sig.gone { opacity:.6; }
+  .sighead { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; font-size:14px; }
+  .sighead .when { color:var(--sub); font-size:13px; }
+  .sigq { margin:4px 0 0; font-size:14px; overflow-wrap:anywhere; }
+  .sigmeta { color:var(--sub); font-size:12px; margin-top:2px; }
+  .sigfilters { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:8px 12px; align-items:end; margin-bottom:12px; }
+  .sigfilters label { font-size:13px; color:var(--sub); }
+  .sigfilters label.chk { display:flex; gap:8px; align-items:center; padding-bottom:8px; }
+  .sigfilters input[type=checkbox] { width:auto; }
+  .adv { margin:6px 0 0; padding:8px 10px; background:#0b1220; border-radius:6px; font-size:13px; color:var(--sub); }
+  .adv b { color:var(--text); }
   .hero { display:flex; flex-wrap:wrap; gap:8px 24px; align-items:baseline; }
   .hero .big { font-size:28px; font-weight:700; }
   .hero .sub { color:var(--sub); }
@@ -179,6 +195,7 @@
   <nav aria-label="Main">
     <a href="#plan" data-view="plan">Plan</a>
     <a href="#coach" data-view="coach">Coach</a>
+    <a href="#signals" data-view="signals">Signals</a>
     <a href="#setup" data-view="setup">Setup</a>
     <a href="#settings" data-view="settings">Settings</a>
     <a href="#ladder" data-view="ladder">Ladder</a>
@@ -516,6 +533,17 @@ async function planView() {
   let banners = [];
   try { const d = await api("GET", "/api/chat/due"); banners = dueBanners(d); setNavBadge(d.attention); } catch (e) { /* the plan stands without it */ }
 
+  const sg = o.signals || {watch: [], advisories: []};
+  const strip = (sg.watch.length || sg.advisories.length) ? h("div", {class: "card"}, h("h3", {}, "What you have told the coach"),
+    h("p", {class: "hint"}, "Open items from your own words. They are advice to the coach, not changes to your plan."),
+    sg.watch.map(x => h("div", {class: "sig"},
+      h("div", {class: "sighead"}, h("span", {class: "sev s" + x.severity}, x.label), h("b", {}, x.kind.replace(/_/g, " ") + (x.topic ? " · " + x.topic : "")),
+        h("span", {class: "when"}, x.count + " mention" + (x.count === 1 ? "" : "s") + ", last " + x.age)),
+      x.quote ? h("p", {class: "sigq"}, "“" + x.quote + "”") : null)),
+    sg.advisories.length ? h("div", {class: "adv"}, h("b", {}, "If these could change your plan (they do not): "),
+      sg.advisories.map(a => a.label).join("; ") + ".") : null,
+    h("div", {class: "inline-actions"}, h("a", {href: "#signals", class: "btnlink"}, h("button", {type: "button"}, "See everything you have told the coach")))) : null;
+
   const hero = h("div", {class: "card"},
     h("div", {class: "hero"}, h("span", {class: "big"}, "T" + t.index + " · " + t.hours + "h a week"),
       h("span", {class: "sub"}, (o.block || "Plan") + ", week " + o.week_in_block +
@@ -578,8 +606,67 @@ async function planView() {
 
   main.replaceChildren(h("h2", {}, o.plan_name),
     h("p", {class: "lede"}, "Where you are, what moves you, and what is next."),
-    ...banners, hero, week, horizon, outline, recent, goals);
+    ...banners, strip, hero, week, horizon, outline, recent, goals);
 }
+
+// ---- signals ------------------------------------------------------------------------------------
+// Everything the athlete has told the coach, filed from their own words. A wrong one is set aside
+// (kept, with a reason) rather than deleted, and the coach stops being told it at once.
+const SOURCE = {conversation: "conversation", feel_note: "feel log", ride_note: "ride note", life_event: "life event",
+                coach_tool: "told to the coach", manual: "entered by hand"};
+async function signalsView() {
+  const kind = h("select", {"aria-label": "Kind"}, h("option", {value: ""}, "Any kind"));
+  const sev = h("select", {"aria-label": "Severity"}, ...[["0", "Any severity"], ["1", "Worth knowing and up"], ["2", "Affecting training and up"], ["3", "Needs action"]]
+    .map(([v, l]) => h("option", {value: v}, l)));
+  const topic = h("input", {type: "text", "aria-label": "Topic contains", placeholder: "e.g. knee"});
+  const gone = h("input", {type: "checkbox", id: "sigGone"});
+  const list = h("div", {}), digest = h("p", {class: "hint"}), cut = h("p", {class: "hint"});
+  let kindsLoaded = false;
+  async function load() {
+    const q = new URLSearchParams({min_severity: sev.value, dismissed: gone.checked ? "true" : "false"});
+    if (kind.value) q.set("kind", kind.value); if (topic.value.trim()) q.set("topic", topic.value.trim());
+    let d; try { d = await api("GET", "/api/signals?" + q); } catch (e) { list.replaceChildren(h("div", {class: "msg bad", role: "alert"}, e.message)); return; }
+    if (!kindsLoaded) { kind.append(...d.kinds.map(k => h("option", {value: k}, k.replace(/_/g, " ")))); kindsLoaded = true; }
+    digest.textContent = d.digest;
+    cut.textContent = d.truncated ? "Showing the newest " + d.rows.length + " of " + d.total + "." : "";
+    list.replaceChildren(...(d.rows.length ? d.rows.map(row) : [h("p", {class: "hint"},
+      "Nothing here. Signals are filed when a conversation ends, from what you said about how you are.")]));
+  }
+  function row(r) {
+    const msg = h("div", {}), actions = h("div", {class: "inline-actions"});
+    if (r.dismissed_at) {
+      const back = h("button", {type: "button"}, "Restore");
+      back.addEventListener("click", async () => { try { await api("POST", "/api/signals/" + r.id + "/restore"); await load(); } catch (e) { msg.replaceChildren(h("div", {class: "msg bad", role: "alert"}, e.message)); } });
+      actions.append(back);
+    } else {
+      const set = h("button", {type: "button"}, "That is wrong");
+      set.addEventListener("click", () => {
+        const why = h("input", {type: "text", placeholder: "Why? (optional)", "aria-label": "Reason"});
+        const ok = h("button", {class: "primary", type: "button"}, "Set aside"), no = h("button", {type: "button"}, "Cancel");
+        ok.addEventListener("click", async () => { try { await api("POST", "/api/signals/" + r.id + "/dismiss", {reason: why.value}); await load(); } catch (e) { msg.replaceChildren(h("div", {class: "msg bad", role: "alert"}, e.message)); } });
+        no.addEventListener("click", () => actions.replaceChildren(set));
+        actions.replaceChildren(why, ok, no); why.focus();
+      });
+      actions.append(set);
+    }
+    return h("div", {class: "sig" + (r.dismissed_at ? " gone" : "")},
+      h("div", {class: "sighead"}, h("span", {class: "sev s" + r.severity}, SOURCE_SEV[r.severity]), h("b", {}, r.kind.replace(/_/g, " ") + (r.topic ? " · " + r.topic : "")),
+        h("span", {class: "when"}, r.on_date + (r.end_date ? " to " + r.end_date : "") + " · " + r.state)),
+      r.quote ? h("p", {class: "sigq"}, "“" + r.quote + "”") : null,
+      h("div", {class: "sigmeta"}, "From your " + (SOURCE[r.source] || r.source) + (r.dismissed_at ? " · set aside" + (r.dismissed_reason ? ": " + r.dismissed_reason : "") : "")),
+      actions, msg);
+  }
+  for (const c of [kind, sev, gone]) c.addEventListener("change", load);
+  topic.addEventListener("input", () => { clearTimeout(topic._t); topic._t = setTimeout(load, 250); });
+  main.replaceChildren(h("h2", {}, "What you have told the coach"),
+    h("p", {class: "lede"}, "Filed automatically from your own words when a conversation ends, so it can be wrong. Set aside anything that is, and the coach stops being told it."),
+    h("div", {class: "card"}, digest,
+      h("div", {class: "sigfilters"}, h("label", {}, "Kind", kind), h("label", {}, "Severity", sev), h("label", {}, "Topic", topic),
+        h("label", {class: "chk", for: "sigGone"}, gone, "Include set aside")),
+      list, cut));
+  await load();
+}
+const SOURCE_SEV = ["passing", "worth knowing", "affecting training", "needs action"];
 
 // ---- check-in status, shown wherever you are ----------------------------------------------------
 // A count on the Coach tab, and a card on the Plan screen, whenever the weekly check-in or the
@@ -974,7 +1061,7 @@ async function ladderView() {
 }
 
 // ---- routing ----------------------------------------------------------------------------------
-const views = {plan: planView, coach: coachView, setup: setupView, settings: settingsView, ladder: ladderView};
+const views = {plan: planView, coach: coachView, signals: signalsView, setup: setupView, settings: settingsView, ladder: ladderView};
 async function route() {
   const name = views[(location.hash || "#plan").slice(1)] ? (location.hash || "#plan").slice(1) : "plan";
   const view = views[name];

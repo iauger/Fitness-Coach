@@ -13,6 +13,7 @@ from datetime import date, timedelta
 from src.analysis.activities import week_volume
 from src.analysis.dates import monday_of
 from src import goals as goals_store
+from src import signal_briefing
 from src.planning import plans, tiers_store
 from src.planning.constants import plan_name
 from src.planning.outline import from_state as plan_outline
@@ -91,6 +92,7 @@ def overview(conn, today: date) -> dict:
         "sessions": sessions(conn, today),
         "frozen_before": (today + timedelta(days=FREEZE_DAYS)).isoformat(),
         "outline": outline,
+        "signals": signal_briefing.strip(today.isoformat(), state["week_type"], conn),
         "goals": [{"description": d, "date": when.isoformat(), "priority": p,
                    "days": (when - today).days} for d, when, p in goals_store.dated(conn)],
     }
