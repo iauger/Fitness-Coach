@@ -183,6 +183,107 @@ touches TSS — a choice made for a different reason that turned out to insulate
 
 ---
 
+## The coach's signal ledger: agreed plan, 2026-11-07
+
+Not built. Agreed in conversation, written here so the build can be checked against it.
+
+**Why.** The coach remembers through short prose notes, which are hard to query, restate numbers
+that go stale, and fall out of a four-note window (a knee that ached in week 1 is gone by week
+3). Replace them, as the main memory, with a **ledger of signals**: every thing the athlete says
+about illness, stress, work, motivation, nutrition, how training feels, and so on, cheaply
+catalogued against a timestamp, so the coach is briefed with a short watch list and can pull
+longer ranges through a tool that is SQL, not a model call.
+
+**Decisions taken**
+
+- **Mentions only.** One append-only table of mentions; a "thread" (the same knee issue over
+  three weeks) is the same kind and topic grouped within a few weeks, worked out when read.
+  Revisit with a thread table only if reads prove slow or awkward.
+- **`life_events` is folded in.** Its rows migrate into the ledger (they are signals with a date
+  range) and `log_life_event` writes there. `subjective_feel` stays separate: it is a numeric
+  time series, not events.
+- **Extraction after the conversation**, one cheap call, not the coach logging as it goes.
+- **Conversations lock when closed.** A conversation ends when the athlete ends it (or starts a
+  new one, or quits the command line), or after it has been idle too long (60 minutes proposed).
+  A closed one is read-only: it can be reopened to read, never continued, and asking in it is
+  refused with "start a new one". A check-in is therefore a discrete event, not an ongoing
+  thread. Extraction runs once, at close; there is no re-summarising a conversation that
+  "continued", so the `summarised_at < updated_at` staleness rule goes. A failed extraction is
+  retried on the next catch-up.
+- **Signals are stored silently**, no per-conversation confirmation. They are visible and
+  correctable afterwards on the memory screen. A dismissal is a soft delete with a reason (the one
+  mutable column), so dismissals become known-wrong examples for the validation set.
+- **Advisory only.** A signal can raise a check-in prompt and sit prominently in the briefing; it
+  does not change a prescription by itself. A mis-graded "burnout" must not reshape the plan.
+- **No model-written "about you" blob.** The always-shown picture of the athlete is derived by
+  code from long-running threads, plus the athlete's own `athlete.notes` from the config.
+
+**The kinds** (a text column validated in code, so adding one is not a migration; a kind the
+model invents becomes `other`, and the rate of `other` is how we know the list needs a change):
+illness, injury_pain, poor_sleep, fatigue; workouts_too_hard, workouts_too_easy,
+missed_sessions, feeling_strong; motivation_low, motivation_high, burnout; work_event,
+family_caregiving, travel, schedule_change, stress; wants_more, wants_less, goal_change,
+preference; nutrition, gear; other. A free-text `topic` sits beside the kind ("left knee",
+"night shifts") so the list stays short.
+
+**The row.** Observed-at (UTC) and the athlete's local date it refers to (which can be earlier
+than the conversation: "I was ill last week"); kind; topic; severity 0-3; state (new, ongoing,
+improving, resolved); a short quote; optional start and end dates for episodes; where it came
+from (conversation and message, check-in note, activity note, feel log, migrated life event,
+manual); the extractor version; and the dismissal columns.
+
+**Severity.** 0 a passing mention; 1 worth knowing; 2 affecting training; 3 needs action now
+(illness, injury, burnout language). The model grades against that rubric and **code adjusts
+it**: the same kind and topic three times in two weeks goes up a level (capped at 3); an
+unrepeated level 2 drops off the watch list after 21 days unless its state is ongoing; a level 3
+stays until it is resolved, dismissed, or 28 days silent. Level 3 and recurring items sort first.
+
+**The extractor.** One call per closed conversation (and per check-in note), Haiku, forced JSON.
+It sees only the athlete's own words plus the currently open threads, so it can mark one
+"ongoing" or "resolved" instead of duplicating it. **Every signal must carry a quote that appears
+word for word in the athlete's text**; one that does not is discarded, the cheap guard against
+invented signals. It also returns follow-ups the athlete committed to and a gist of at most 40
+words, which replace the long prose note.
+
+**What the coach is shown.** The watch list (open threads at severity 2 or more, or recurring,
+with first seen, last seen and count); a one-line 28-day digest; the derived athlete picture; and
+the conversation gists and follow-ups, age-stamped, with an instruction that when the data
+disagrees with a note, the data wins. A `query_signals` tool (by kind, topic, severity and range,
+as a summary or a timeline) for anything longer. Check-in text stops being memory except its
+follow-ups. About 400 tokens in the briefing.
+
+**Validation, which is the point of the backfill.** The real corpus is small: 4 ride notes, 6
+feel notes, 1 life event, 2 weekly narratives and 5 conversations (3 real, 2 test), about 18
+texts. Those, plus about 20 written cases for the kinds the real data lacks (burnout, nutrition,
+illness, work event, too hard...), are labelled once and reviewed by the athlete in a single
+pass, then frozen as `tests/fixtures/signals_gold.json`. `scripts/eval_signals.py` runs the
+extractor over it and reports precision and recall by kind and lists every false positive. It is
+on demand, not in the default suite, because it costs money and a model is not deterministic;
+everything else (validation, severity maths, threads, queries, locking) is ordinary
+deterministic tests with mutation checks. Bar to start trusting it: no kind at severity 2 or 3
+with more than 10% false positives on the gold set. The backfill of the real texts into the
+ledger is the first run of that evaluation. The `life_events` row migrates with no model call.
+
+**Phases, each useful on its own**
+
+1. **Locking.** Closed conversations are read-only, idle auto-close, the "End conversation"
+   control, the command line locked at quit. Small, and it simplifies the memory writer.
+2. **Ledger, no model.** Table, validation, `record`, the summary, timeline and watch-list
+   queries, the severity maths, the `life_events` migration, `log_life_event` pointed at it.
+3. **Extractor, gold set, evaluation, backfill.** Replaces the note writer on the same
+   triggers. Exit: the bar above.
+4. **Briefing and tool.** Watch list, digest, derived picture, `query_signals`, age-stamped
+   gists, drop check-in-as-memory.
+5. **Screens.** A timeline with filters and dismissal, a watch strip on the Plan screen, and
+   severity as a reason for a check-in prompt.
+6. **Later, optional.** Correlate signals with HRV and load; feed `workouts_too_easy` into the
+   ladder's outgrown check; ingest ride notes as they sync.
+
+**Risks.** "Burnout" and "illness" are health-adjacent: the coach states them as observations
+("you mentioned..."), never as diagnoses, and every signal is visible and deletable. With a few
+conversations a week the ledger is thin for months, so the digest must read fine when it is
+nearly empty. Recall is the hard part: offhand phrasing is what the gold set exists to test.
+
 ## Historical: state as of Session 16, 2026-09-02
 
 *Superseded by the section above. Parts of this describe integrations since retired — the
