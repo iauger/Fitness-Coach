@@ -127,6 +127,11 @@ def _wellness_html(w: dict | None) -> str:
 
 
 def _activity_html(a: dict) -> str:
+    """
+    One logged activity on a day cell. The name is the athlete's, or whoever named the event on
+    Zwift or Strava, so it is escaped: this page is served from the same origin as the API and
+    can read its token, and a name carrying markup would otherwise run there.
+    """
     color = _sport_color(a["type"])
     dur = _fmt_hms(a["moving_time"])
     bits = []
@@ -141,7 +146,7 @@ def _activity_html(a: dict) -> str:
         <div class="activity" style="border-left-color:{color}">
           <div class="activity-dur">{dur}</div>
           <div class="activity-detail">{detail}</div>
-          <div class="activity-name">{a["name"] or a["type"] or "Activity"}</div>
+          <div class="activity-name">{escape(str(a["name"] or a["type"] or "Activity"))}</div>
         </div>"""
 
 
@@ -169,7 +174,7 @@ def _planned_html(p: dict) -> str:
         detail = "planned"
     return f"""
         <div class="planned" style="border-color:{color}; color:{color}">
-          Plan: {p["name"]} ({detail}){pct}
+          Plan: {escape(str(p["name"]))} ({detail}){pct}
         </div>"""
 
 

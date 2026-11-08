@@ -238,6 +238,13 @@ async function api(method, path, body) {
 }
 
 // ---- tiny DOM helper: text nodes only, never an HTML string, so a config value cannot inject markup
+// The one way a screen is painted. `replaceChildren(null)` does not skip the null, it writes the
+// word "null" into the page, and half the screens have a card that is absent when empty (no goals,
+// nothing on the watch list). `h()` drops nulls; this extends that to the screen itself.
+function show(parent, ...kids) {
+  parent.replaceChildren(...kids.flat(Infinity).filter(k => k != null));
+}
+
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -327,10 +334,10 @@ function rowAction(c) {
 }
 
 async function setupView() {
-  main.replaceChildren(h("p", {class: "lede"}, "Checking…"));
+  show(main, h("p", {class: "lede"}, "Checking…"));
   const s = await api("GET", "/api/setup");
   const firstOpen = s.checks.findIndex(c => !c.ok && c.blocking);
-  main.replaceChildren(
+  show(main, 
     h("h2", {}, s.ready ? "You are set up" : "Finish setting up"),
     h("p", {class: "lede"}, s.ready
       ? "Everything the plan needs is in place. Anything marked below is worth a look, not a blocker."
@@ -399,7 +406,7 @@ function goalsCard(initial) {
 
 // ---- settings ---------------------------------------------------------------------------------
 async function settingsView() {
-  main.replaceChildren(h("p", {class: "lede"}, "Loading…"));
+  show(main, h("p", {class: "lede"}, "Loading…"));
   const {values: v} = await api("GET", "/api/settings");
   const goalsData = await api("GET", "/api/goals");
   const limits = v["plan.day_max_ride_min"] || {};
@@ -475,7 +482,7 @@ async function settingsView() {
     } finally { save.disabled = false; }
   });
 
-  main.replaceChildren(
+  show(main, 
     h("h2", {}, "Settings"),
     h("p", {class: "lede"}, "These write to config/athlete.yaml. A change that does not fit is refused with the reason, and nothing is saved."),
     h("div", {class: "card"}, h("h3", {}, "You"),
@@ -520,7 +527,7 @@ function why(o) {
 }
 
 async function planView() {
-  main.replaceChildren(h("p", {class: "lede"}, "Loading…"));
+  show(main, h("p", {class: "lede"}, "Loading…"));
   let o;
   try { o = await api("GET", "/api/plan/overview"); }
   catch (e) {
@@ -528,7 +535,7 @@ async function planView() {
     o = {ready: false, reason: "The plan cannot be shown yet (" + e.message + "). Setup will say what is missing."};
   }
   if (!o.ready) {
-    main.replaceChildren(h("h2", {}, "Plan"), h("div", {class: "msg note"}, o.reason),
+    show(main, h("h2", {}, "Plan"), h("div", {class: "msg note"}, o.reason),
       h("a", {href: "#setup", class: "btnlink"}, h("button", {class: "primary"}, "Finish setting up")));
     return;
   }
@@ -607,7 +614,7 @@ async function planView() {
     o.goals.map(x => h("div", {class: "goal"}, h("span", {}, x.description, h("span", {class: "tag"}, x.priority)),
       h("span", {class: "detail"}, fmt(x.date) + " " + parts(x.date).y + " · " + Math.round(x.days / 7) + " weeks")))) : null;
 
-  main.replaceChildren(h("h2", {}, o.plan_name),
+  show(main, h("h2", {}, o.plan_name),
     h("p", {class: "lede"}, "Where you are, what moves you, and what is next."),
     ...banners, strip, hero, week, horizon, outline, recent, goals);
 }
@@ -661,7 +668,7 @@ async function signalsView() {
   }
   for (const c of [kind, sev, gone]) c.addEventListener("change", load);
   topic.addEventListener("input", () => { clearTimeout(topic._t); topic._t = setTimeout(load, 250); });
-  main.replaceChildren(h("h2", {}, "What you have told the coach"),
+  show(main, h("h2", {}, "What you have told the coach"),
     h("p", {class: "lede"}, "Filed automatically from your own words when a conversation ends, so it can be wrong. Set aside anything that is, and the coach stops being told it."),
     h("div", {class: "card"}, digest,
       h("div", {class: "sigfilters"}, h("label", {}, "Kind", kind), h("label", {}, "Severity", sev), h("label", {}, "Topic", topic),
@@ -759,13 +766,13 @@ async function streamAsk(body, on) {
 }
 
 async function coachView() {
-  main.replaceChildren(h("p", {class: "lede"}, "Loading…"));
+  show(main, h("p", {class: "lede"}, "Loading…"));
   const st = await api("GET", "/api/chat/status");
   const head = [h("h2", {}, "Coach"), h("p", {class: "lede"}, st.available
     ? "Ask about your week, your plan, or how you are feeling. It reads your training data and can record things you tell it."
     : "The coach is not available right now.")];
   if (!st.available) {
-    main.replaceChildren(...head, h("div", {class: "msg note"}, !st.enabled
+    show(main, ...head, h("div", {class: "msg note"}, !st.enabled
       ? "It is switched off (coach.enabled is false in your config)."
       : "It needs an Anthropic API key: add ANTHROPIC_API_KEY to your .env file and restart the server. The key stays out of this page on purpose."));
     return;
@@ -984,7 +991,7 @@ async function coachView() {
   finish.addEventListener("click", () => { if (!busy) { endCurrent(); setClosed(true); } });
   picker.addEventListener("change", () => { if (!busy && picker.value) { endCurrent(); open(picker.value); } });
 
-  main.replaceChildren(...head, duePanel, memBox,
+  show(main, ...head, duePanel, memBox,
     h("div", {class: "coachbar"}, picker, fresh, finish, h("span", {class: "detail"}, st.model)),
     log, closedNote, h("div", {class: "bar composer"}, box, send));
   refreshDue();
@@ -1005,12 +1012,12 @@ async function coachView() {
 // The tier ladder decides every session for months, so this screen shows what a re-derive would
 // change, rung by rung and field by field, before anything is kept.
 async function ladderView() {
-  main.replaceChildren(h("p", {class: "lede"}, "Working out the ladder…"));
+  show(main, h("p", {class: "lede"}, "Working out the ladder…"));
   const p = await api("GET", "/api/ladder");
   const intro = [h("h2", {}, "Tier ladder"),
     h("p", {class: "lede"}, "The rungs the plan climbs, derived from your own riding and held inside your settings.")];
   if (p.error) {
-    main.replaceChildren(...intro, h("div", {class: "msg bad", role: "alert"}, p.error),
+    show(main, ...intro, h("div", {class: "msg bad", role: "alert"}, p.error),
       h("a", {href: "#settings", class: "btnlink"}, h("button", {}, "Change settings")));
     return;
   }
@@ -1065,7 +1072,7 @@ async function ladderView() {
       keep.disabled = false;
     }
   });
-  main.replaceChildren(...intro,
+  show(main, ...intro,
     h("div", {class: "card"},
       h("h3", {}, p.stored ? "Stored: version " + p.stored.version + ". Re-derived from your history under your current settings:"
                            : "Nothing stored yet. Derived from your history under your current settings:"),
@@ -1094,7 +1101,7 @@ async function route() {
     a.classList.toggle("on", a.dataset.view === name));
   refreshBadge();
   try { await view(); }
-  catch (e) { main.replaceChildren(h("div", {class: "msg bad", role: "alert"}, e.message)); }
+  catch (e) { show(main, h("div", {class: "msg bad", role: "alert"}, e.message)); }
 }
 addEventListener("hashchange", route);
 route();
