@@ -217,9 +217,15 @@ Requires Python 3.12+ and an intervals.icu account (free). Garmin, Zwift and Str
 project *through* intervals.icu — none of them are integrated directly.
 
 ```bash
+python -m venv .venv
+.venv/Scripts/activate            # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 python scripts/status.py
 ```
+
+Run everything below with that environment active (or call `.venv/Scripts/python.exe` directly).
+A system Python that happens to have some of the packages will run some scripts and fail others
+with `ModuleNotFoundError`, which looks like a missing dependency and is not one.
 
 **`status.py` is the first command and the one to come back to.** It reports where your setup
 has got to and prints the single next thing to run — it creates nothing, changes nothing and
@@ -295,6 +301,25 @@ python scripts/cycle_review.py     # 4-week block review
 python scripts/ask.py              # conversational session
 ```
 
+### Keeping it fresh
+
+The six-week gap this project was rebuilt to fix happened because syncing was something a person
+had to remember. Two things now do it:
+
+- **`serve.py`** runs the maintenance loop (pull, roll, reconcile, push) every hour while it is up
+  (`SYNC_INTERVAL_MINUTES` in `.env` changes that; `FITNESS_COACH_NO_SCHEDULER=1` turns it off).
+- **A Windows Scheduled Task** runs `sync_now.py` whether or not the server is up:
+  `powershell -ExecutionPolicy Bypass -File scripts\install_task.ps1` (`-IntervalMinutes 120`,
+  `-Uninstall`). It runs only while you are logged in and never wakes the machine. If both fire
+  together, a file lock makes the second one record a skip instead of colliding. On macOS or Linux,
+  point cron at `python scripts/sync_now.py`.
+
+The Anthropic key is used by the coach only (`src/coach/`): each message you send is a billed
+request to the model in `COACH_MODEL` (default `claude-haiku-5-5`), and ending a conversation
+costs one more small request to file what you said. Syncing, planning, the gate and the
+dashboard make no model calls at all, and `scripts/logs.py --event coach.turn` shows the tokens
+each turn used.
+
 ### When something goes wrong
 
 The app keeps a log of what it did and what failed in `data/logs/app.jsonl` (five rotating files
@@ -343,13 +368,41 @@ intervals.icu ──sync──> SQLite ──> progression gate ──> rolling 
 |---|---|
 | `src/config.py` | the athlete's file, parsed into frozen dataclasses and validated at the door |
 | `src/sync.py` | incremental pull from intervals.icu, then score, then roll |
+| `src/maintenance.py` | the unattended cycle: sync, roll, reconcile, push; takes the cross-process lock |
 | `src/planning/bootstrap.py` | derives the tier ladder from history; pure functions |
 | `src/planning/progression.py` | the gate, as pure functions — no database, no I/O |
 | `src/planning/progression_store.py` | the append-only decision log |
 | `src/planning/roller.py` | builds and stores the horizon; owns the freeze rule |
 | `src/planning/export.py` | push and reconcile against the intervals.icu calendar |
 | `src/analysis/` | PMC, weekly load, compliance, wellness, cycle reviews |
-| `src/coach/` | the Claude layer: prompt, tools, sessions |
+| `src/coach/` | the Claude layer: prompt, tools, sessions, memory, the suggestion cards |
+| `src/signals.py` | the ledger of what you have said about how you are; the one place that decides how long it matters |
+| `src/api/` | the FastAPI app, its guard (Host, Origin, token) and the routes behind each screen |
+| `src/web/index.html` | the app's screens, one file of plain JavaScript, no build step |
+| `src/visualizations/` | the Plotly dashboard and the calendar, written to `data/charts/` |
+| `src/db/` | the schema as numbered, append-only migrations, and the write helpers |
+| `src/firstrun.py` | what `status.py` and the Setup screen report; the two cannot disagree |
+| `src/applog.py`, `src/support.py` | the event log and the support bundle |
+
+That is the shape, not the inventory. [docs/CODEMAP.md](docs/CODEMAP.md) is generated from the
+source and lists every module with what it imports, what uses it, the tables it touches and the
+tests that cover it.
+
+## Working on the code
+
+- **Start with [docs/CODEMAP.md](docs/CODEMAP.md)** rather than searching the tree. For one thing
+  and everything connected to it, `python scripts/code_graph.py show <name>` answers in a few lines
+  (a module, a function, `table:signals`, `route:POST /api/chat/ask`, `event:sync.done`). The same
+  graph as data, every node and edge, is `docs/codegraph/graph.json`. Calls are drawn only where a
+  name resolves statically, so "no callers" can mean dispatch through a table; imports, tables,
+  routes and events are exact.
+- **Regenerate it when the structure changes:** `python scripts/code_graph.py`. A test fails if
+  the committed map has drifted from the code, and its message says the command.
+- **[CLAUDE.md](CLAUDE.md) holds the rules that must not be broken**, each with the failure that
+  caused it. Read the section before changing the files it names. It is written for coding agents
+  and is just as useful to a person.
+- [ROADMAP.md](ROADMAP.md) is the reasoning and the backlog. `devlog.md`, the session-by-session
+  record, is kept on the author's machine only.
 
 ## Status
 
@@ -380,7 +433,7 @@ pip install -r requirements-dev.txt     # the app's requirements plus pytest
 pytest
 ```
 
-Over 1,500 tests, about a minute and a half. The convention worth knowing: new behaviour is checked by **mutation testing**, not
+Over 1,600 tests, about a minute and a half. The convention worth knowing: new behaviour is checked by **mutation testing**, not
 only by a green suite. Breaking the code deliberately and confirming a test fails has
 repeatedly caught tests here that passed for the wrong reason — one asserting a constant's own
 value back at itself, a filter that worked only because of insert order. Several docstrings in

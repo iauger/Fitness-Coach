@@ -62,6 +62,20 @@ It reports where the setup has got to and prints the single next command. Read-o
 no files, migrates nothing, calls no API. It is the first thing to run when anything behaves
 oddly, before reading code.
 
+## Read the code map before exploring the repo
+
+`docs/CODEMAP.md` lists every module with what it imports, what uses it, its public functions,
+the tables it touches, the log events it emits and the tests that cover it, plus every route and
+table. Search it for the name instead of grepping the tree. For one thing and all its
+connections, `python scripts/code_graph.py show <module|function|table:x|route:METHOD /path|event:x>`
+is a few lines of output. `docs/codegraph/graph.json` is the same graph as data.
+
+It is generated from the source (`src/codegraph.py`), and a test fails when it has drifted, so
+after adding or removing a module, function, import, table, route or log event, run
+`.venv/Scripts/python.exe scripts/code_graph.py` and commit `docs/`. Never edit it by hand.
+**Calls are best effort**: dispatch through a table or callback is invisible, so "no callers"
+means none resolved, not dead. Imports, tables, routes and events are exact.
+
 ## New behaviour is verified by breaking it, not by a green suite
 
 Write the change, then deliberately break it and confirm a test fails. This has repeatedly

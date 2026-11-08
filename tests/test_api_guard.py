@@ -132,9 +132,14 @@ def test_no_cors_headers_are_ever_set(client):
 
 def test_every_write_route_the_app_has_is_guarded(client):
     """The sweep: whatever routes exist now or later, an unauthenticated write is a 403."""
-    writes = [(m, r.path) for r in app.routes if isinstance(r, APIRoute)
+    writes = [(m, r.path) for r in guard.routes(app) if isinstance(r, APIRoute)
               for m in r.methods if m not in guard.SAFE_METHODS]
     assert writes, "the sweep found no write routes, so it is not testing anything"
+    # An independent count: the OpenAPI document is built from the routes FastAPI actually serves.
+    # The sweep once walked `app.routes` and saw 1 write route of 13 because included routers hide
+    # theirs; it still passed. Disagreeing with the schema is how that shows up.
+    served = {(m.upper(), p) for p, ops in app.openapi()["paths"].items() for m in ops if m.upper() not in guard.SAFE_METHODS}
+    assert set(writes) == served
     for method, path in writes:
         url = path.replace("{session_id}", "x").replace("{start_date}", "2026-01-05")
         assert client.request(method, url).status_code == 403, (method, path)

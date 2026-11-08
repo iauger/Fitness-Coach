@@ -35,6 +35,23 @@ LOOPBACK = ("127.0.0.1", "localhost", "::1")
 TOKEN = secrets.token_urlsafe(32)
 
 
+def routes(app):
+    """Every route the app answers, including the ones its included routers hold.
+
+    `app.routes` is not that list. Since FastAPI 0.141 `include_router` leaves a single
+    `_IncludedRouter` entry in it, so iterating it and keeping the `APIRoute`s finds only the routes
+    declared on `app` itself. The route-sweep test did exactly that and went on passing while
+    covering one write route instead of thirteen. Each router's own routes already carry their
+    prefix in `.path`.
+    """
+    for route in app.routes:
+        inner = getattr(route, "original_router", None)
+        if inner is not None:
+            yield from routes(inner)
+        else:
+            yield route
+
+
 def allowed_hosts() -> frozenset[str]:
     extra = os.environ.get("FITNESS_COACH_ALLOWED_HOSTS", "")
     return frozenset(LOOPBACK) | {h.strip().lower() for h in extra.split(",") if h.strip()}

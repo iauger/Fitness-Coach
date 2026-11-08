@@ -132,6 +132,14 @@ def _handler() -> logging.Handler:
     return _attached[key]
 
 
+def release() -> None:
+    """Close the open log file, so a directory it was in can be deleted (Windows will not otherwise)."""
+    for old in _attached.values():
+        _logger.removeHandler(old)
+        old.close()
+    _attached.clear()
+
+
 def event(name: str, level: str = "info", exc: BaseException | None = None, /, **fields) -> None:
     """Write one event. Never raises: the three leading parameters are positional-only so that a
     field called `name` or `level` is a field (and dropped, being on the deny list), not a TypeError."""
