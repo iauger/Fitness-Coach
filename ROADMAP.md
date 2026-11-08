@@ -545,7 +545,12 @@ current setup, to ground that discovery rather than starting from a blank page:
    - **Direction confirmed: richer prose in the same conversational voice**, not a structured
      per-dimension breakdown. Loosen the ~300-word cap and "four short paragraphs" guidance; keep
      the no-headers/no-bullets/no-bold rule as-is.
-   - **Model: staying on `claude-haiku-4-5`.** Explicitly deferred evaluating Sonnet until
+   - **Model (2026-11-07): the coach and the weekly narrative moved to `claude-haiku-5-5`; the signal
+     extractor stays on `claude-haiku-4-5`.** 5.5 thinks before it answers and thought counts against
+     `max_tokens` (coach ceiling raised to 8192; the narrative turns thinking off). On the frozen gold
+     set 5.5 fails the extractor bar (`missed_sessions` at severity 2) where 4.5 passes, so changing
+     `DEFAULT_EXTRACTOR` needs a prompt pass and a passing `scripts/eval_signals.py` first.
+     (Earlier note, kept for history:) **staying on `claude-haiku-4-5`.** Explicitly deferred evaluating Sonnet until
      prompt-level changes have been tried and shown to be insufficient — exhaust the cheaper model
      first, especially now that call volume is about to increase with the per-workout loop below.
    - Add an explicit instruction to proactively reach for `query_history`'s `peak_ctl_periods`/

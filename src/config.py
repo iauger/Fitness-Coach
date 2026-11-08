@@ -187,7 +187,7 @@ class Server:
 @dataclass(frozen=True)
 class Coach:
     enabled: bool = True
-    model: str = "claude-haiku-4-5"
+    model: str = "claude-haiku-5-5"
 
 
 @dataclass(frozen=True)

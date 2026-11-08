@@ -28,9 +28,10 @@ from src.clock import today_local_iso, utc_now_iso
 
 load_dotenv()
 
-# Headroom for the 500-700 word check-in target set in prompt.py. The old 1024 ceiling
-# (~750 words) left almost no margin — a longer reasoned answer would have been cut mid-sentence.
-MAX_TOKENS = 2048
+# Headroom for the 500-700 word check-in target set in prompt.py, plus the model's own thinking:
+# Haiku 5.5 thinks before it answers and that counts against this ceiling (one turn used 3,573
+# tokens, 1,400 of them thought). At 2048 two of six test questions were cut off before any text.
+MAX_TOKENS = 8192
 
 
 def _client() -> Anthropic:

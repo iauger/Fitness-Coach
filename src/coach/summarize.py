@@ -19,9 +19,11 @@ from src.analysis.weekly import has_qualitative_content
 
 load_dotenv()
 
-SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", os.environ.get("COACH_MODEL", "claude-haiku-4-5"))
+SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", os.environ.get("COACH_MODEL", "claude-haiku-5-5"))
 # A weekly narrative is two or three sentences. This is a compression job, not a coaching one,
-# so the ceiling is deliberately far below the coach's 2048.
+# so the ceiling is deliberately far below the coach's, and the model is told not to think: on
+# Haiku 5.5 thought counts against the ceiling, and a narrative cut to nothing reads as "nothing
+# notable" and is silently stored as such.
 MAX_TOKENS = 400
 
 SYSTEM = """
@@ -67,6 +69,7 @@ def weekly_narrative(m: dict) -> tuple[str | None, str | None]:
     resp = client.messages.create(
         model=SUMMARY_MODEL,
         max_tokens=MAX_TOKENS,
+        thinking={"type": "disabled"},
         system=SYSTEM,
         messages=[{"role": "user", "content": _render_qualitative(m)}],
     )

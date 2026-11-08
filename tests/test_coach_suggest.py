@@ -129,3 +129,12 @@ def test_the_prompt_tells_the_coach_it_cannot_apply_a_change():
     from src.coach.prompt import build_system_prompt
     text = build_system_prompt("snapshot", "conversation")
     assert "suggest_change" in text and "never say" in text
+
+
+def test_the_prompt_asks_for_the_button_in_the_same_reply_with_real_numbers():
+    """Mutant: the old wording. Haiku wrote "I can suggest that" and never called the tool, and
+    gave the athlete a reason with no numbers in it."""
+    from src.coach.prompt import build_system_prompt
+    text = " ".join(build_system_prompt("snapshot", "conversation").split())
+    assert "call it in that same reply" in text and "or will offer it later" in text
+    assert "quote the real numbers" in text and "never touched" in text
