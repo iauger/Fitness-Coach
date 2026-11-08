@@ -160,6 +160,13 @@ def _reconcile_and_push(today: date, plan_name: str) -> dict:
     with write_connection() as conn:
         linked = reconcile(conn, client, today, plan_name)
 
+    # Events this plan created for sessions that no longer exist. Done before the "does the
+    # calendar already match" question, because removing a session is a change that question
+    # cannot see: every remaining row is up to date and the stale event is still on the watch.
+    orphan_ids = linked.pop("orphan_ids", [])
+    removed = client.delete_events_by_id(orphan_ids) if orphan_ids else 0
+    linked["orphans_removed"] = removed
+
     with read_connection() as conn:
         if not needs_push(conn, today, plan_name):
             return {**linked, "pushed": False, "reason": "calendar already matches the plan"}
@@ -182,6 +189,8 @@ def summarise(result: dict) -> str:
         f"wellness {sync.get('wellness', 0)}",
         f"plan T{plan.get('tier', '?')}",
     ]
+    if push.get("orphans_removed"):
+        bits.append(f"removed {push['orphans_removed']} calendar events for sessions no longer planned")
     if push.get("pushed"):
         bits.append(f"pushed {push.get('created', 0)} (replaced {push.get('deleted', 0)})")
     elif push.get("relinked"):

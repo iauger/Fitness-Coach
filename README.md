@@ -271,6 +271,13 @@ overwrites the first one's calendar rather than adding to it — which is how th
 arrived at, after a sandbox clone replaced all twelve events of a real horizon on its first
 sync.
 
+The push also **cleans up after itself**: when a session leaves your plan (you lower the rides a
+week, the gate steps you down a rung), the calendar event it created is removed on the next pass,
+including ones left behind by earlier versions. It only ever touches events whose id has this
+plan's exact shape (`<plan-slug>-<date>-<role>`), never one you added yourself. That is one more
+reason a second copy must keep the push off: it would remove the first copy's events its own plan
+does not contain.
+
 Two more worth knowing about in advance. **`fetch_history.py` is not optional** — the
 tier ladder is derived from your own riding, and the generator refuses to build anything until
 it has been, rather than quietly falling back to someone else's rungs. And **`bootstrap_plan.py`

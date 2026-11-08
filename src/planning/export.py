@@ -21,6 +21,7 @@ but nothing depends on the server matching it.
 """
 
 import json
+import re
 from datetime import date, timedelta
 
 from src.clock import utc_now_iso
@@ -160,6 +161,20 @@ def _as_event_id(value) -> int | None:
         return None
 
 
+def is_ours(external_id: str | None, plan_name: str) -> bool:
+    """
+    Whether a remote event's `external_id` is one this plan could have written.
+
+    Exactly the shape `roller.external_id` makes: the plan's prefix, an ISO date, a role. A looser
+    test (`startswith`) would also claim another plan whose slug begins with this one's, and the
+    result of claiming an event is that it can be deleted.
+    """
+    from src.planning.roller import external_id_prefix
+    return bool(external_id) and re.fullmatch(
+        re.escape(external_id_prefix(plan_name)) + r"\d{4}-\d{2}-\d{2}-[a-z0-9_-]+",
+        external_id) is not None
+
+
 def reconcile(conn, client, today: date, plan_name: str | None = None,
               horizon_days: int = 60) -> dict:
     """
@@ -176,18 +191,31 @@ def reconcile(conn, client, today: date, plan_name: str | None = None,
 
     Only ever *adds* a link. A row that already has an id is left alone, so this can never
     repoint a session at some other athlete's event.
+
+    **It also names the events nothing owns any more**, as `orphan_ids`, and deletes none of them
+    itself. A session that leaves the horizon (the athlete lowers `max_ride_days`, the gate steps
+    down a rung, a recovery week drops a ride) is deleted along with the `remote_event_id` that
+    was the only record of its calendar event, and the push deletes only the ids of rows that
+    still exist, so the event stayed on the athlete's watch for good. An orphan is a remote event
+    whose `external_id` has this plan's exact shape and matches no local session. Nothing else is
+    ever named: not an event with no `external_id`, and not another plan's.
     """
-    remote = {e.get("external_id"): e.get("id")
-              for e in client.get_events(today, today + timedelta(days=horizon_days))
-              if e.get("external_id")}
+    plan_name = plan_name or configured_plan_name()
+    events = client.get_events(today, today + timedelta(days=horizon_days))
+    remote = {e.get("external_id"): e.get("id") for e in events if e.get("external_id")}
+    rows = pending(conn, today, plan_name)
     relinked = 0
-    for row in pending(conn, today, plan_name):
+    for row in rows:
         if row["remote_event_id"] or row["external_id"] not in remote:
             continue
         conn.execute("UPDATE prescribed_sessions SET remote_event_id = ? WHERE id = ?",
                      (str(remote[row["external_id"]]), row["id"]))
         relinked += 1
-    return {"remote_events": len(remote), "relinked": relinked}
+    local = {row["external_id"] for row in rows}
+    orphan_ids = [e["id"] for e in events
+                  if e.get("id") is not None and is_ours(e.get("external_id"), plan_name)
+                  and e["external_id"] not in local]
+    return {"remote_events": len(remote), "relinked": relinked, "orphan_ids": orphan_ids}
 
 
 def push(conn, client, today: date, plan_name: str | None = None,
