@@ -31,6 +31,18 @@ QUESTION = "Why does my SECRETQUESTION knee hurt?"
 ANSWER = "Your SECRETANSWER tendon is overloaded."
 
 
+@pytest.fixture(autouse=True)
+def _no_field_was_dropped_on_the_way_in():
+    """
+    Mutant: a field named like words in a call the AST guard cannot read (`**done`). The logger drops
+    it and says so in `_dropped`, which is how `notes` (a count of notes synced) vanished from
+    `sync.done` on the first real run. Every path these tests exercise must lose nothing.
+    """
+    yield
+    lost = [(r["event"], r["_dropped"]) for r in applog.read() if "_dropped" in r]
+    assert lost == [], f"a call passed a field the logger refuses: {lost}"
+
+
 def events(name=None):
     rows = applog.read()
     return [r for r in rows if name is None or r["event"] == name]

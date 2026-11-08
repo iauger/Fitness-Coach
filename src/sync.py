@@ -271,7 +271,7 @@ def incremental_sync(silent: bool = False) -> dict:
         log(f"[sync] plan        ERROR: {e}")
 
     done = {"activities": results["activities"], "wellness": results["wellness"],
-            "events": results["events"], "notes": results["notes"],
+            "events": results["events"], "notes_synced": results["notes"],
             "recorded_decisions": activities_ok, "problems": len(results["errors"]),
             "ms": int((time.monotonic() - started) * 1000)}
     (applog.warning if results["errors"] else applog.event)("sync.done", **done)
