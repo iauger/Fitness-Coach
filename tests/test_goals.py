@@ -39,9 +39,19 @@ def names(rows):
     return [g["description"] for g in rows]
 
 
+SEEDS = [{"id": None, "description": "Seed A", "date": "2027-10-01", "priority": "primary"},
+         {"id": None, "description": "Seed B", "date": None, "priority": "secondary"}]
+
+
+@pytest.fixture
+def seeded(monkeypatch):
+    """Configured goals standing in for an empty table. The example config ships with none."""
+    monkeypatch.setattr(goals, "from_config", lambda: [dict(g) for g in SEEDS])
+
+
 # -- the first-run fallback -------------------------------------------------------------------
 
-def test_an_empty_table_shows_the_configured_goals_without_ids(conn):
+def test_an_empty_table_shows_the_configured_goals_without_ids(conn, seeded):
     live = goals.active(conn)
     assert live and all(g["id"] is None for g in live)
     assert names(live) == names(goals.from_config()) or set(names(live)) == set(names(goals.from_config()))
@@ -184,7 +194,7 @@ def test_an_unknown_id_is_refused(conn):
         goals.sync(conn, [{"id": 77, "description": "ghost"}])
 
 
-def test_the_first_save_moves_the_configured_goals_into_the_table(conn):
+def test_the_first_save_moves_the_configured_goals_into_the_table(conn, seeded):
     """The screen shows the fallback goals with no ids; saving them adds each as a row."""
     shown = goals.active(conn)
     assert conn.execute("SELECT COUNT(*) FROM goals").fetchone()[0] == 0
@@ -252,3 +262,18 @@ def test_nothing_else_reads_the_configs_goals_list():
                 if pattern.search(line):
                     offenders.append(f"{path.relative_to(root)}:{n}: {line.strip()}")
     assert not offenders, "\n".join(offenders)
+
+
+def test_an_empty_save_on_a_first_run_removes_the_configured_goals_for_good(conn, seeded):
+    """
+    Mutant: the tombstone removed. The table has never held a goal, so the configured ones stand
+    in; an empty save wrote nothing and the screen showed the same goals straight back, which
+    meant a friend who wanted no goals could not have none.
+    """
+    assert names(goals.active(conn)) == ["Seed A", "Seed B"]
+    assert goals.sync(conn, []) == []
+    assert goals.active(conn) == []
+    statuses = [r["status"] for r in conn.execute("SELECT status FROM goals")]
+    assert statuses == ["dropped", "dropped"], "kept as history, not deleted"
+    goals.add(conn, "Mine")
+    assert names(goals.active(conn)) == ["Mine"]

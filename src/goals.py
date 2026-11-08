@@ -122,6 +122,14 @@ def sync(conn, goals: list[dict]) -> list[dict]:
     sees as history). Everything is checked before anything is written, so one bad row leaves
     the table as it was.
     """
+    if not goals and conn.execute("SELECT 1 FROM goals LIMIT 1").fetchone() is None:
+        # "None" from a table that has never held a goal. The configured goals are standing in
+        # for it (see `active`), and writing nothing would leave them standing: the screen
+        # would answer an empty save with the same goals it was asked to remove. Record each as
+        # dropped, which ends the fallback and keeps them as history like any other dropped goal.
+        for g in from_config():
+            set_status(conn, add(conn, g["description"], g["date"], g["priority"]), "dropped")
+
     cleaned = []
     for i, g in enumerate(goals):
         try:

@@ -91,6 +91,12 @@ def _env_file() -> Check:
                  "intervals.icu > Settings > Developer, then paste it into .env")
 
 
+def _machine_utc_offset_minutes() -> int:
+    """This computer's offset from UTC right now. A function so a test can say where it is."""
+    from datetime import datetime
+    return int(datetime.now().astimezone().utcoffset().total_seconds() // 60)
+
+
 def _config_file() -> Check:
     from src.config import CONFIG_PATH, ConfigError, EXAMPLE_PATH, load
 
@@ -111,6 +117,14 @@ def _config_file() -> Check:
     if cfg.athlete.name.strip().lower() in ("", "your name"):
         return Check("config", False, "still the unedited example (athlete.name)",
                      f"Edit {CONFIG_PATH.name}: your name, timezone, goals and plan start")
+    if cfg.athlete.timezone.upper() == "UTC" and _machine_utc_offset_minutes() != 0:
+        # The example's default, on a computer that is somewhere else. Not cosmetic: the timezone
+        # decides when a week closes, and a closed week is graded once and for good. Left at UTC
+        # in the Americas, Sunday ends at about 7pm and a later ride is missed by the decision.
+        return Check("config", False, "athlete.timezone is still UTC, and this computer is not",
+                     f"Set athlete.timezone in {CONFIG_PATH.name} (or on the Settings screen) to "
+                     f"your own, e.g. America/Chicago or Europe/London: it decides when your "
+                     f"week ends")
     return Check("config", True, f"{cfg.athlete.name}, {cfg.athlete.timezone}")
 
 
@@ -140,6 +154,42 @@ def _history(conn) -> Check:
                      f"{interpreter()} scripts/fetch_history.py")
     span = conn.execute("SELECT MIN(date), MAX(date) FROM activities").fetchone()
     return Check("history", True, f"{rides} activities, {span[0][:10]} to {span[1][:10]}")
+
+
+def _today():
+    """The athlete's today. A function so a test can fix the date instead of ageing with the clock."""
+    from src.clock import today_local
+    return today_local()
+
+
+def _plan_start(conn) -> Check | None:
+    """
+    Whether `plan.start_monday` is a date the athlete chose or the one the example shipped with.
+
+    The gate grades every week from that Monday to now, all at once, the first time it runs. A
+    start in the distant past is a plan that begins with a heap of decisions about weeks nobody
+    was following it. Said only until the first week has been decided: after that the start is
+    history and changing it would rewrite the record.
+    """
+    from datetime import date
+
+    from src.planning.constants import plan_name, plan_start_monday
+
+    try:
+        decided = conn.execute("SELECT COUNT(*) FROM plan_progression WHERE plan_name = ?",
+                               (plan_name(),)).fetchone()[0]
+    except Exception:
+        return None
+    if decided:
+        return None
+    start = date.fromisoformat(plan_start_monday())
+    behind = (_today() - start).days
+    if behind <= 14:
+        return None
+    return Check("plan start", False, f"plan.start_monday is {start}, {behind} days ago",
+                 "set plan.start_monday to the Monday of the week you begin (Settings, or "
+                 "config/athlete.yaml): every week from then until now would be graded at once",
+                 blocking=False)
 
 
 def _ftp(conn) -> Check:
@@ -332,7 +382,7 @@ def checks(db_path: Path | None = None) -> list[Check]:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        for step in (_history, _ftp, _ladder, _week, _limits, _plan, _calendar):
+        for step in (_history, _plan_start, _ftp, _ladder, _week, _limits, _plan, _calendar):
             check = step(conn)
             if check is None:
                 continue

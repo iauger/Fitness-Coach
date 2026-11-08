@@ -43,6 +43,11 @@ def repo(tmp_path, monkeypatch):
     # The coach check reads this too, and `src.coach.session` loads the real .env into the
     # process the moment any test imports it, so without this the result depended on test order.
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    # Neither where the computer is nor what day it is may decide a result: the example says UTC
+    # and a start date a few days before this fixed "today", and the checks that read both are
+    # tested on their own below.
+    monkeypatch.setattr(firstrun, "_machine_utc_offset_minutes", lambda: 0)
+    monkeypatch.setattr(firstrun, "_today", lambda: date(2026, 11, 4))
     C.reset()
     yield tmp_path
     C.reset()
@@ -606,3 +611,67 @@ def test_a_missing_coach_key_is_a_warning_not_a_stop(repo):
     coach = named(firstrun.checks(db))["coach"]
     assert coach.ok is False and coach.blocking is False
     assert firstrun.ready(db)
+
+
+# -- an example left as shipped ---------------------------------------------------------------
+
+def test_a_timezone_left_at_utc_on_a_computer_that_is_not_is_refused(repo, monkeypatch):
+    """
+    Mutant: the check deleted. A US athlete on the example's UTC has Sunday end at about 7pm, and
+    a week is graded once and for good, so a later ride is missed by a decision nothing revisits.
+    """
+    write_env(repo)
+    write_config(repo)
+    monkeypatch.setattr(firstrun, "_machine_utc_offset_minutes", lambda: -300)
+    blocked = first_blocked(firstrun.checks(repo / "none.db"))
+    assert blocked.name == "config" and "timezone is still UTC" in blocked.detail
+    assert "America/Chicago" in blocked.fix
+
+
+def test_utc_is_fine_on_a_computer_that_is_in_utc(repo):
+    write_env(repo)
+    write_config(repo)
+    assert named(firstrun.checks(repo / "none.db"))["config"].ok
+
+
+def test_a_real_timezone_is_never_questioned(repo, monkeypatch):
+    write_env(repo)
+    C.CONFIG_PATH.write_text("athlete:\n  name: Real Person\n  timezone: America/Chicago\n"
+                             "plan:\n  name: P\n  start_monday: 2026-11-02\n", encoding="utf-8")
+    C.reset()
+    monkeypatch.setattr(firstrun, "_machine_utc_offset_minutes", lambda: -300)
+    assert named(firstrun.checks(repo / "none.db"))["config"].ok
+
+
+def _db_with_history(repo):
+    path = repo / "t.db"
+    migrate(path)
+    conn = sqlite3.connect(path)
+    conn.execute("INSERT INTO activities (id, date, type, moving_time) VALUES ('a', '2026-10-30', 'Ride', 3600)")
+    conn.commit()
+    conn.close()
+    return path
+
+
+def test_a_plan_start_long_ago_is_called_out_until_a_week_has_been_decided(repo, monkeypatch):
+    """
+    Mutant: the 14-day grace, or the "only before the first decision" rule, removed. The gate
+    grades every week since the start at once, so an example date left in place on a later day
+    begins the record with a heap of weeks nobody followed.
+    """
+    write_env(repo)
+    write_config(repo)
+    path = _db_with_history(repo)
+    monkeypatch.setattr(firstrun, "_today", lambda: date(2026, 11, 16))          # 14 days: fine
+    assert "plan start" not in named(firstrun.checks(path))
+    monkeypatch.setattr(firstrun, "_today", lambda: date(2026, 11, 17))          # 15 days: said
+    found = named(firstrun.checks(path))["plan start"]
+    assert not found.ok and not found.blocking and "15 days ago" in found.detail
+    conn = sqlite3.connect(path)
+    conn.execute("INSERT INTO plan_progression (plan_name, week_start, ride_minutes, ride_days, "
+                 "strength_logged, outcome, tier_applied, verdict, tier_next, week_type_next, rotation, "
+                 "block_index, week_in_block, reason, created_at) "
+                 "VALUES ('P', '2026-11-02', 200, 3, 0, 'met', 2, 'advance', 3, 'normal', 0, 0, 1, 'x', 'x')")
+    conn.commit()
+    conn.close()
+    assert "plan start" not in named(firstrun.checks(path))

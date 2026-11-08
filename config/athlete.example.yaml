@@ -6,8 +6,11 @@
 
 athlete:
   name: Your Name
-  # IANA timezone. Decides what "today" means for a check-in, a session, or a plan week.
-  # Everything is stored in UTC underneath; this only affects the athlete's day.
+  # IANA timezone, e.g. America/Chicago or Europe/London. Set this one. It decides what "today"
+  # is and when a plan week ends, and a closed week is graded once and for good, so UTC on a
+  # computer that is not in UTC would close your Sunday early. status.py refuses to call the
+  # setup ready while it says UTC on a machine that is not. Everything is stored in UTC
+  # underneath; this only affects your day.
   timezone: UTC
   history_start: 2017            # optional; the first year you have data for
   primary_sport: cycling
@@ -31,18 +34,21 @@ profile:
 
 # A first-run seed only. Once the app has them, the goals live in the database (Settings, or tell
 # the coach), because the coach edits them too. Editing this list later changes nothing.
-goals:
-  - description: Cyclocross racing fall 2027
-    date: 2027-10-01
-    priority: primary            # primary | secondary | opt_in
-  - description: Gravel racing spring/summer 2027
-    date: 2027-06-18
-    priority: opt_in             # opt_in means the plan does not taper for it
+goals: []
+  # Add your own, or do it later on the Settings screen. Each is a description, an optional date
+  # and a priority; opt_in means the plan does not taper for it:
+  #
+  # - description: Cyclocross racing fall 2027
+  #   date: 2027-10-01
+  #   priority: primary          # primary | secondary | opt_in
 
 plan:
   name: Sustainable rolling
-  # The first Monday the plan is of record. Must be a Monday: every week boundary in this
-  # project is Monday-to-Sunday, and an off-by-one here silently moves every decision.
+  # The first Monday the plan is of record: set it to the Monday of the week you begin. Must be a
+  # Monday: every week boundary in this project is Monday-to-Sunday, and an off-by-one here
+  # silently moves every decision. The gate grades every week from this date to today, so a
+  # date long ago means a heap of decisions about weeks nobody followed the plan; status.py
+  # says so while that is the case.
   start_monday: 2026-11-02
   # Where the progression gate should climb to, in hours per week. This is intent, not a
   # prescription — the tier ladder is derived from your own synced history, not from these
