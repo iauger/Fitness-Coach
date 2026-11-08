@@ -450,3 +450,7 @@ the real database, and read the committed example config rather than yours.
 ## Stack
 
 Python · SQLite · FastAPI · Plotly · intervals.icu API · Claude API
+
+## License
+
+[MIT](LICENSE).

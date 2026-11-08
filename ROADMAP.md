@@ -21,7 +21,7 @@ back to this sentence.
 
 ---
 
-## Where this is now — 2026-11-06
+## Where this is now — 2026-11-08
 
 The single source of truth for current state. Everything below the horizontal rule after this
 section is **history**: the reasoning as it was at the time, kept because the arguments are
@@ -49,7 +49,34 @@ and calendar, and the Claude coaching layer.
 | 8 | which days you can train: `available_days`, `long_ride_day` *(unplanned; a prerequisite for the UI)* |
 | 9 | how long a ride may be: `max_ride_min`, `day_max_ride_min`, derived inside and never clamped, with the coach told when it binds *(unplanned)* |
 
-Schema at `user_version` 11. 978 tests.
+Schema at `user_version` 15. 1,691 tests.
+
+**Since 2026-11-06** (the detail is in the sections below; this is the map):
+
+- **The app exists.** Plan, Coach, Signals, Setup, Settings and Ladder screens in one vanilla-JS
+  file, served by the API process. The Vite/React plan below was not taken up.
+- **The coach has a memory it can be audited on.** The signal ledger (below) is built: conversations
+  are read once into dated, graded signals that must quote the athlete; the coach is briefed from a
+  watch list and themes worked out by code. Signals are shown on the Plan screen and never change a
+  prescription. Coach suggestions are buttons: `suggest_change` proposes, the athlete presses Apply.
+- **Coach and weekly narrative run on Haiku 5.5**; the signal extractor stays on `claude-haiku-4-5`
+  because 5.5 failed the frozen gold set on `missed_sessions`.
+- **A deep review before sharing** fixed: a week being graded from a sync that had failed, calendar
+  events outliving their sessions, text from outside reaching the page unescaped, config values that
+  re-read as other types, and examples that carried the author's own goals. Migrations now back the
+  database up first (newest five kept).
+- **An application log** (`src/applog.py`, `scripts/logs.py`) records events and never words, with a
+  support bundle that is safe to send. See `CLAUDE.md` for the rules.
+- **A generated code map** (`docs/CODEMAP.md`, `docs/codegraph/graph.json`,
+  `scripts/code_graph.py`), kept honest by a test, so a reader or agent does not have to explore.
+  Building it found that the write-route guard sweep was covering 1 route of 13 under the installed
+  FastAPI; fixed, and now cross-checked against the OpenAPI document.
+- **MIT licensed.**
+
+Open from the review, deliberately: near-duplicate ride suppression (a design question), and no
+grace period before a week closes (a Sunday-night ride that uploads late is graded as missed).
+Not yet reviewed: the gate's arithmetic beyond the frozen-year tests, scheduler and lock handling,
+chat concurrency, `install_task.ps1`.
 
 **The first run has been walked on a clean clone, 2026-11-06**, end to end by someone other
 than the code: clone, config, migrate, fetch, bootstrap, sync, seed FTP, serve. It worked,
@@ -70,7 +97,7 @@ plan slug and therefore the same `external_id`s, so the sandbox overwrote all tw
 of the real horizon on its first sync. Nothing was lost, because both had derived the same
 plan from the same history; that is luck, not a safeguard.
 
-**Next: a UI, not hosting.** Decided 2026-11-06: the project has outgrown being a CLI, and the
+**A UI, not hosting (decided 2026-11-06; built, see above).** Decided 2026-11-06: the project has outgrown being a CLI, and the
 things a person has to do by hand — the first run, deriving a ladder, setting FTP, turning the
 push on, a check-in — are flows, which is where a real frontend pays and generated HTML does
 not. The shape is a JS frontend (Vite, React, TypeScript) built to static files and served by the
@@ -143,8 +170,8 @@ the coach's memory (before, it did not at all). The note is made with no tools a
 prompt: the old command-line summary re-ran the whole coaching loop, with every tool available,
 over the whole snapshot. The coach is shown the last four conversation notes and the last
 check-in, and the Coach screen shows the athlete exactly that list, marked, with Edit and Forget
-on conversation notes. Still to build: coach suggestions as buttons (raise the limit, add a day)
-instead of text.
+on conversation notes. Coach suggestions as buttons (raise the limit, add a day) instead
+of text were built afterwards.
 
 **Ride limits are built** (`max_ride_min`, `day_max_ride_min`), as the second half of what the UI's
 setup wizard has to ask. The decision that matters is *derive inside, never clamp*: a rung is
@@ -185,7 +212,9 @@ touches TSS — a choice made for a different reason that turned out to insulate
 
 ## The coach's signal ledger: agreed plan, 2026-11-07
 
-Not built. Agreed in conversation, written here so the build can be checked against it.
+**Built** (2026-11-07 to 08; the ledger, extractor, briefing, Signals screen and the plan-advisory
+seam). Kept as the design record: agreed in conversation, written here so the build could be
+checked against it.
 
 **Why.** The coach remembers through short prose notes, which are hard to query, restate numbers
 that go stale, and fall out of a four-note window (a knee that ached in week 1 is gone by week
