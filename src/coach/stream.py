@@ -16,11 +16,13 @@ blocking callers (`checkin()`, `CoachSession.ask()`, `cycle_review()`) keep work
 """
 
 import json
+import time
 from dataclasses import dataclass, field, asdict
 from typing import Any, Iterator, Literal
 
 from anthropic import Anthropic
 
+from src import applog
 from src.coach.tools import TOOL_SCHEMAS, execute_tool
 
 EventType = Literal[
@@ -72,66 +74,97 @@ def stream_turn(
     tools = TOOL_SCHEMAS if tools is None else tools
     final_text: list[str] = []
 
-    for iteration in range(1, MAX_ITERATIONS + 1):
-        yield Event("start", iteration=iteration)
-        assistant_blocks: list[dict] = []
-        stop_reason = None
+    # One event per turn, whichever way it ends (`finally` also runs when the consumer walks away
+    # mid-stream, which is the "abandoned" case). Tokens, tool names and timing: never the
+    # question, the answer or a tool's result.
+    started = time.monotonic()
+    turn = {"iterations": 0, "input_tokens": 0, "output_tokens": 0, "tools": [], "suggested": False,
+            "ended": "abandoned", "exc": None}
 
-        try:
-            with client.messages.stream(
-                model=model,
-                max_tokens=max_tokens,
-                system=system,
-                tools=tools,
-                messages=messages,
-            ) as stream:
-                for chunk in stream.text_stream:
-                    final_text.append(chunk)
-                    yield Event("text", text=chunk, iteration=iteration)
-                response = stream.get_final_message()
-        except Exception as exc:
-            yield Event("error", message=f"{type(exc).__name__}: {exc}", iteration=iteration)
-            return
+    try:
+        for iteration in range(1, MAX_ITERATIONS + 1):
+            yield Event("start", iteration=iteration)
+            assistant_blocks: list[dict] = []
+            stop_reason = None
+            turn["iterations"] = iteration
 
-        stop_reason = response.stop_reason
-        assistant_blocks = [b.model_dump() for b in response.content]
-
-        if stop_reason != "tool_use":
-            # end_turn, max_tokens, or anything unexpected: the visible text is what we have.
-            messages.append({"role": "assistant", "content": assistant_blocks})
-            if stop_reason == "max_tokens":
-                yield Event("error", message="response hit max_tokens and was cut off",
-                            iteration=iteration)
-            yield Event("turn_end", text="".join(final_text), iteration=iteration)
-            return
-
-        messages.append({"role": "assistant", "content": assistant_blocks})
-
-        tool_results = []
-        for block in response.content:
-            if block.type != "tool_use":
-                continue
-            yield Event("tool_start", name=block.name, input=dict(block.input),
-                        iteration=iteration)
             try:
-                result = execute_tool(block.name, block.input)
-            except Exception as exc:
-                # Report the failure to the model rather than aborting the turn — it can often
-                # recover, and an is_error result is the documented way to say so.
-                result = f"error: {type(exc).__name__}: {exc}"
-                yield Event("error", message=f"tool {block.name} failed: {exc}",
-                            iteration=iteration)
-            yield Event("tool_end", name=block.name, result=str(result)[:2000],
-                        iteration=iteration)
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": block.id,
-                "content": str(result),
-            })
-        messages.append({"role": "user", "content": tool_results})
+                with client.messages.stream(
+                    model=model,
+                    max_tokens=max_tokens,
+                    system=system,
+                    tools=tools,
+                    messages=messages,
+                ) as stream:
+                    for chunk in stream.text_stream:
+                        final_text.append(chunk)
+                        yield Event("text", text=chunk, iteration=iteration)
+                    response = stream.get_final_message()
+            except Exception as exc:     # not logged here: the finally block records it, with the totals
+                turn.update(ended="error", exc=exc)
+                yield Event("error", message=f"{type(exc).__name__}: {exc}", iteration=iteration)
+                return
 
-    yield Event("error", message=f"turn exceeded {MAX_ITERATIONS} tool iterations")
-    yield Event("turn_end", text="".join(final_text))
+            usage = getattr(response, "usage", None)
+            turn["input_tokens"] += getattr(usage, "input_tokens", 0) or 0
+            turn["output_tokens"] += getattr(usage, "output_tokens", 0) or 0
+
+            stop_reason = response.stop_reason
+            assistant_blocks = [b.model_dump() for b in response.content]
+
+            if stop_reason != "tool_use":
+                # end_turn, max_tokens, or anything unexpected: the visible text is what we have.
+                messages.append({"role": "assistant", "content": assistant_blocks})
+                turn["ended"] = "max_tokens" if stop_reason == "max_tokens" else "done"
+                if stop_reason == "max_tokens":
+                    yield Event("error", message="response hit max_tokens and was cut off",
+                                iteration=iteration)
+                yield Event("turn_end", text="".join(final_text), iteration=iteration)
+                return
+
+            messages.append({"role": "assistant", "content": assistant_blocks})
+
+            tool_results = []
+            for block in response.content:
+                if block.type != "tool_use":
+                    continue
+                yield Event("tool_start", name=block.name, input=dict(block.input),
+                            iteration=iteration)
+                turn["tools"].append(block.name)
+                try:
+                    result = execute_tool(block.name, block.input)
+                except Exception as exc:
+                    # Report the failure to the model rather than aborting the turn — it can often
+                    # recover, and an is_error result is the documented way to say so.
+                    applog.warning("coach.tool_crashed", exc, tool=block.name)
+                    result = f"error: {type(exc).__name__}: {exc}"
+                    yield Event("error", message=f"tool {block.name} failed: {exc}",
+                                iteration=iteration)
+                if block.name == "suggest_change" and '"status": "shown"' in str(result):
+                    turn["suggested"] = True
+                yield Event("tool_end", name=block.name, result=str(result)[:2000],
+                            iteration=iteration)
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": str(result),
+                })
+            messages.append({"role": "user", "content": tool_results})
+
+        turn["ended"] = "iteration_limit"
+        yield Event("error", message=f"turn exceeded {MAX_ITERATIONS} tool iterations")
+        yield Event("turn_end", text="".join(final_text))
+    finally:
+        fields = {"model": model, "iterations": turn["iterations"],
+                  "input_tokens": turn["input_tokens"], "output_tokens": turn["output_tokens"],
+                  "tools": turn["tools"], "suggested": turn["suggested"],
+                  "ended": turn["ended"], "ms": int((time.monotonic() - started) * 1000)}
+        if turn["exc"] is not None:
+            applog.error("coach.turn", turn["exc"], **fields)
+        elif turn["ended"] == "done":
+            applog.event("coach.turn", **fields)
+        else:
+            applog.warning("coach.turn", **fields)
 
 
 def run_turn(client: Anthropic, model: str, system: str, messages: list[dict],

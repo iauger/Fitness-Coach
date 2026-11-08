@@ -255,7 +255,7 @@ def variants(archetype: str) -> dict[str, dict]:
     try:
         from src.config import config
         overrides = (config().archetypes or {}).get(archetype) or {}
-    except Exception:
+    except Exception:     # not logged: the loader has already said so, loudly, at load
         # Config is unreadable or absent. The built-in library is a working plan, and failing
         # to build any session at all because a YAML file has a typo would be worse than
         # ignoring it — the loader has already said so, loudly, at load.

@@ -295,6 +295,28 @@ python scripts/cycle_review.py     # 4-week block review
 python scripts/ask.py              # conversational session
 ```
 
+### When something goes wrong
+
+The app keeps a log of what it did and what failed in `data/logs/app.jsonl` (five rotating files
+of 1 MB). It records events, never words: counts, durations, exception types and where they came
+from, never an activity name, a note, a goal, a question or a coach reply, and never a key.
+
+```bash
+python scripts/logs.py --level warning --since 24h     # what went wrong lately
+python scripts/logs.py --counts --since 7d             # how often each thing happened
+python scripts/support_bundle.py                       # one zip to send to whoever is helping
+```
+
+`status.py` also adds a `problems` line when the last day has any warnings or errors. The support
+bundle holds the status report, the log, installed versions, the *shape* of the database (table
+names and row counts) and the settings that are not free text. It holds none of your activities,
+notes, conversations or goals, and your name is removed wherever it appeared. Nothing is sent
+anywhere: it is a file under `data/bundles/`, and sending it is up to you after you have opened it
+and looked.
+
+Each coach turn is one log line too (tokens in and out, which tools ran, whether a suggestion
+button was offered, how long it took), which is the usage data without any of the conversation.
+
 > **`serve.py` binds to `127.0.0.1` and must stay there.** The process reads `.env`, so it
 > holds your API keys, it has no authentication, and the chat endpoint spends money per call.
 > Remote access is a VPN's job until auth exists.

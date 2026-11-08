@@ -178,7 +178,7 @@ def _plan_start(conn) -> Check | None:
     try:
         decided = conn.execute("SELECT COUNT(*) FROM plan_progression WHERE plan_name = ?",
                                (plan_name(),)).fetchone()[0]
-    except Exception:
+    except Exception:     # not logged: status.py is read-only, and this is one probe of many
         return None
     if decided:
         return None
@@ -216,7 +216,7 @@ def _ladder(conn) -> Check:
 
     try:
         plan = plans.by_name(conn, plan_name())
-    except Exception:
+    except Exception:     # not logged: "no plan yet" is the answer, and the next line says so
         plan = None
     if plan is None or tiers_store.load(conn, plan.id) is None:
         return Check("tier ladder", False, "not derived yet",
@@ -358,6 +358,25 @@ def _coach() -> Check:
     return Check("coach", True, f"ready on {model}")
 
 
+def _problems() -> Check | None:
+    """
+    What the application log has recorded going wrong in the last day, said only when there is some.
+
+    Non-blocking: a warning is not a reason to stop, but it is a reason to look, and the one place
+    that reads every setup question is the place someone looks when something seems off. Silent
+    when there is nothing to say, like `_week`, because a line that is `ok` for everyone is noise.
+    """
+    from src import applog
+
+    found = applog.problems(24)
+    if not (found["error"] or found["warning"]):
+        return None
+    top = ", ".join(f"{name} x{n}" for name, n in found["events"].most_common(3))
+    return Check("problems", False,
+                 f"{found['error']} errors and {found['warning']} warnings in the last 24 hours ({top})",
+                 f"{interpreter()} scripts/logs.py --level warning --since 24h", blocking=False)
+
+
 def checks(db_path: Path | None = None) -> list[Check]:
     """
     Every prerequisite, in dependency order, stopping at the first unsatisfied one.
@@ -392,6 +411,9 @@ def checks(db_path: Path | None = None) -> list[Check]:
     finally:
         conn.close()
     out.append(_coach())
+    problems = _problems()
+    if problems is not None:
+        out.append(problems)
     return out
 
 

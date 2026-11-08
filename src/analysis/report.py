@@ -5,6 +5,7 @@ This is what gets passed to Claude as the data payload.
 
 import json
 from datetime import date, timedelta
+from src import applog
 from .fitness import current_fitness, ctl_trend, peak_ctl, ctl_history
 from .activities import recent_activities, sport_distribution, weekly_load_by_sport, yearly_volume
 from src.config import config
@@ -236,9 +237,11 @@ def _rolling_plan(today: date | None = None) -> dict | None:
             "upcoming": upcoming,
             "outline": plan_outline(state, today, tiers=ladder),
         }
-    except Exception:
+    except Exception as exc:
         # Advisory context. A failure here must not take down the whole snapshot, which the
-        # coach needs for everything else it reasons about.
+        # coach needs for everything else it reasons about. It is logged, because a section that
+        # quietly disappears from what the coach reads is a coach that quietly knows less.
+        applog.warning("report.section_failed", exc, section="plan_state")
         return None
 
 
@@ -626,7 +629,8 @@ def _outgrown(conn, plan, ladder: dict, today: date) -> dict | None:
             ceiling_setting=ride_day_setting(),
             limits=plan_limits(ladder[max(ladder)].rides),
         )
-    except Exception:
+    except Exception as exc:
+        applog.warning("report.section_failed", exc, section="outgrown")
         return None
     if not found.summary:
         return None

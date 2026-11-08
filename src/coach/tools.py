@@ -6,6 +6,7 @@ Each tool has a schema (sent to Claude) and an execute function (called locally)
 import json
 from datetime import date
 from src import signals
+from src import applog
 from src.coach.suggest import suggest_change
 from src.db.schema import read_connection, write_connection
 from src.clock import today_local, today_local_iso, utc_now_iso
@@ -497,4 +498,5 @@ def execute_tool(name: str, inputs: dict) -> str:
         result = fn(**inputs)
         return json.dumps(result)
     except Exception as e:
+        applog.warning("coach.tool_error", e, tool=name)
         return json.dumps({"error": str(e)})

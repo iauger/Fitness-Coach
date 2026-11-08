@@ -16,6 +16,7 @@ from typing import Callable
 
 from src.db.schema import get_connection, migrate_db
 from src.db.store import log_sync, upsert_activities, upsert_events, upsert_wellness
+from src import applog
 from src.intervals.client import IntervalsClient, MissingCredentials
 
 CHUNK_DAYS = 90  # pull in 90-day windows to stay well within API limits
@@ -64,6 +65,7 @@ def fetch_all(start: date, end: date,
                 total["activities"] += n
                 progress(f"[activities] {label}  ({n} records)")
             except Exception as e:
+                applog.warning("history.chunk_failed", e, kind="activities")
                 total["errors"] += 1
                 progress(f"[activities] {label}  ERROR: {e}")
                 with conn:
@@ -77,6 +79,7 @@ def fetch_all(start: date, end: date,
                 total["wellness"] += n
                 progress(f"[wellness  ] {label}  ({n} records)")
             except Exception as e:
+                applog.warning("history.chunk_failed", e, kind="wellness")
                 total["errors"] += 1
                 progress(f"[wellness  ] {label}  ERROR: {e}")
                 with conn:
@@ -90,6 +93,7 @@ def fetch_all(start: date, end: date,
             total["events"] = n
             progress(f"[events    ] {start}  to  {end}  ({n} records)")
         except Exception as e:
+            applog.warning("history.chunk_failed", e, kind="events")
             total["errors"] += 1
             progress(f"[events    ] ERROR: {e}")
     finally:

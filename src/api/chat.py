@@ -25,6 +25,7 @@ from src.analysis.report import MEMORY_PER_TYPE, coaching_context_text, coaching
 from src.api.cache import freshness_key
 from src.api.ids import RowId
 from src import maintenance
+from src import applog
 from src.clock import today_local
 from src.coach import chat_store, due, memory
 from src.coach import session as coach_session
@@ -113,6 +114,7 @@ def _sync_quietly(queue: Queue) -> None:
     except maintenance.AlreadyRunning:
         pass
     except Exception as exc:
+        applog.warning("chat.sync_failed", exc)
         queue.put({"type": "status", "text": f"Could not sync ({exc}); using what is already stored."})
 
 
@@ -161,6 +163,7 @@ def _run_structured(session_id: str, mode: str, note: str | None, queue: Queue) 
         chat_store.replace_history(session_id, history)
         queue.put({"type": "recorded", "what": mode})
     except Exception as exc:
+        applog.error("chat.run_failed", exc, mode=mode)
         queue.put(Event("error", message=f"{type(exc).__name__}: {exc}"))
     finally:
         queue.put(_SENTINEL)
@@ -169,8 +172,8 @@ def _run_structured(session_id: str, mode: str, note: str | None, queue: Queue) 
 def _summarise_quietly(session_id: str) -> None:
     try:
         memory.summarise_session(session_id)
-    except Exception:
-        pass
+    except Exception as exc:
+        applog.warning("memory.summarise_failed", exc)
 
 
 def _sse(event: Event | dict) -> str:
@@ -195,6 +198,7 @@ def _run_and_enqueue(session_id: str, question: str, queue: Queue) -> None:
         chat_store.replace_history(session_id, history)
         chat_store.set_title_if_unset(session_id, question)
     except Exception as exc:
+        applog.error("chat.turn_failed", exc)
         queue.put(Event("error", message=f"{type(exc).__name__}: {exc}"))
     finally:
         queue.put(_SENTINEL)

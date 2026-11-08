@@ -5,6 +5,7 @@ Model: the COACH_MODEL environment variable if set, else coach.model in the conf
 
 import os
 import uuid
+from src import applog
 from datetime import date
 from anthropic import Anthropic
 from dotenv import load_dotenv
@@ -86,6 +87,7 @@ def finish_checkin(response: str, model: str, session_id: str | None = None,
     try:
         _summarise_last_week(verbose=verbose)
     except Exception as e:
+        applog.warning("coach.weekly_summary_skipped", e)
         if verbose:
             print(f"[coach] weekly summary skipped: {e}")
 

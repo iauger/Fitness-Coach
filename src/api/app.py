@@ -17,6 +17,7 @@ is item 16 and is a VPN's job, not this server's.
 """
 
 import sqlite3
+from src import applog
 import os
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -92,6 +93,7 @@ async def lifespan(_app: FastAPI):
             try:
                 print(summarise(run_cycle()))
             except Exception as exc:
+                applog.error("maintenance.unhandled", exc)
                 print(f"[maintenance] unhandled: {exc}")
 
         scheduler = BackgroundScheduler(daemon=True)
@@ -120,6 +122,18 @@ app = FastAPI(
 )
 
 app.add_middleware(Guard)
+
+
+@app.exception_handler(Exception)
+async def record_unhandled(request, exc: Exception) -> JSONResponse:
+    """
+    An exception no route expected: logged with the route and the place it came from, answered with
+    a 500 that says nothing about the inside. Before this the traceback went to a terminal nobody
+    was watching, and what the athlete saw was "request failed (500)".
+    """
+    applog.error("api.unhandled", exc, method=request.method, route=request.url.path)
+    return JSONResponse({"detail": "internal error; it has been recorded in the application log"},
+                        status_code=500)
 
 
 @app.exception_handler(RequestValidationError)

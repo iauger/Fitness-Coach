@@ -28,10 +28,12 @@ dropping the deprecated call.
 
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
+from src import applog
 
 # Default when nothing is configured, and the fallback whenever the configuration cannot be
 # read. UTC is the honest choice for "we do not know where the athlete is".
 DEFAULT_TIMEZONE = "UTC"
+_fallback_noted = False
 
 
 def utc_now() -> datetime:
@@ -62,7 +64,14 @@ def athlete_timezone() -> ZoneInfo:
         # first run, not to a timestamp. Without this, importing anything that touches the
         # clock silently created config/athlete.yaml from the example.
         return ZoneInfo(load(CONFIG_PATH, create_if_missing=False).athlete.timezone)
-    except Exception:
+    except Exception as exc:
+        global _fallback_noted
+        if not _fallback_noted:
+            # Once per process: this runs on nearly every call, and the cause is a config that will
+            # not load, which the loader has already described. What is worth recording is that
+            # the athlete's day quietly became UTC's, which moves every week boundary.
+            _fallback_noted = True
+            applog.warning("clock.timezone_fallback", exc, using=DEFAULT_TIMEZONE)
         return ZoneInfo(DEFAULT_TIMEZONE)
 
 

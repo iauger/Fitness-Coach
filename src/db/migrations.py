@@ -31,6 +31,7 @@ from pathlib import Path
 
 from .schema import DB_PATH, get_connection
 from src.clock import utc_now_iso
+from src import applog
 
 
 # ── helpers that make a step safe to re-run ───────────────────────────────────
@@ -948,6 +949,7 @@ def migrate(db_path: Path = DB_PATH, verbose: bool = False) -> list[tuple[int, s
         conn.commit()
 
         version = current_version(conn)
+        saved = None
         if any(number > version for number, _, _ in MIGRATIONS):
             saved = backup_before_migrating(conn, db_path, version)
             if saved and verbose:
@@ -967,12 +969,16 @@ def migrate(db_path: Path = DB_PATH, verbose: bool = False) -> list[tuple[int, s
                 # PRAGMA cannot be parameterised; `number` comes from this module, not input.
                 conn.execute(f"PRAGMA user_version = {number}")
                 conn.commit()
-            except Exception:
+            except Exception as exc:
                 conn.rollback()
+                applog.error("db.migration_failed", exc, version=number)
                 raise
             applied.append((number, name))
     finally:
         conn.close()
+    if applied:
+        applog.event("db.migrated", from_version=applied[0][0] - 1, to_version=applied[-1][0],
+                     steps=len(applied), backed_up=bool(saved))
     return applied
 
 

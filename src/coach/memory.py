@@ -29,6 +29,7 @@ is already filed on its own.
 
 import json
 from datetime import datetime
+from src import applog
 
 from src.clock import local_date_of, utc_now_iso
 from src.coach import chat_store, extract
@@ -154,6 +155,7 @@ def summarise_pending(idle_minutes: int = chat_store.IDLE_CLOSE_MINUTES, limit: 
         try:
             note, called = summarise(session_id, client)
         except Exception as exc:
+            applog.warning("memory.summarise_failed", exc)
             if on_error:
                 on_error(session_id, exc)
             continue

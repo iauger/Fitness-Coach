@@ -675,3 +675,29 @@ def test_a_plan_start_long_ago_is_called_out_until_a_week_has_been_decided(repo,
     conn.commit()
     conn.close()
     assert "plan start" not in named(firstrun.checks(path))
+
+
+# -- the application log ------------------------------------------------------------------------
+
+def test_problems_in_the_log_reach_the_setup_checks_without_stopping_it(repo):
+    """
+    Mutant: `checks()` not appending the problems line. The one place that reads every setup question
+    is where someone looks when something seems off, so a log full of errors must show up there, and
+    it must not stop the app from being called ready.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    from src import applog
+
+    db = _ready_repo(repo, "false")
+    assert "problems" not in named(firstrun.checks(db))
+    log = applog.log_dir() / applog.FILE_NAME
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text(json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                               "level": "error", "event": "sync.activities_failed"}) + "\n",
+                   encoding="utf-8")
+    found = named(firstrun.checks(db))["problems"]
+    assert not found.ok and not found.blocking and "1 errors" in found.detail
+    assert firstrun.ready(db)
+    assert "scripts/logs.py" in firstrun.report(db)

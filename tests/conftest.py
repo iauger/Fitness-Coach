@@ -75,6 +75,17 @@ def _no_real_database(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _log_to_a_temporary_directory(monkeypatch, tmp_path_factory):
+    """
+    Every test writes its application log somewhere disposable. The logger is called from the sync,
+    the roller, migrations and the coach, so without this a test run would fill the athlete's own
+    `data/logs/app.jsonl` with events from fixtures, and `status.py` would then report problems that
+    only a test had.
+    """
+    monkeypatch.setenv("FITNESS_COACH_LOG_DIR", str(tmp_path_factory.mktemp("applog")))
+
+
+@pytest.fixture(autouse=True)
 def _example_config(monkeypatch):
     """
     Point every test at `config/athlete.example.yaml`, and clear the memoized load.

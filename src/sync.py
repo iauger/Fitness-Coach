@@ -9,6 +9,8 @@ Window logic:
 """
 
 from datetime import date, timedelta
+import time
+from src import applog
 from src.intervals.client import IntervalsClient
 from src.db.schema import get_connection, read_connection, write_connection
 from src.db.store import (
@@ -135,6 +137,7 @@ def incremental_sync(silent: bool = False) -> dict:
         if not silent:
             print(msg)
 
+    started = time.monotonic()
     start, end = window_for("activities")
     well_start, _ = window_for("wellness")
     event_start, _ = window_for("events")
@@ -163,6 +166,7 @@ def incremental_sync(silent: bool = False) -> dict:
         n = upsert_activities(activities, skipped=skipped)
         activities_ok = True
         if skipped:
+            applog.warning("sync.records_skipped", count=len(skipped))
             # Said, not swallowed. The rest of the batch is stored; these are the records that
             # had no id or no date to file them under.
             results["errors"].append(
@@ -184,9 +188,11 @@ def incremental_sync(silent: bool = False) -> dict:
             if notes:
                 log(f"[sync] notes       {n_notes} activities with athlete notes")
         except Exception as e:
+            applog.warning("sync.notes_failed", e)
             results["errors"].append(f"notes: {e}")
             log(f"[sync] notes       ERROR: {e}")
     except Exception as e:
+        applog.error("sync.activities_failed", e, window_days=(end - start).days)
         results["errors"].append(f"activities: {e}")
         log(f"[sync] activities  ERROR: {e}")
 
@@ -198,6 +204,7 @@ def incremental_sync(silent: bool = False) -> dict:
         results["wellness"] = n
         log(f"[sync] wellness    {n} records")
     except Exception as e:
+        applog.error("sync.wellness_failed", e, window_days=(end - well_start).days)
         results["errors"].append(f"wellness: {e}")
         log(f"[sync] wellness    ERROR: {e}")
 
@@ -209,6 +216,7 @@ def incremental_sync(silent: bool = False) -> dict:
         results["events"] = n
         log(f"[sync] events      {n} records")
     except Exception as e:
+        applog.error("sync.events_failed", e)
         results["errors"].append(f"events: {e}")
         log(f"[sync] events      ERROR: {e}")
     finally:
@@ -232,6 +240,7 @@ def incremental_sync(silent: bool = False) -> dict:
         results["compliance"] = compliance
         log(f"[sync] adherence   {compliance}")
     except Exception as e:
+        applog.error("sync.adherence_failed", e)
         results["errors"].append(f"adherence: {e}")
         log(f"[sync] adherence   ERROR: {e}")
 
@@ -257,7 +266,13 @@ def incremental_sync(silent: bool = False) -> dict:
             f"{rolled['written']} sessions from {rolled['cutoff']}, "
             f"{rolled['weeks']} week rows  (backfilled {rolled['backfilled']})")
     except Exception as e:
+        applog.error("sync.plan_failed", e)
         results["errors"].append(f"plan: {e}")
         log(f"[sync] plan        ERROR: {e}")
 
+    done = {"activities": results["activities"], "wellness": results["wellness"],
+            "events": results["events"], "notes": results["notes"],
+            "recorded_decisions": activities_ok, "problems": len(results["errors"]),
+            "ms": int((time.monotonic() - started) * 1000)}
+    (applog.warning if results["errors"] else applog.event)("sync.done", **done)
     return results

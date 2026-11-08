@@ -24,8 +24,10 @@ Nothing here changes a prescription or calls a coaching tool.
 
 from dataclasses import dataclass, field
 from datetime import date
+import time
 
 from src import signals
+from src import applog
 from src.coach import settings as coach_settings
 
 VERSION = "x1"
@@ -209,6 +211,7 @@ def extract(text: str, today: str, client, model: str | None = None,
     text = (text or "").strip()[-MAX_TEXT_CHARS:]
     if open_threads is None:
         open_threads = signals.recent_threads(today)
+    started = time.monotonic()
     reply = client.messages.create(
         model=model or coach_settings.extractor_model(), max_tokens=MAX_TOKENS, system=SYSTEM,
         tools=[_schema()], tool_choice={"type": "tool", "name": TOOL},
@@ -217,9 +220,19 @@ def extract(text: str, today: str, client, model: str | None = None,
                    f"The athlete's words:\n<<<\n{text}\n>>>"}])
     raw = next((b.input for b in reply.content
                 if getattr(b, "type", "") == "tool_use" and b.name == TOOL), None)
+    usage = getattr(reply, "usage", None)
     if not isinstance(raw, dict):
+        applog.warning("extract.no_filing", model=model or coach_settings.extractor_model())
         raise RuntimeError("the extractor did not return a filing")
-    return parse(raw, text, today)
+    found = parse(raw, text, today)
+    # What the extractor did, as counts. `rejected` is the quote guard at work: a rising number means
+    # the model is paraphrasing instead of quoting, which is the early sign of a prompt gone stale.
+    applog.event("extract.done", model=model or coach_settings.extractor_model(),
+                 signals=len(found.signals), rejected=len(found.rejected),
+                 input_tokens=getattr(usage, "input_tokens", None),
+                 output_tokens=getattr(usage, "output_tokens", None),
+                 ms=int((time.monotonic() - started) * 1000))
+    return found
 
 
 def file_signals(found: Extraction, *, source: str, source_ref: str, observed_at: str | None = None) -> int:

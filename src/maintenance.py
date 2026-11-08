@@ -30,6 +30,7 @@ threading primitive cannot do.
 
 import os
 import time
+from src import applog
 from contextlib import contextmanager
 from datetime import date
 
@@ -105,6 +106,29 @@ def needs_push(conn, today: date, plan_name: str | None = None) -> bool:
 def run_cycle(today: date | None = None, push_enabled: bool | None = None,
               plan_name: str | None = None, silent: bool = True) -> dict:
     """
+    One full maintenance pass, and one line in the application log saying how it went.
+
+    The pass itself is `_cycle`; this wrapper only records it, so every way out of it (a skip, a
+    push, an error) is logged once and none can be forgotten.
+    """
+    started = time.monotonic()
+    result = _cycle(today, push_enabled, plan_name, silent)
+    push = result.get("push") or {}
+    fields = {"ms": int((time.monotonic() - started) * 1000), "problems": len(result.get("errors", [])),
+              "pushed": bool(push.get("pushed")), "created": push.get("created", 0),
+              "deleted": push.get("deleted", 0), "orphans_removed": push.get("orphans_removed", 0)}
+    if result.get("skipped"):
+        applog.event("maintenance.skipped", why="another run holds the lock")
+    elif result.get("errors"):
+        applog.warning("maintenance.cycle", **fields)
+    else:
+        applog.event("maintenance.cycle", **fields)
+    return result
+
+
+def _cycle(today: date | None = None, push_enabled: bool | None = None,
+           plan_name: str | None = None, silent: bool = True) -> dict:
+    """
     One full maintenance pass. Safe to call on a timer.
 
     Never raises for an expected failure: the network is down, the API is rate-limited, a
@@ -142,12 +166,14 @@ def run_cycle(today: date | None = None, push_enabled: bool | None = None,
             try:
                 result["push"] = _reconcile_and_push(today, plan_name)
             except Exception as exc:
+                applog.error("maintenance.push_failed", exc)
                 result["errors"].append(f"push: {exc}")
                 result["push"] = {"error": str(exc)}
     except AlreadyRunning as exc:
         # Not an error worth alarming about: the other runner is doing the work.
         result["skipped"] = str(exc)
     except Exception as exc:
+        applog.error("maintenance.cycle_failed", exc)
         result["errors"].append(f"cycle: {exc}")
     return result
 

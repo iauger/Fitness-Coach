@@ -144,6 +144,20 @@ screen through `show(parent, ...kids)`, which drops nulls; a test fails on a bar
 `main.replaceChildren(`. Activity names reach the calendar from Zwift and Strava, so
 `calendar_view` escapes them: that page shares an origin with the API and can read its token.
 
+## The application log records events, never words
+
+`src/applog.py` writes one JSON line per event to `data/logs/app.jsonl`: counts, durations,
+exception types and where they came from. It never takes the athlete's words, because the file and
+`scripts/support_bundle.py`'s zip are meant to be sent to another person. Fields named like words
+(`note`, `question`, `reply`, `quote`, `name`...) are dropped by the logger and a test fails if a
+call site passes one. Exception messages can echo a short bad value, so they are scrubbed and cut to
+300 characters, and the bundle's README tells the person to read it first.
+
+A broad `except Exception` in an unattended module (sync, maintenance, coach turn, API, migrations)
+must call `applog`, re-raise, or carry a `# not logged: <why>` comment; `tests/test_applog_guard.py`
+fails otherwise. Every test writes its log to a temporary directory (conftest), so `status.py`
+never reports a problem that only a fixture had. The logger never raises into the app.
+
 ## Read the plan's own ladder, never the module constant
 
 `progression.TIERS` is the built-in ladder and a fallback. The plan's real rungs live in the

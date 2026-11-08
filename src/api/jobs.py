@@ -14,6 +14,7 @@ State lives in this process only. A restart forgets a finished job, which is fin
 """
 
 import threading
+from src import applog
 from datetime import datetime, timezone
 from typing import Callable
 
@@ -62,6 +63,7 @@ class Job:
         except maintenance.AlreadyRunning as exc:
             error = f"Another sync is running ({exc}). Try again in a minute."
         except Exception as exc:          # a job must end with a reason, never with silence
+            applog.error("job.failed", exc, job=self.name)
             error = str(exc) or exc.__class__.__name__
         with self._lock:
             self._state.update(running=False, finished_at=_now(), result=result, error=error)
