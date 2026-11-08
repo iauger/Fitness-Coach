@@ -121,6 +121,29 @@ the Settings screen, and the ladder is then re-derived through its preview. A se
 suggested if it is also in `setup._FIELDS` (a test holds the two together), so a button can never be
 offered that the settings route would refuse.
 
+## A week is graded once, so only from a sync that worked
+
+`plan_progression` is append-only: a closed week is decided once and never re-decided. So
+`incremental_sync` passes `persist_state=False` to the roller when its own activities fetch failed
+(the horizon is still built, nothing is recorded), and each kind of data resumes from its own last
+`ok` row in `sync_log`, never from another kind's date. Anchoring activities on the newest wellness
+date once skipped weeks of rides for good.
+
+## The calendar holds only what the plan still contains
+
+`export.reconcile` names every remote event with this plan's exact id shape (`<slug>-<date>-<role>`)
+that no local session owns, and the maintenance cycle deletes them. The roller deletes the row of a
+session that leaves the horizon, and with it the only record of its event id, so without this the
+event stays on the athlete's watch for good. It never touches an event with no `external_id` or
+another plan's.
+
+## Screens are painted through `show()`, and text from outside is escaped
+
+`replaceChildren(null)` writes the word "null" into the page, so `src/web/index.html` paints every
+screen through `show(parent, ...kids)`, which drops nulls; a test fails on a bare
+`main.replaceChildren(`. Activity names reach the calendar from Zwift and Strava, so
+`calendar_view` escapes them: that page shares an origin with the API and can read its token.
+
 ## Read the plan's own ladder, never the module constant
 
 `progression.TIERS` is the built-in ladder and a fallback. The plan's real rungs live in the

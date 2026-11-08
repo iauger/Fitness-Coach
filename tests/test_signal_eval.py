@@ -144,8 +144,11 @@ def test_the_athletes_own_writing_is_merged_in_when_present_and_never_required(t
 
 
 def test_the_athletes_writing_is_looked_for_under_data_which_is_never_committed():
+    import shutil
     import subprocess
     assert ev.PRIVATE_PATH.parent.name == "data"
+    if shutil.which("git") is None or not (ev.PRIVATE_PATH.parents[1] / ".git").exists():
+        pytest.skip("not a git checkout (a ZIP download, say): there is no ignore file to ask")
     ignored = subprocess.run(["git", "check-ignore", "-q", str(ev.PRIVATE_PATH)],
                              cwd=ev.PRIVATE_PATH.parents[1]).returncode
     assert ignored == 0

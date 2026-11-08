@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from src import signals
+from src.api.ids import RowId
 from src.clock import today_local
 
 router = APIRouter(prefix="/api/signals", tags=["signals"])
@@ -38,14 +39,14 @@ def list_signals(kind: str | None = None, topic: str | None = None,
 
 
 @router.post("/{signal_id}/dismiss")
-def dismiss(signal_id: int, body: Dismissal) -> dict:
+def dismiss(signal_id: RowId, body: Dismissal) -> dict:
     if not signals.dismiss(signal_id, body.reason):
         raise HTTPException(404, f"no live signal {signal_id}")
     return {"id": signal_id, "dismissed": True}
 
 
 @router.post("/{signal_id}/restore")
-def restore(signal_id: int) -> dict:
+def restore(signal_id: RowId) -> dict:
     if not signals.restore(signal_id):
         raise HTTPException(404, f"no dismissed signal {signal_id}")
     return {"id": signal_id, "dismissed": False}

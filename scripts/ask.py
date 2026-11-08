@@ -18,6 +18,8 @@ if sys.stdout.encoding != "utf-8":
 from src.coach.session import CoachSession
 
 if __name__ == "__main__":
+    from src.cli import friendly_errors
+    friendly_errors()
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", help="Override COACH_MODEL env var")
     args = parser.parse_args()

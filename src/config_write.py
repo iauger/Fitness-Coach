@@ -19,12 +19,15 @@ refused by `_build`, which is the same check every load makes.
 
 import io
 import os
+
+import yaml
 from datetime import date
 from pathlib import Path
 from typing import Any
 
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
+from ruamel.yaml.scalarstring import DoubleQuotedScalarString
 
 from src import config as cfg
 
@@ -41,8 +44,21 @@ def _yaml() -> YAML:
     return y
 
 
+def _reads_back_as_itself(text: str) -> bool:
+    """Whether PyYAML, which loads this file, reads the bare text as the same string."""
+    try:
+        return yaml.safe_load(text) == text
+    except yaml.YAMLError:
+        return False
+
+
 def _plain(value: Any) -> Any:
     """Short lists and maps stay on one line, as the example writes them: [3.5, 4.0]."""
+    if isinstance(value, str) and not _reads_back_as_itself(value):
+        # ruamel follows YAML 1.2 and writes `No`, `yes`, `off` and `12:30` bare; PyYAML follows
+        # 1.1 and reads them back as False, True, False and 750. A name saved from the Settings
+        # screen must come back as typed, so what the reader would reinterpret is quoted.
+        return DoubleQuotedScalarString(value)
     if isinstance(value, (list, tuple)):
         seq = CommentedSeq(_plain(v) for v in value)
         seq.fa.set_flow_style()

@@ -62,6 +62,8 @@ def _next_cycle_end(as_of: date | None) -> str | None:
 
 
 if __name__ == "__main__":
+    from src.cli import friendly_errors
+    friendly_errors()
     p = argparse.ArgumentParser()
     p.add_argument("--as-of", type=date.fromisoformat, default=None,
                    help="Review as if run on this past date (YYYY-MM-DD). Clamped to today — "

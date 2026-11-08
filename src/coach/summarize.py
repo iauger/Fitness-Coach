@@ -65,7 +65,8 @@ def weekly_narrative(m: dict) -> tuple[str | None, str | None]:
     if not has_qualitative_content(m):
         return None, None
 
-    client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    from src.coach.settings import api_key
+    client = Anthropic(api_key=api_key())
     resp = client.messages.create(
         model=SUMMARY_MODEL,
         max_tokens=MAX_TOKENS,

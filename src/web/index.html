@@ -233,7 +233,11 @@ async function api(method, path, body) {
   let r = await send();
   if (r.status === 403 && method !== "GET") { await getToken(true); r = await send(); }
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(typeof data.detail === "string" ? data.detail : "request failed (" + r.status + ")");
+  if (!r.ok) {
+    // A string for what this project refuses, a list for what FastAPI refuses: say the first reason.
+    const first = Array.isArray(data.detail) && data.detail[0] && data.detail[0].msg;
+    throw new Error(typeof data.detail === "string" ? data.detail : first || "request failed (" + r.status + ")");
+  }
   return data;
 }
 

@@ -59,7 +59,9 @@ def _client():
     import os
 
     from anthropic import Anthropic
-    return Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+
+    from src.coach.settings import api_key
+    return Anthropic(api_key=api_key())
 
 
 def _write(session_id: str, summary: str | None, model: str, local_date: str,

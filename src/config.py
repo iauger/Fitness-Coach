@@ -257,6 +257,14 @@ def _coerce(value: Any, declared: Any, where: str) -> Any:
         # bool is an int subclass; accepting it here would silently turn `true` into 1.
         if declared is not str and isinstance(value, bool):
             raise ConfigError(f"{where}: expected a number, got {value!r}")
+        if declared is str and isinstance(value, (bool, list, dict)):
+            # YAML 1.1 reads a bare No, yes, on or off as a boolean, and `str(False)` would make a
+            # name of it. Say what happened rather than store the word "False".
+            raise ConfigError(f"{where}: expected text but YAML read {value!r}; put the value in "
+                              f"quotes")
+        if declared is int and isinstance(value, float) and not value.is_integer():
+            # `int(2.5)` is 2, silently: two and a half rides a week is not a setting.
+            raise ConfigError(f"{where}: expected a whole number, got {value!r}")
         try:
             return declared(value)
         except (TypeError, ValueError):
@@ -299,6 +307,10 @@ def _has_default(f) -> bool:
 
 # ── validation beyond types ───────────────────────────────────────────────────
 
+# How much text a setting may hold: names are a line, notes are a paragraph or two.
+TEXT_LIMITS = {"name": 120, "notes": 4000}
+
+
 def _validate(cfg: Config) -> None:
     """
     The checks a type cannot make.
@@ -336,6 +348,19 @@ def _validate(cfg: Config) -> None:
                 f"plan.slug: {slug!r} must be lowercase letters, digits and hyphens, not "
                 f"starting or ending with a hyphen. Normally you leave this unset and it is "
                 f"generated from plan.name once.")
+
+    # Text that reaches a page header, a coach prompt on every turn and a file the athlete edits.
+    # A name with a line break or a hundred thousand characters is not a name; this is the line
+    # between a note and a denial of service on your own screen.
+    for path, value, limit, one_line in (
+            ("athlete.name", cfg.athlete.name, TEXT_LIMITS["name"], True),
+            ("athlete.equipment", cfg.athlete.equipment, TEXT_LIMITS["name"], True),
+            ("plan.name", cfg.plan.name, TEXT_LIMITS["name"], True),
+            ("athlete.notes", cfg.athlete.notes, TEXT_LIMITS["notes"], False)):
+        if len(value) > limit:
+            raise ConfigError(f"{path}: {len(value)} characters is more than the {limit} allowed")
+        if one_line and any(ch in value for ch in "\r\n\t"):
+            raise ConfigError(f"{path}: must be a single line")
 
     for name in ("height_in", "weight_lbs", "ftp"):
         value = getattr(cfg.profile, name)

@@ -245,7 +245,7 @@ In order, that walks you through:
 |---|---|
 | `cp .env.example .env` | your intervals.icu key, from **Settings > Developer** |
 | `cp config/athlete.example.yaml config/athlete.yaml` | then edit it — name, timezone, goals, plan start |
-| `python scripts/migrate.py --apply` | create the database |
+| `python scripts/migrate.py --apply` | create the database. Whenever a migration is pending on a database that has anything in it, `data/backups/` gets a copy first (the newest five are kept) |
 | `python scripts/fetch_history.py` | backfill your riding; this is what the ladder is derived from |
 | `python scripts/seed_profile.py --ftp 250` | your FTP — every prescription is a percentage of it |
 | `python scripts/bootstrap_plan.py` | look at the derived ladder, then `--write` to keep it |
@@ -354,10 +354,11 @@ See [ROADMAP.md](ROADMAP.md) for the reasoning behind each, and the backlog.
 ## Testing
 
 ```bash
+pip install -r requirements-dev.txt     # the app's requirements plus pytest
 pytest
 ```
 
-978 tests. The convention worth knowing: new behaviour is checked by **mutation testing**, not
+Over 1,500 tests, about a minute and a half. The convention worth knowing: new behaviour is checked by **mutation testing**, not
 only by a green suite. Breaking the code deliberately and confirming a test fails has
 repeatedly caught tests here that passed for the wrong reason — one asserting a constant's own
 value back at itself, a filter that worked only because of insert order. Several docstrings in

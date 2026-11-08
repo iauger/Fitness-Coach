@@ -76,6 +76,8 @@ def prompt_for_feel() -> str:
 
 
 if __name__ == "__main__":
+    from src.cli import friendly_errors
+    friendly_errors()
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", help="Override COACH_MODEL env var")
     parser.add_argument("--no-prompt", action="store_true",

@@ -61,6 +61,8 @@ def run_week(week_start: date, force: bool, metrics_only: bool, done: set[str]) 
 
 
 if __name__ == "__main__":
+    from src.cli import friendly_errors
+    friendly_errors()
     p = argparse.ArgumentParser()
     p.add_argument("--week", type=date.fromisoformat, help="Any date inside the target week")
     p.add_argument("--backfill", type=int, metavar="N", help="Last N completed weeks")

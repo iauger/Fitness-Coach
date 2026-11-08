@@ -24,7 +24,8 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from src.api.cache import CACHE
 from src.api.guard import Guard, TOKEN, TOKEN_PATH
@@ -119,6 +120,23 @@ app = FastAPI(
 )
 
 app.add_middleware(Guard)
+
+
+@app.exception_handler(RequestValidationError)
+async def refuse_bad_input(request, exc: RequestValidationError) -> JSONResponse:
+    """
+    The same 422 FastAPI sends, without echoing the input back.
+
+    The default body carries each rejected value under `input`. A value of `Infinity` or NaN in a
+    JSON body cannot be serialised, so describing the rejection raised and the client got a 500
+    for a bad request; and a 300,000-character field was sent straight back. `loc`, `msg` and
+    `type` are everything a screen needs.
+    """
+    return JSONResponse(
+        {"detail": [{"loc": list(e.get("loc", ())), "msg": e.get("msg"), "type": e.get("type")}
+                    for e in exc.errors()]},
+        status_code=422)
+
 app.include_router(chat_router)
 app.include_router(setup_router)
 app.include_router(signals_router)

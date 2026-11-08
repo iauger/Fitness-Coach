@@ -898,6 +898,41 @@ def current_version(conn: sqlite3.Connection) -> int:
     return conn.execute("PRAGMA user_version").fetchone()[0]
 
 
+BACKUPS_KEPT = 5
+
+
+def backup_before_migrating(conn: sqlite3.Connection, db_path: Path, version: int) -> Path | None:
+    """
+    Copy the database aside before a migration touches it, and return where, or None.
+
+    A migration can drop a column for good (15 did), and a database holds years of the athlete's
+    own history and conversations that no sync can fetch back. So a file that has anything in it
+    is copied to `backups/` beside it first, using SQLite's own backup so the copy is consistent
+    with the write-ahead log, named for the version it was taken at. The newest few are kept.
+
+    A database with nothing in it (a first run) has nothing to protect and gets no copy. Not a
+    migration step: it runs once before any of them, and reads the clock, which a step may not.
+    """
+    from datetime import datetime, timezone
+
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if not tables - {"schema_migrations", "sqlite_sequence"}:
+        return None
+    folder = db_path.parent / "backups"
+    folder.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
+    dest = folder / f"{db_path.stem}-v{version}-{stamp}.db"
+    copy = sqlite3.connect(dest)
+    try:
+        conn.backup(copy)
+    finally:
+        copy.close()
+    older = sorted(folder.glob(f"{db_path.stem}-v*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for stale in older[BACKUPS_KEPT:]:
+        stale.unlink(missing_ok=True)
+    return dest
+
+
 def migrate(db_path: Path = DB_PATH, verbose: bool = False) -> list[tuple[int, str]]:
     """Apply every pending migration in order. Returns the list that was applied."""
     conn = get_connection(db_path)
@@ -913,6 +948,10 @@ def migrate(db_path: Path = DB_PATH, verbose: bool = False) -> list[tuple[int, s
         conn.commit()
 
         version = current_version(conn)
+        if any(number > version for number, _, _ in MIGRATIONS):
+            saved = backup_before_migrating(conn, db_path, version)
+            if saved and verbose:
+                print(f"  backed up to {saved}")
         for number, name, step in MIGRATIONS:
             if number <= version:
                 continue

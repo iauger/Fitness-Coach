@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from src.analysis.report import MEMORY_PER_TYPE, coaching_context_text, coaching_memory_entries
 from src.api.cache import freshness_key
+from src.api.ids import RowId
 from src import maintenance
 from src.clock import today_local
 from src.coach import chat_store, due, memory
@@ -300,7 +301,7 @@ def memory_list(limit: int = 15) -> dict:
 
 
 @router.put("/memory/{note_id}")
-def memory_edit(note_id: int, body: NoteBody) -> dict:
+def memory_edit(note_id: RowId, body: NoteBody) -> dict:
     """Correct a conversation note: the coach will be told the corrected version."""
     text = body.content.strip()
     if not text:
@@ -314,7 +315,7 @@ def memory_edit(note_id: int, body: NoteBody) -> dict:
 
 
 @router.delete("/memory/{note_id}")
-def memory_delete(note_id: int) -> dict:
+def memory_delete(note_id: RowId) -> dict:
     """
     Make the coach forget a conversation note. The conversation itself stays; only the note goes,
     and it is not rewritten unless the conversation later continues.

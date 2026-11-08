@@ -32,10 +32,16 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+DESCRIPTION_LIMIT = 300
+
+
 def _check(description, target_date, priority) -> tuple[str, str | None, str]:
     text = (description or "").strip()
     if not text:
         raise GoalError("a goal needs a description")
+    if len(text) > DESCRIPTION_LIMIT:
+        raise GoalError(f"a goal description is at most {DESCRIPTION_LIMIT} characters, "
+                        f"this is {len(text)}")
     if priority not in PRIORITIES:
         raise GoalError(f"priority {priority!r} is not one of {', '.join(PRIORITIES)}")
     if target_date in (None, ""):

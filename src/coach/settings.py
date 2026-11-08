@@ -43,6 +43,30 @@ def has_key() -> bool:
     return bool((os.environ.get(ENV_KEY) or "").strip())
 
 
+class MissingKey(RuntimeError):
+    """No Anthropic API key, with a message saying where to get one."""
+
+
+def api_key() -> str:
+    """
+    The key, or `MissingKey` saying what to do about it.
+
+    Three places used to read `os.environ["ANTHROPIC_API_KEY"]` directly, and a script run before
+    the key was added died with `KeyError: 'ANTHROPIC_API_KEY'`: a complete diagnosis for someone
+    who knows this project and no help to anyone else. The intervals.icu key got a proper message
+    for the same reason; this is its twin.
+    """
+    load_dotenv()
+    key = (os.environ.get(ENV_KEY) or "").strip()
+    if not key:
+        raise MissingKey(
+            "No Anthropic API key.\n"
+            "  Get one at console.anthropic.com, then add it to .env as ANTHROPIC_API_KEY=...\n"
+            "  The coach is the only part that needs it; everything else works without.\n"
+            "  python scripts/status.py shows what else is outstanding.")
+    return key
+
+
 def refusal() -> tuple[int, str] | None:
     """`(http status, reason)` if the coach cannot run right now, else None."""
     if not enabled():
