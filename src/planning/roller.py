@@ -123,11 +123,16 @@ def plan_week_number(monday: date) -> int:
 
 
 def store_horizon(conn, today: date | None = None, plan_name: str | None = None,
-                  weeks: int = HORIZON_WEEKS, start_tier: int = 1) -> dict:
+                  weeks: int = HORIZON_WEEKS, start_tier: int = 1,
+                  persist_state: bool = True) -> dict:
     """
     Regenerate and store the horizon. Idempotent, and never rewrites a frozen session.
 
     Returns counts of what moved, so a sync log says something useful rather than "ok".
+
+    `persist_state=False` builds and stores the horizon without recording any week's decision.
+    A sync passes it when its own activities fetch failed: the plan can still be rolled, but a
+    closed week is graded once and for good and must not be graded from data known to be stale.
     """
     today = today or today_local()
     plan_name = plan_name or configured_plan_name()
@@ -153,7 +158,7 @@ def store_horizon(conn, today: date | None = None, plan_name: str | None = None,
     check_fit(rotation, ladder)
 
     built = horizon(conn, today, plan_name, weeks, start_tier, tiers=ladder,
-                    rotation=rotation)
+                    rotation=rotation, persist_state=persist_state)
     cutoff = built["cutoff"]
 
     # Delete only what the new horizon no longer contains, then update the rest in place.

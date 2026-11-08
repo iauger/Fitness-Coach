@@ -78,10 +78,40 @@ def test_a_failure_part_way_through_leaves_nothing_behind(db):
     Previously `with conn:` did the same for the loop and the close was skipped entirely on
     the error path, leaking the handle. The rollback behaviour has to survive the change.
     """
-    bad = [activity("a1"), {"id": object()}]     # unencodable -> sqlite raises
+    bad = [activity("a1"), {**activity("a2", minutes=30), "name": object()}]     # unencodable -> sqlite raises
     with pytest.raises(Exception):
         store.upsert_activities(bad, db)
     assert rows(db, "activities") == []
+
+
+@pytest.mark.parametrize("broken, why", [
+    ({"start_date_local": None, "type": "Ride"}, "no usable date"),
+    ({"type": "Ride"}, "no usable date"),
+    ({"start_date_local": 20261103, "type": "Ride"}, "no usable date"),
+    ({"start_date_local": "2026", "type": "Ride"}, "no usable date"),
+])
+def test_one_record_with_no_usable_date_costs_only_itself(db, broken, why):
+    """
+    Mutant: the record check removed. `None[:10]` raised, the whole batch rolled back, and the same
+    window was fetched and failed again every hour, so no new ride was ever stored.
+    """
+    skipped: list[str] = []
+    n = store.upsert_activities([activity("good1"), {"id": "bad", **broken}, activity("good2", minutes=30)],
+                                db, skipped=skipped)
+    assert n == 2 and {r["id"] for r in rows(db, "activities")} == {"good1", "good2"}
+    assert skipped == [f"bad ({why})"]
+
+
+def test_a_record_with_no_id_is_skipped_not_filed_under_an_empty_one(db):
+    skipped: list[str] = []
+    assert store.upsert_activities([{"start_date_local": "2026-11-03T07:00:00", "type": "Ride"},
+                                    activity("ok")], db, skipped=skipped) == 1
+    assert [r["id"] for r in rows(db, "activities")] == ["ok"]
+    assert skipped == ["? (no id)"]
+
+
+def test_the_skipped_list_is_optional(db):
+    assert store.upsert_activities([{"id": "x"}, activity("ok")], db) == 1
 
 
 # ── wellness, events, notes ───────────────────────────────────────────────────

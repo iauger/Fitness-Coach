@@ -21,12 +21,36 @@ def _has_near_duplicate(conn, date: str, moving_time: int, activity_type: str,
     return any(sport_group(r["type"]) == group for r in rows)
 
 
-def upsert_activities(activities: list[dict], db_path: Path = DB_PATH) -> int:
+def _unusable(a: dict) -> str | None:
+    """Why an activity record cannot be stored, or None. It needs an id and a date it can be filed under."""
+    if not a.get("id"):
+        return "no id"
+    stamp = a.get("start_date_local") or a.get("date")
+    if not isinstance(stamp, str) or len(stamp) < 10:
+        return "no usable date"
+    return None
+
+
+def upsert_activities(activities: list[dict], db_path: Path = DB_PATH,
+                      skipped: list[str] | None = None) -> int:
+    """
+    Store the activities and return how many were written.
+
+    A record that cannot be stored is skipped, not fatal, and named in `skipped` when the caller
+    passes a list. This used to be one transaction over the whole batch, so a single malformed
+    record rolled back every good one beside it, and since the sync re-pulls the same window every
+    hour the same record failed the same way every hour.
+    """
     with write_connection(db_path) as conn:
         inserted = 0
         for a in activities:
+            why = _unusable(a)
+            if why:
+                if skipped is not None:
+                    skipped.append(f"{a.get('id') or '?'} ({why})")
+                continue
             act_id = str(a.get("id", ""))
-            act_date = a.get("start_date_local", a.get("date", ""))[:10]
+            act_date = (a.get("start_date_local") or a.get("date"))[:10]
             act_time = a.get("moving_time") or a.get("movingTime")
             act_type = a.get("type", "")
             # Skip if a same-sport activity with similar duration already exists
@@ -66,7 +90,7 @@ def upsert_activities(activities: list[dict], db_path: Path = DB_PATH) -> int:
                     raw_json=excluded.raw_json
             """, (
                 str(a.get("id", "")),
-                a.get("start_date_local", a.get("date", ""))[:10],
+                act_date,
                 a.get("name"),
                 a.get("type"),
                 a.get("sport"),

@@ -82,19 +82,46 @@ def _max_wellness_date() -> date | None:
     return date.fromisoformat(val) if val else None
 
 
-def sync_window() -> tuple[date, date]:
-    """Return (start, end) dates for the incremental sync."""
-    today = today_local()
-    max_date = _max_wellness_date()
+def _last_ok_end(data_type: str) -> date | None:
+    """The end date of the last sync of this kind that succeeded, or None if none is on record."""
+    with read_connection() as conn:
+        row = conn.execute(
+            "SELECT MAX(end_date) AS d FROM sync_log WHERE data_type = ? AND status = 'ok' "
+            "AND end_date <= ?", (data_type, today_local().isoformat())).fetchone()
+    return date.fromisoformat(row["d"]) if row and row["d"] else None
 
-    if max_date is None:
+
+def _anchor(data_type: str) -> date | None:
+    """
+    Where this kind of data was last known to be complete.
+
+    **Each kind resumes from its own last success.** The window used to be anchored on the newest
+    wellness date for all three, so a run in which activities failed and wellness succeeded moved
+    the anchor to today and the next run asked for activities from two days back: the days in
+    between were never fetched again. Wellness is still the fallback for a database that has no
+    sync record of this kind (one that predates the log).
+    """
+    return _last_ok_end(data_type) or _max_wellness_date()
+
+
+def window_for(data_type: str) -> tuple[date, date]:
+    """Return (start, end) dates for the incremental sync of one kind of data."""
+    today = today_local()
+    anchor = _anchor(data_type)
+
+    if anchor is None:
         return today - timedelta(days=MAX_INCREMENTAL_DAYS), today
 
-    gap_days = (today - max_date).days
+    gap_days = (today - anchor).days
     if gap_days > MAX_INCREMENTAL_DAYS:
         return today - timedelta(days=MAX_INCREMENTAL_DAYS), today
 
-    return max(max_date - timedelta(days=OVERLAP_DAYS), date(2017, 1, 1)), today
+    return max(anchor - timedelta(days=OVERLAP_DAYS), date(2017, 1, 1)), today
+
+
+def sync_window() -> tuple[date, date]:
+    """The activities window, which is the one that matters to a decision about a week."""
+    return window_for("activities")
 
 
 def incremental_sync(silent: bool = False) -> dict:
@@ -108,10 +135,12 @@ def incremental_sync(silent: bool = False) -> dict:
         if not silent:
             print(msg)
 
-    start, end = sync_window()
+    start, end = window_for("activities")
+    well_start, _ = window_for("wellness")
+    event_start, _ = window_for("events")
     today = today_local()
-    max_date = _max_wellness_date()
-    gap_days = (today - max_date).days if max_date else MAX_INCREMENTAL_DAYS
+    anchor = _anchor("activities")
+    gap_days = (today - anchor).days if anchor else MAX_INCREMENTAL_DAYS
 
     if gap_days > MAX_INCREMENTAL_DAYS and not silent:
         print(
@@ -126,10 +155,18 @@ def incremental_sync(silent: bool = False) -> dict:
     conn = get_connection()
     results = {"start": start.isoformat(), "end": end.isoformat(),
                "activities": 0, "wellness": 0, "events": 0, "notes": 0, "errors": []}
+    activities_ok = False
 
     try:
         activities = client.get_activities(start, end)
-        n = upsert_activities(activities)
+        skipped: list[str] = []
+        n = upsert_activities(activities, skipped=skipped)
+        activities_ok = True
+        if skipped:
+            # Said, not swallowed. The rest of the batch is stored; these are the records that
+            # had no id or no date to file them under.
+            results["errors"].append(
+                f"activities: {len(skipped)} record(s) skipped, not storable: {', '.join(skipped[:3])}")
         with conn:
             log_sync(conn, "activities", start, end, n)
         results["activities"] = n
@@ -154,10 +191,10 @@ def incremental_sync(silent: bool = False) -> dict:
         log(f"[sync] activities  ERROR: {e}")
 
     try:
-        wellness = client.get_wellness(start, end)
+        wellness = client.get_wellness(well_start, end)
         n = upsert_wellness(wellness)
         with conn:
-            log_sync(conn, "wellness", start, end, n)
+            log_sync(conn, "wellness", well_start, end, n)
         results["wellness"] = n
         log(f"[sync] wellness    {n} records")
     except Exception as e:
@@ -165,10 +202,10 @@ def incremental_sync(silent: bool = False) -> dict:
         log(f"[sync] wellness    ERROR: {e}")
 
     try:
-        events = client.get_events(start, end)
+        events = client.get_events(event_start, end)
         n = upsert_events(events)
         with conn:
-            log_sync(conn, "events", start, end, n)
+            log_sync(conn, "events", event_start, end, n)
         results["events"] = n
         log(f"[sync] events      {n} records")
     except Exception as e:
@@ -206,9 +243,15 @@ def incremental_sync(silent: bool = False) -> dict:
     # us the activity and wellness rows already written above. Unlike the calendar it writes
     # through its own connection, so a failure here cannot leave a half-written horizon —
     # write_connection rolls back.
+    #
+    # **And only from a sync that actually succeeded.** A closed week is graded once and for good,
+    # so grading one from a database whose activities fetch just failed would make a permanent
+    # decision from data this run knew to be incomplete. When the fetch failed the horizon is still
+    # built (from the decision as it stands in memory) and nothing is written to the record; the
+    # next sync that gets the rides in makes it.
     try:
         with write_connection() as plan_conn:
-            rolled = store_horizon(plan_conn, today)
+            rolled = store_horizon(plan_conn, today, persist_state=activities_ok)
         results["plan"] = {k: v for k, v in rolled.items() if k != "sessions"}
         log(f"[sync] plan        T{rolled['tier']} {rolled['week_type']}, "
             f"{rolled['written']} sessions from {rolled['cutoff']}, "

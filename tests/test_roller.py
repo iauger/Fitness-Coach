@@ -485,3 +485,21 @@ def test_a_session_that_leaves_the_horizon_is_removed(db, monkeypatch):
     gone = {k for k in before - after if k[0] >= CUTOFF}
     assert gone, "no session left the horizon, so the prune was never exercised"
     assert not (gone & after)
+
+
+def test_a_roll_can_be_told_not_to_record_the_week_that_just_closed(db):
+    """
+    Mutant: `persist_state` accepted and ignored. A sync whose activities fetch failed passes False
+    so that a closed week, graded once and for good, is not graded from data known to be stale.
+    The horizon is still stored either way.
+    """
+    later = date(2026, 11, 10)          # the Tuesday after the plan's first week closed
+
+    def decided():
+        return db.execute("SELECT COUNT(*) FROM plan_progression WHERE plan_name = ?",
+                          (PLAN,)).fetchone()[0]
+
+    out = store_horizon(db, later, PLAN, persist_state=False)
+    assert decided() == 0 and out["written"] > 0, "stored the horizon, recorded nothing"
+    store_horizon(db, later, PLAN)
+    assert decided() > 0, "the default records the closed week, so the False above proved something"
