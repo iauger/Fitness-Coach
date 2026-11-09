@@ -1,50 +1,100 @@
 # Fitness Coach
 
-A training plan that is gated on what you actually rode, not on what week it is.
+A cycling training plan that follows what you actually ride, instead of what week it is.
 
-It sits on top of [intervals.icu](https://intervals.icu): it reads your synced activities and
-wellness data, decides what the next three weeks should look like, writes those sessions to
-your intervals.icu calendar — which delivers them to Zwift and Garmin — and scores what
-happens. A Claude-backed coaching layer reasons over the same data.
+It connects to [intervals.icu](https://intervals.icu), reads your rides and recovery data, plans
+your next three weeks of workouts, and puts them on your intervals.icu calendar, which sends them
+on to Zwift and Garmin. At the end of each week it looks at what you did and decides whether to
+ask for more, hold steady, or ease back. A coach you can talk to, powered by Claude, sees the same
+data and can answer questions about your training.
 
-Everything runs locally against a SQLite file. There is no hosted service.
+It runs on your own computer and keeps everything in a local database. There is no account to
+create and nothing is hosted: you need an intervals.icu account (free) and, for the coach, an
+Anthropic API key.
 
-## The idea
+## What it does
 
-Most structured plans are a dated ramp: week 14 asks for week 14's volume whether or not
-weeks 1–13 happened. That works until you miss a fortnight, at which point the plan describes
-a past you did not live and there is no way back into it except to start over.
+- **Plans.** Each week it builds the next three weeks of sessions (easy rides, a long ride, usually
+  one hard session, and strength work) sized to where you are now.
+- **Adapts.** Complete a week and the plan steps up. Have a partial week and it holds. Miss time
+  and it eases you back down and gives you a gentle first week back, rather than asking you to
+  catch up.
+- **Delivers.** Sessions appear on your intervals.icu calendar and reach your head unit or Zwift
+  with no manual export. Nothing is written to your calendar until you switch that on.
+- **Shows.** A local app has your plan, your progress through the levels, a calendar, and a
+  dashboard of fitness, load and recovery.
+- **Coaches.** You can ask the coach about your week, do a weekly check-in, and tell it how you
+  are doing. It remembers what you tell it (illness, stress, a sore knee) and you can see and
+  correct everything it has noted.
 
-This one has no dates beyond a three-week horizon and no end. Progression is a **tier ladder**,
-and you move up a rung by completing a week, not by the calendar advancing.
+## Why it exists
 
-**The ladder is derived from your own synced riding**, not shipped with the project. One run of
-`scripts/bootstrap_plan.py` reads your history, finds the volume you have actually held and the
-long ride you actually do, and places five rungs between there and the band you say you want to
-reach. Until that has happened the generator refuses to build anything — a plan built on a
-stranger's measured practice would be plausible, wrong, and silent about it.
+Most training plans are a calendar. Week 14 asks for week 14's volume whether or not weeks 1 to 13
+happened. That works until you miss a fortnight: from then on the plan describes a life you did
+not live, and the only way back is to abandon it and start over. Plenty of people do exactly that.
 
-For one real athlete — returning from a six-month gap, riding about 2.8h a week with a
-70-minute longest ride — it derives:
+This app is built around that moment. There is no end date and no fixed schedule. The plan only
+looks three weeks ahead, and you move forward by completing weeks, not by the calendar advancing.
+Miss a week and you lose one step, not the whole plan. Strength work is never cut, at any level,
+because it is often the habit that survives a break.
 
-| tier | rides | long ride | hard | easy | ~hours |
+## How the plan works
+
+### Five levels, built from your own riding
+
+Progress is a ladder of five levels, T0 to T4. The ladder is not shipped with the project: it is
+worked out from your own history. Run `scripts/bootstrap_plan.py` once and it looks at the hours
+you have really been riding and the longest ride you really do, then builds five steps from there
+up toward the weekly hours you want to reach. Until that has been done the app will not generate
+a plan, because a plan built on someone else's riding would look reasonable and be wrong.
+
+As an example, a rider coming back from a long break who was doing about 2.8 hours a week with a
+70-minute longest ride gets:
+
+| level | rides | long ride | hard sessions | easy ride | ~hours a week |
 |---|---|---|---|---|---|
-| T0 | 2 | 75min | 0 | 50min | 2.1 |
-| T1 | 3 | 75min | 1 | 65min | 3.3 |
-| T2 | 3 | 90min | 1 | 65min | 3.5 |
-| T3 | 3 | 105min | 1 | 65min | 3.8 |
-| T4 | 3 | 120min | 1 | 65min | 4.1 |
+| T0 | 2 | 75 min | 0 | 50 min | 2.1 |
+| T1 | 3 | 75 min | 1 | 65 min | 3.3 |
+| T2 | 3 | 90 min | 1 | 65 min | 3.5 |
+| T3 | 3 | 105 min | 1 | 65 min | 3.8 |
+| T4 | 3 | 120 min | 1 | 65 min | 4.1 |
 
-T0 and T1 share a long ride on purpose: what separates them is the hard session. Yours will
-look different, and the top rung reaches for `sustainable_band_hours` from your config without
-exceeding what `long_ride_ceiling_min` allows — if your history cannot reach the band you asked
-for, the bootstrap says so rather than quietly bending the ladder upward to meet it.
+Yours will look different. The top level aims for `sustainable_band_hours` from your settings, but
+never beyond what `long_ride_ceiling_min` allows. If your history cannot reach the weekly hours
+you asked for, the bootstrap tells you so instead of quietly stretching the ladder to fit.
 
-**The shape of the week is derived too**, not just its size. How many days you ride comes from
-what you actually ride, capped by `max_ride_days` — config states availability, history states
-fact, and someone who sets 7 but rides 3 gets a three-day week. Anything from two to seven days
-generates, with the long ride anchoring Saturday and lifts placed on rest days where there are
-any:
+### Moving between levels
+
+At the end of each week the app compares the time you rode with what that week asked for:
+
+- **Rode at least 90% of the planned time, on at least the planned number of days:** up one level.
+- **Rode some, but less:** stay where you are.
+- **Missed time:** down one level for each week missed, and the first week back is a lighter
+  "re-entry" week, not the middle of a block you were never part of.
+
+The top level is a ceiling. Going beyond it is a decision you make, never something a good run
+of weeks does for you.
+
+Three rules keep this trustworthy:
+
+- **It counts time on the bike, not how closely you matched a workout.** Matching rides to
+  prescribed sessions fails for reasons that have nothing to do with training: an outdoor ride
+  that looks nothing like the plan, a heart-rate-only file, a strength session with no power data.
+  Counting minutes ridden has one failure mode, a ride that did not sync.
+- **A week is graded once.** The result is saved with the numbers it was based on, so you can
+  always see why you are at the level you are.
+- **Today and tomorrow never change.** When the plan updates, it only rewrites sessions two or
+  more days away. An evening sync cannot swap tomorrow morning's ride, and past weeks stay as a
+  record of what was asked.
+
+### Fitting it to your week
+
+Three settings, each separate, shape how a week is laid out:
+
+**How many days you ride.** This comes from what you actually ride, capped by `max_ride_days`
+in your settings. Setting 7 when you really ride 3 gives you a three-day week. Anything from two
+to seven days works (seven is allowed and is a bad idea for most people), with the long ride on
+Saturday and strength sessions on rest days where there are any:
 
 | days | the week |
 |---|---|
@@ -52,12 +102,8 @@ any:
 | 5 | Mon lift · Tue hard · Wed easy · Thu easy · Fri lift · Sat long · Sun easy |
 | 7 | every day rides; two of them also lift |
 
-Seven is permitted and is a bad idea for most people. That judgement belongs to the athlete, not
-to the code.
-
-**Which days** is a separate setting from how many. Left alone, the long ride is Saturday and the
-hard session Tuesday, because that is when the athlete this plan was first built for rides. For
-anyone else:
+**Which days.** By default the long ride is Saturday and the hard session Tuesday. If your week is
+different, say so:
 
 ```yaml
 plan:
@@ -65,16 +111,14 @@ plan:
   long_ride_day: sun                       # optional; otherwise Saturday, or nearest the weekend
 ```
 
-The week is then placed inside those days and nothing, lifts included, lands outside them. The
-hard session goes as far from the long ride as the week allows on both sides, and lifts keep
-away from both. With the days above that is Sunday long, Wednesday hard, Friday easy, lifts on
-Monday and Friday. The rules are checked when the file loads — a three-day week with two lifts
-is refused there, naming the arithmetic — and `status.py` re-checks them against your stored
-ladder, because you can edit the days after the ladder was derived and the next roll would
-otherwise fail without anyone watching.
+Everything, strength included, is placed on those days and nowhere else. The hard session goes as
+far from the long ride as the week allows, and strength stays away from both. With the days above
+that gives a long ride on Sunday, hard on Wednesday, easy on Friday, and strength on Monday and
+Friday. The settings are checked when they load (a three-day week with two strength sessions is
+refused, with the reason), and `status.py` re-checks them against your saved ladder, since editing
+your days later could otherwise break the next update without anyone noticing.
 
-**How long a ride may be** is a third, separate setting. "Three days a week, ninety minutes at
-most" is two numbers:
+**How long a ride can be.** "Three days a week, ninety minutes at most" is two numbers:
 
 ```yaml
 plan:
@@ -83,48 +127,24 @@ plan:
   day_max_ride_min: {sat: 150}      # optional per-day overrides
 ```
 
-The plan is built *inside* that limit rather than clamped to it afterwards, and that distinction
-is the design. A rung is graded against 90% of its minutes, so a ride quietly shortened to fit
-would leave a rung the gate expects and the calendar cannot deliver: you would do everything
-asked and hold at the same tier for ever, with nothing saying why. Instead the ladder climbs to
-what your limit allows — the long ride first, then the easy rides, one thing changing per rung —
-and stops. For someone riding 75-minute long rides and 65-minute easy ones, a 90-minute limit
-climbs 3.25h to 4.0h in real steps.
+The ladder is built to fit inside your limit rather than having rides trimmed afterwards. The
+difference matters: if a 105-minute ride were quietly cut to 90 to fit, the level would still
+expect 105. You would do everything you were asked and stay on the same level for ever, with
+nothing telling you why. Instead the ladder climbs as far as your limit allows (the long ride
+first, then the easy rides) and stops, and the app says so. At the top level it notes that your
+limit is what is holding you there. After a month of meeting it, the coach raises it at a check-in
+with the options and what each costs, for example Saturday from 90 to 105 minutes (about a quarter
+of an hour more a week) or a fourth ride day (about an hour and a half). If your limit leaves no
+room to climb at all, the bootstrap refuses and names the number ("raise `plan.max_ride_min` to at
+least 80"). A limit you tighten later that your saved ladder no longer fits is flagged by
+`status.py` before the next update can fail.
 
-When the plan reaches the limit, it tells you. Once you are at the top rung it notes that the
-limit is what is holding the plan there. After a month of meeting it, the coach raises it at a
-check-in with the options and what each costs: raise Saturday from 90 to 105 (about a quarter
-of an hour more a week), or add a fourth day (about an hour and a half). If your limit leaves no
-room to climb at all, bootstrap refuses and names the number: "raise `plan.max_ride_min` to at
-least 80". The same goes for a limit you tighten later that the stored ladder no longer fits:
-`status.py` flags it before the next roll can fail.
+Hard sessions come in fixed shapes of 40 to 78 minutes. One that does not fit its day is swapped
+for a variant that does, and if none fit, that day becomes an easy ride. Threshold work needs
+about 60 minutes and VO2 work about 52; sprint sessions fit in 45. `status.py` tells you which
+blocks are affected, so you do not find out from a calendar with no intervals on it.
 
-Hard sessions come in fixed shapes of 40–78 minutes, so one that cannot fit its day is chosen
-from the variants that do, and if none do, that block's hard slot becomes an easy ride. Threshold
-needs about 60 minutes and VO2 about 52; the sprint sessions fit in 45. `status.py` says which
-blocks are affected rather than leaving you to find out from a calendar with no intervals on it.
-
-A week that hits ≥90% of its tier's volume *and* its ride-day count advances you one rung. A
-partial week holds. A gap steps you down one rung per week and produces a **re-entry week**
-rather than dropping you into week 4 of a block you were never in. T4 is a ceiling, not a
-waypoint — going beyond it is an explicit decision, never the automatic consequence of a good
-streak.
-
-Three properties make it behave:
-
-- **The gate reads measured volume, never compliance scoring.** Adherence matching fails for
-  reasons that have nothing to do with training — an outdoor ride that does not resemble the
-  prescription, a heart-rate-only file, strength work that carries no planned TSS. A gate built
-  on `SUM(moving_time)` per Monday-week inherits exactly one failure mode: a ride that did not
-  sync.
-- **Decisions are append-only.** When a week closes it is graded once and the row is written
-  once. Re-deriving a past decision later answers today's question, not the one that was asked,
-  so the inputs each decision was made under are stored beside it.
-- **Today and tomorrow are frozen.** A regeneration only ever rewrites sessions dated two or
-  more days out, so an evening sync cannot change tomorrow morning's ride, and past
-  prescriptions survive as the record of what was asked.
-
-### How the coach remembers
+## How the coach remembers
 
 The coach has no memory of its own. Each time you talk to it, it starts fresh and is handed a
 briefing: your training data, plus a few short notes about earlier conversations. Everything it
@@ -160,23 +180,24 @@ briefing: your training data, plus a few short notes about earlier conversations
 Hard facts (an injury, a goal, a change at work) belong in the structured records, not in a note:
 the notes are a short rolling window, and the oldest fall out of it.
 
-### Why it is built this way
+## Where the design came from
 
-It was built for one athlete, from nine years of their own data, and the shape came out of
-what that data said rather than out of a methodology. Over fourteen months, **21 of 62 weeks
-had no ride at all** — but only one of eleven dropouts had any fatigue signature beforehand.
-The rest began from normal or good HRV and sleep.
+It was first built for one rider returning from a long break, using nine years of their own
+training data, and the shape came from what that data showed rather than from a training
+methodology. Over fourteen months, 21 of 62 weeks had no ride at all, yet only one of the eleven
+breaks was preceded by signs of overreaching: the rest began from normal heart-rate variability
+and good sleep. People were not burning out. They were falling out of the routine and finding no
+way back in.
 
-So the failure mode being designed against is *failure to re-enter after an interruption*, not
-overreaching. That is why there is no ramp to fall behind, why a missed week costs one rung
-instead of the plan, and why strength work is never trimmed at any tier: in 8 of those 21
-zero-ride weeks, lifting continued after cycling stopped.
+That is why there is no ramp to fall behind, why a missed week costs one step instead of the
+plan, and why strength work is never trimmed: in 8 of those 21 empty weeks the lifting carried on
+after the cycling stopped.
 
-Your own data will say something different, which is why the ladder is derived rather than
-shipped. As a check on that derivation: run against this athlete's own history, it independently
-reproduces the ladder a human chose from the same data — identical long rides, ride days and
-hard-session placement — differing only by rounding a 64-minute median session up to 65 where
-the human rounded down to 60.
+Your data will say something different, which is why the ladder is worked out from yours instead
+of shipped. As a check on that process, run against the original rider's history it reproduced
+the ladder a person had chosen by hand from the same data: the same long rides, ride days and
+hard-session placement, differing only by a 64-minute median ride rounded up to 65 where the
+person rounded down to 60.
 
 ## Configuration
 
