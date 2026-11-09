@@ -339,8 +339,57 @@ notes, conversations or goals, and your name is removed wherever it appeared. No
 anywhere: it is a file under `data/bundles/`, and sending it is up to you after you have opened it
 and looked.
 
+**To ask someone for help**, in this order:
+
+1. `python scripts/status.py` — it often names the fix itself.
+2. `python scripts/support_bundle.py` — writes `data/bundles/support-<time>.zip` and prints what
+   is inside it. Nothing is sent anywhere.
+3. Open the zip and read it. It holds the status report, the log, installed versions, the shape of
+   the database (table names and row counts) and the settings that are not free text. It should
+   hold none of your activities, notes, conversations, goals or keys, and your name is removed
+   wherever it appeared; if you spot anything that is yours to keep, do not send it and say so.
+4. Send the zip to whoever is helping.
+
 Each coach turn is one log line too (tokens in and out, which tools ran, whether a suggestion
 button was offered, how long it took), which is the usage data without any of the conversation.
+
+### Every command
+
+All are run from the project folder with the virtual environment active. `--help` works on each.
+
+| command | what it does |
+|---|---|
+| **Setup and health** | |
+| `python scripts/status.py` | where setup has got to, the one next command, and a `problems` line; read-only |
+| `python scripts/migrate.py` / `--apply` | show / apply pending database migrations (a backup is taken first) |
+| `python scripts/fetch_history.py` | backfill your full history from intervals.icu |
+| `python scripts/seed_profile.py --ftp 250` | record your FTP (and height or weight) |
+| `python scripts/seed_goals.py` | fill an empty goals table from the `goals:` in your config (`--reset` re-seeds); the Settings screen edits them afterwards |
+| `python scripts/bootstrap_plan.py` / `--write` | preview / keep the tier ladder derived from your riding |
+| **Every day** | |
+| `python scripts/serve.py --open` | the app at `http://127.0.0.1:8800`; also runs the hourly sync |
+| `python scripts/sync_now.py` | one cycle: sync, roll the plan, push if configured (`--no-push`, `--push`, `--verbose`) |
+| `python scripts/sync.py` | the sync alone, no calendar push (`--dry-run` shows the window) |
+| `python scripts/plan_build.py` | preview the horizon without writing it (`--weeks 3`) |
+| `powershell -ExecutionPolicy Bypass -File scripts\install_task.ps1` | Windows scheduled sync (`-IntervalMinutes`, `-Uninstall`) |
+| **The coach** | |
+| `python scripts/checkin.py` | the weekly check-in |
+| `python scripts/cycle_review.py` | the four-week block review |
+| `python scripts/ask.py` | a free conversation |
+| `python scripts/weekly_summary.py` | regenerate a week's summary |
+| **Charts** | |
+| `python scripts/generate_charts.py` | write the dashboard and calendar pages to `data/charts/` |
+| **When something is wrong** | |
+| `python scripts/logs.py` | read the application log (`--level warning --since 24h`, `--counts`, `--event coach.turn`) |
+| `python scripts/support_bundle.py` | the zip to send when asking for help |
+| **Occasional** | |
+| `python scripts/import_strava_archive.py --archive export.zip` | add activities from a Strava export |
+| `python scripts/dedupe_activities.py` | find and remove the same ride recorded twice |
+| `python scripts/backfill_notes.py` | pull older activity notes from intervals.icu |
+| `python scripts/backfill_signals.py` / `--apply` | preview / file signals from your earlier writing (calls the model) |
+| `python scripts/import_transcripts.py` | bring old command-line transcripts into the app |
+| `python scripts/eval_signals.py` | score the signal extractor against the gold set (calls the model) |
+| `python scripts/code_graph.py` | regenerate the code map (developers) |
 
 > **`serve.py` binds to `127.0.0.1` and must stay there.** The process reads `.env`, so it
 > holds your API keys, it has no authentication, and the chat endpoint spends money per call.
