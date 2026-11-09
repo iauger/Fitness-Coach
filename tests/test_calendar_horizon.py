@@ -35,7 +35,9 @@ def db(tmp_path, monkeypatch):
     monkeypatch.setattr(cal, "today_local", lambda: TODAY)
 
 
-def test_bounds_end_on_the_sunday_of_the_last_week_shown():
+def test_bounds_end_on_the_sunday_of_the_last_week_shown(monkeypatch):
+    # Pinned: it read the real clock, so it passed all week and failed every Monday the dates rolled over.
+    monkeypatch.setattr(cal, "today_local", lambda: TODAY)
     assert cal._week_bounds(1) == (date(2026, 11, 2), date(2026, 11, 8))
     assert cal._week_bounds(1, ahead=2) == (date(2026, 11, 2), date(2026, 11, 22))
     assert cal._week_bounds(3, ahead=1) == (date(2026, 10, 19), date(2026, 11, 15))

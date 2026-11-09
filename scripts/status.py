@@ -24,7 +24,11 @@ if sys.stdout is not None and sys.stdout.encoding != "utf-8":
 from src.firstrun import ready, report
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    if {"-h", "--help"} & set(sys.argv[1:] if argv is None else argv):
+        # Asking for help is not asking whether setup is ready; it must not exit 1 on a fresh clone.
+        print(__doc__.strip())
+        return 0
     print()
     print(report())
     print()

@@ -362,7 +362,7 @@ Where your setup has got to, and the one command to run next.
 
 - imports: firstrun
 - used by: —
-- defs: main()
+- defs: main(argv)
 
 #### scripts/support_bundle.py
 
@@ -370,7 +370,7 @@ Pack what a person helping would need into one zip.
 
 - imports: support
 - used by: —
-- defs: main()
+- defs: main(argv)
 
 #### scripts/sync.py
 

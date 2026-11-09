@@ -9,6 +9,7 @@ replies, no keys, and your name removed wherever it appeared. Nothing is sent: o
 and send it yourself if you want to.
 """
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -17,7 +18,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src import support
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    argparse.ArgumentParser(description=__doc__.strip().splitlines()[0]).parse_args(argv)     # so --help prints help and builds nothing
     path = support.build()
     print(f"\nWrote {path}\n")
     print("Inside:")

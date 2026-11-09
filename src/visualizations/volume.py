@@ -9,20 +9,22 @@ from src.analysis.activities import yearly_volume
 from src.visualizations.theme import COLORS, LAYOUT, AXIS
 from src.clock import today_local
 
-_CURRENT_YEAR = str(today_local().year)
-
 
 def build() -> go.Figure:
     data = yearly_volume()
     if not data:
         return go.Figure()
 
+    # Read when drawn, not when imported: at import it logged a warning on a machine with no config
+    # yet (so `generate_charts.py --help` created data/), and a long-running server kept its first year.
+    current_year = str(today_local().year)
+
     years      = [d["year"] for d in data]
     tss_vals   = [d["tss"] for d in data]
     hours_est  = [d["hours_est"] for d in data]
 
     bar_colors = [
-        COLORS["tsb_pos"] if y == _CURRENT_YEAR else COLORS["ctl"]
+        COLORS["tsb_pos"] if y == current_year else COLORS["ctl"]
         for y in years
     ]
 
